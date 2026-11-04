@@ -1,0 +1,877 @@
+// Strowger data model. Every business table carries tenantId: this is a
+// multi-tenant product from the first migration. See docs/PLAN.md §5.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ───────────────────────────── Tenancy & people ─────────────────────────────
+
+model Tenant {
+  id        String   @id @default(cuid())
+  slug      String   @unique
+  name      String
+  /// Clerk organization id, when the tenant is backed by a Clerk org.
+  clerkOrgId String? @unique
+  settings  Json     @default("{}")
+  /// Recording retention in days. 730 = two years (plan §11).
+  recordingRetentionDays Int @default(730)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users          User[]
+  rooms          Room[]
+  teams          Team[]
+  campaigns      Campaign[]
+  lists          List[]
+  leads          Lead[]
+  affiliates     Affiliate[]
+  dncEntries     DncEntry[]
+  callerIds      CallerIdNumber[]
+  audioAssets    AudioAsset[]
+  calls          Call[]
+  messages       Message[]
+  webhooks       WebhookEndpoint[]
+  auditLogs      AuditLog[]
+  agentSessions  AgentSession[]
+  callbacks      Callback[]
+  leadEvents     LeadEvent[]
+  abandonLedger  AbandonLedger[]
+  transfers      Transfer[]
+  campaignAgents CampaignAgent[]
+  dispositions   Disposition[]
+  dialPlans      DialPlan[]
+  scripts        Script[]
+}
+
+enum Role {
+  ADMIN
+  SUPERVISOR
+  ROOM_SUPERVISOR
+  TEAM_LEADER
+  AGENT
+  AFFILIATE
+}
+
+model User {
+  id          String   @id @default(cuid())
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
+  tenantId    String
+  clerkUserId String?  @unique
+  email       String
+  firstName   String?
+  lastName    String?
+  roles       Role[]   @default([AGENT])
+  active      Boolean  @default(true)
+  /// SIP credentials for the browser softphone (Phase 2). Password is stored
+  /// encrypted at rest by the engine, never in plain text.
+  sipUsername String?  @unique
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  rooms           UserRoom[]
+  teams           UserTeam[]
+  ledTeams        Team[]          @relation("TeamLeader")
+  supervisedRooms Room[]          @relation("RoomSupervisor")
+  campaignAgents  CampaignAgent[]
+  agentSessions   AgentSession[]
+  calls           Call[]
+  callbacks       Callback[]
+  ownedLeads      Lead[]          @relation("LeadOwner")
+  leadEvents      LeadEvent[]
+  auditLogs       AuditLog[]
+  transfersFrom   Transfer[]      @relation("TransferFrom")
+  transfersTo     Transfer[]      @relation("TransferTo")
+  messages        Message[]
+
+  @@unique([tenantId, email])
+  @@index([tenantId])
+}
+
+/// A physical location or floor. Several rooms may work one campaign.
+model Room {
+  id           String  @id @default(cuid())
+  tenant       Tenant  @relation(fields: [tenantId], references: [id])
+  tenantId     String
+  name         String
+  supervisor   User?   @relation("RoomSupervisor", fields: [supervisorId], references: [id])
+  supervisorId String?
+  members      UserRoom[]
+  teams        Team[]
+
+  @@unique([tenantId, name])
+}
+
+model UserRoom {
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId String
+  room   Room   @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  roomId String
+
+  @@id([userId, roomId])
+}
+
+/// A team leader and the agents under them. A team may sit inside a room.
+model Team {
+  id       String  @id @default(cuid())
+  tenant   Tenant  @relation(fields: [tenantId], references: [id])
+  tenantId String
+  name     String
+  leader   User?   @relation("TeamLeader", fields: [leaderId], references: [id])
+  leaderId String?
+  room     Room?   @relation(fields: [roomId], references: [id])
+  roomId   String?
+  members  UserTeam[]
+
+  @@unique([tenantId, name])
+}
+
+model UserTeam {
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId String
+  team   Team   @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  teamId String
+
+  @@id([userId, teamId])
+}
+
+// ───────────────────────────── Campaigns ─────────────────────────────
+
+enum DialMode {
+  RATIO
+  PREVIEW
+}
+
+enum VoicemailAction {
+  HANGUP
+  DROP
+}
+
+enum ScreenerAction {
+  MESSAGE
+  AGENT
+  HANGUP
+}
+
+enum CallerIdMode {
+  FIXED
+  LOCAL_PRESENCE
+}
+
+enum HopperOrder {
+  LIFO
+  FIFO
+  PRIORITY
+}
+
+enum CampaignStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  ARCHIVED
+}
+
+model Campaign {
+  id       String         @id @default(cuid())
+  tenant   Tenant         @relation(fields: [tenantId], references: [id])
+  tenantId String
+  name     String
+  status   CampaignStatus @default(DRAFT)
+
+  dialMode DialMode @default(PREVIEW)
+  /// Lines per ready agent in RATIO mode. The pacing loop never exceeds it.
+  ratio    Decimal  @default(1.0) @db.Decimal(4, 2)
+  maxRatio Decimal  @default(3.0) @db.Decimal(4, 2)
+
+  /// Abandon cap, rolling 30 days, percent. 3.0 is the FTC safe harbor.
+  abandonCapPct  Decimal @default(3.0) @db.Decimal(4, 2)
+  /// Ratio starts stepping down when the 30-day rate reaches this.
+  abandonWarnPct Decimal @default(2.5) @db.Decimal(4, 2)
+  /// A human answer not bridged within this many ms is an abandon.
+  abandonTimerMs Int     @default(2000)
+  safeHarborAudioId String?
+
+  amdEnabled           Boolean         @default(true)
+  voicemailAction      VoicemailAction @default(HANGUP)
+  voicemailDropAudioId String?
+
+  screenerDetection Boolean        @default(true)
+  screenerAction    ScreenerAction @default(MESSAGE)
+  screenerAudioId   String?
+
+  recordingOn       Boolean @default(true)
+  disclosureOn      Boolean @default(false)
+  disclosureAudioId String?
+
+  callerIdMode  CallerIdMode @default(LOCAL_PRESENCE)
+  fixedCallerId String?
+
+  /// Campaign's own calling window in the lead's local time. State and
+  /// federal rules still apply on top; the most restrictive wins.
+  localWindowStart Int @default(9)
+  localWindowEnd   Int @default(20)
+  /// Campaign default attempts per lead (phone) per day. Dial plans may raise
+  /// it, never above the state cap.
+  maxAttemptsPerDay Int @default(3)
+  wrapUpSeconds     Int @default(30)
+  hopperOrder       HopperOrder @default(LIFO)
+
+  /// Whether closers may turn outbound on for themselves (plan §11.7).
+  closersMayDial Boolean @default(true)
+  /// Minutes an agent-scoped callback waits for its owner before it is
+  /// offered to the campaign.
+  callbackOwnerMinutes Int @default(30)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  lists         List[]
+  agents        CampaignAgent[]
+  dispositions  Disposition[]
+  dialPlans     DialPlan[]
+  scripts       Script[]
+  calls         Call[]
+  callbacks     Callback[]
+  dncEntries    DncEntry[]
+  abandonLedger AbandonLedger[]
+  agentSessions AgentSession[]
+  messages      Message[]
+  webhooks      WebhookEndpoint[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId, status])
+}
+
+enum AgentMode {
+  FRONTER
+  CLOSER
+  BOTH
+}
+
+model CampaignAgent {
+  tenant     Tenant    @relation(fields: [tenantId], references: [id])
+  tenantId   String
+  campaign   Campaign  @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  campaignId String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId     String
+  agentMode  AgentMode @default(BOTH)
+  /// For CLOSER mode: outbound currently switched on (the checkbox).
+  outboundOn Boolean   @default(false)
+  createdAt  DateTime  @default(now())
+
+  @@id([campaignId, userId])
+  @@index([tenantId, userId])
+}
+
+/// How a campaign dials a lead of a given type at a given age. The strategy
+/// names an algorithm in the engine; `fixed_gap` is the first. This is the
+/// seat of the retry work that is meant to set the product apart.
+model DialPlan {
+  id             String   @id @default(cuid())
+  tenant         Tenant   @relation(fields: [tenantId], references: [id])
+  tenantId       String
+  campaign       Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  campaignId     String
+  /// Lead bucket this plan applies to; null = any.
+  leadType       String?
+  ageFromDays    Int      @default(0)
+  ageToDays      Int?
+  attemptsPerDay Int      @default(3)
+  retryGapMinutes Int     @default(180)
+  /// Higher weight = earlier in a PRIORITY-ordered hopper.
+  weight         Int      @default(0)
+  strategy       String   @default("fixed_gap")
+  params         Json     @default("{}")
+  active         Boolean  @default(true)
+
+  @@index([campaignId, active])
+}
+
+model Disposition {
+  id                  String   @id @default(cuid())
+  tenant              Tenant   @relation(fields: [tenantId], references: [id])
+  tenantId            String
+  campaign            Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  campaignId          String
+  code                String
+  label               String
+  hotkey              String?
+  isContact           Boolean  @default(false)
+  isSale              Boolean  @default(false)
+  isDnc               Boolean  @default(false)
+  isCallback          Boolean  @default(false)
+  /// Null = the lead is finished; otherwise it recycles after this long.
+  recycleAfterMinutes Int?
+  sortOrder           Int      @default(0)
+  active              Boolean  @default(true)
+
+  calls Call[]
+
+  @@unique([campaignId, code])
+}
+
+model Script {
+  id         String   @id @default(cuid())
+  tenant     Tenant   @relation(fields: [tenantId], references: [id])
+  tenantId   String
+  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  campaignId String
+  version    Int      @default(1)
+  body       String
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now())
+
+  @@unique([campaignId, version])
+}
+
+// ───────────────────────────── Lists & leads ─────────────────────────────
+
+enum ListSource {
+  UPLOAD
+  POST
+}
+
+enum ListStatus {
+  IMPORTING
+  ACTIVE
+  PAUSED
+  ARCHIVED
+}
+
+enum DuplicateAction {
+  REJECT
+  ACCEPT
+  UPDATE
+}
+
+model List {
+  id          String     @id @default(cuid())
+  tenant      Tenant     @relation(fields: [tenantId], references: [id])
+  tenantId    String
+  campaign    Campaign?  @relation(fields: [campaignId], references: [id])
+  campaignId  String?
+  name        String
+  source      ListSource @default(UPLOAD)
+  affiliate   Affiliate? @relation(fields: [affiliateId], references: [id])
+  affiliateId String?
+  status      ListStatus @default(ACTIVE)
+  /// What to do with a phone already in this list.
+  duplicateAction DuplicateAction @default(REJECT)
+  /// Counters kept current by the import and posting paths.
+  totalLeads    Int @default(0)
+  dialableLeads Int @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  leads   Lead[]
+  imports ListImport[]
+
+  @@unique([tenantId, name])
+  @@index([campaignId, status])
+}
+
+enum ImportStatus {
+  QUEUED
+  PROCESSING
+  DONE
+  FAILED
+}
+
+model ListImport {
+  id            String       @id @default(cuid())
+  list          List         @relation(fields: [listId], references: [id], onDelete: Cascade)
+  listId        String
+  fileName      String
+  storageUrl    String?
+  mapping       Json
+  status        ImportStatus @default(QUEUED)
+  totalRows     Int          @default(0)
+  acceptedRows  Int          @default(0)
+  duplicateRows Int          @default(0)
+  badPhoneRows  Int          @default(0)
+  dncRows       Int          @default(0)
+  litigatorRows Int          @default(0)
+  errorReason   String?
+  createdAt     DateTime     @default(now())
+  finishedAt    DateTime?
+}
+
+enum ScrubStatus {
+  PENDING
+  CLEAN
+  DNC
+  LITIGATOR
+  FAILED
+}
+
+enum LeadStatus {
+  NEW
+  IN_HOPPER
+  DIALING
+  CONTACTED
+  CALLBACK
+  FINISHED
+  DNC
+  BLOCKED
+}
+
+model Lead {
+  id       String @id @default(cuid())
+  tenant   Tenant @relation(fields: [tenantId], references: [id])
+  tenantId String
+  list     List   @relation(fields: [listId], references: [id], onDelete: Cascade)
+  listId   String
+  /// Ten digits. Unique per list (plan §11.1).
+  phone    String
+
+  firstName String?
+  lastName  String?
+  address   String?
+  city      String?
+  state     String?
+  zip       String?
+  email     String?
+  /// IANA zone, resolved from ZIP first, area code second.
+  timezone  String?
+  /// Campaign-defined bucket, matched against DialPlan.leadType.
+  leadType  String?
+  postedAt  DateTime @default(now())
+
+  consentJornayaId     String?
+  consentTrustedFormId String?
+  optInUrl             String?
+  optInAt              DateTime?
+  optInIp              String?
+  rawPayload           Json?
+  custom               Json     @default("{}")
+
+  scrubStatus ScrubStatus @default(PENDING)
+  scrubReason String?
+  scrubbedAt  DateTime?
+
+  status        LeadStatus @default(NEW)
+  attemptsTotal Int        @default(0)
+  lastAttemptAt DateTime?
+  nextDialAt    DateTime?
+  owner         User?      @relation("LeadOwner", fields: [ownerId], references: [id])
+  ownerId       String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  events    LeadEvent[]
+  calls     Call[]
+  callbacks Callback[]
+  messages  Message[]
+
+  @@unique([listId, phone])
+  @@index([tenantId, phone])
+  @@index([listId, status, nextDialAt])
+  @@index([tenantId, status])
+}
+
+enum LeadEventKind {
+  POSTED
+  IMPORTED
+  SCRUBBED
+  DIAL
+  ANSWERED
+  DISPOSITION
+  NOTE
+  TEXT_IN
+  TEXT_OUT
+  CALLBACK_SET
+  WEBHOOK
+  DNC
+  BLOCKED
+}
+
+model LeadEvent {
+  id        String        @id @default(cuid())
+  tenant    Tenant        @relation(fields: [tenantId], references: [id])
+  tenantId  String
+  lead      Lead          @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  leadId    String
+  kind      LeadEventKind
+  actor     User?         @relation(fields: [actorId], references: [id])
+  actorId   String?
+  data      Json          @default("{}")
+  createdAt DateTime      @default(now())
+
+  @@index([leadId, createdAt])
+}
+
+model Affiliate {
+  id          String   @id @default(cuid())
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
+  tenantId    String
+  name        String
+  /// Hashed; the plain key is shown once at creation.
+  apiKeyHash  String   @unique
+  apiKeyHint  String
+  /// Inbound field name -> Strowger field name.
+  fieldMapping Json    @default("{}")
+  defaultListId String?
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  lists List[]
+
+  @@unique([tenantId, name])
+}
+
+// ───────────────────────────── Compliance ─────────────────────────────
+
+enum DncScope {
+  SYSTEM
+  CAMPAIGN
+}
+
+enum DncSource {
+  MANUAL
+  STOP_KEYWORD
+  DISPOSITION
+  IMPORT
+  CROSSBAR
+}
+
+model DncEntry {
+  id         String    @id @default(cuid())
+  tenant     Tenant    @relation(fields: [tenantId], references: [id])
+  tenantId   String
+  phone      String
+  scope      DncScope  @default(SYSTEM)
+  campaign   Campaign? @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  campaignId String?
+  source     DncSource @default(MANUAL)
+  note       String?
+  createdAt  DateTime  @default(now())
+
+  @@unique([tenantId, phone, campaignId])
+  @@index([tenantId, phone])
+}
+
+/// Seeded from packages/shared/compliance; not per tenant. `verifiedAt` stays
+/// null until counsel has confirmed the row (plan §6).
+model StateRule {
+  state            String   @id
+  startHour        Int
+  endHour          Int
+  /// Per-day-of-week overrides: {"0": {"startHour":12,"endHour":21}} or
+  /// {"0": null} for no calls on Sunday.
+  dayOverrides     Json     @default("{}")
+  maxAttemptsPerDay Int?
+  noHolidayCalls   Boolean  @default(false)
+  citation         String?
+  verifiedAt       DateTime?
+  updatedAt        DateTime @updatedAt
+}
+
+/// Daily answered/abandoned per campaign, the inputs to the rolling 30-day rate.
+model AbandonLedger {
+  tenant     Tenant   @relation(fields: [tenantId], references: [id])
+  tenantId   String
+  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  campaignId String
+  day        DateTime @db.Date
+  answered   Int      @default(0)
+  abandoned  Int      @default(0)
+
+  @@id([campaignId, day])
+  @@index([tenantId, day])
+}
+
+// ───────────────────────────── Telephony assets ─────────────────────────────
+
+enum CallerIdStatus {
+  ACTIVE
+  RESTING
+  SPAM_FLAGGED
+  RETIRED
+}
+
+model CallerIdNumber {
+  id         String         @id @default(cuid())
+  tenant     Tenant         @relation(fields: [tenantId], references: [id])
+  tenantId   String
+  phone      String
+  areaCode   String
+  state      String?
+  status     CallerIdStatus @default(ACTIVE)
+  smsEnabled Boolean        @default(false)
+  provider   String         @default("commio")
+  lastUsedAt DateTime?
+  usedToday  Int            @default(0)
+  createdAt  DateTime       @default(now())
+
+  @@unique([tenantId, phone])
+  @@index([tenantId, areaCode, status])
+}
+
+enum AudioKind {
+  SAFE_HARBOR
+  VOICEMAIL_DROP
+  SCREENER_MESSAGE
+  DISCLOSURE
+  HOLD
+  OTHER
+}
+
+model AudioAsset {
+  id         String    @id @default(cuid())
+  tenant     Tenant    @relation(fields: [tenantId], references: [id])
+  tenantId   String
+  kind       AudioKind
+  name       String
+  storageUrl String
+  createdAt  DateTime  @default(now())
+}
+
+// ───────────────────────────── Calls & activity ─────────────────────────────
+
+enum CallDirection {
+  OUTBOUND
+  INBOUND
+  MANUAL
+}
+
+enum AmdResult {
+  HUMAN
+  MACHINE
+  SCREENER
+  UNKNOWN
+}
+
+enum CallOutcome {
+  BRIDGED
+  VOICEMAIL
+  VOICEMAIL_DROPPED
+  SCREENER_MESSAGE
+  SCREENER_AGENT
+  SCREENER_HANGUP
+  ABANDONED
+  NO_ANSWER
+  BUSY
+  FAILED
+  CANCELLED
+}
+
+model Call {
+  id         String        @id @default(cuid())
+  tenant     Tenant        @relation(fields: [tenantId], references: [id])
+  tenantId   String
+  campaign   Campaign?     @relation(fields: [campaignId], references: [id])
+  campaignId String?
+  lead       Lead?         @relation(fields: [leadId], references: [id])
+  leadId     String?
+  agent      User?         @relation(fields: [agentId], references: [id])
+  agentId    String?
+  direction  CallDirection
+  phone      String
+  callerId   String?
+  providerCallId String?   @unique
+
+  dialedAt   DateTime  @default(now())
+  ringingAt  DateTime?
+  answeredAt DateTime?
+  bridgedAt  DateTime?
+  endedAt    DateTime?
+
+  amdResult        AmdResult?
+  screenerDetected Boolean     @default(false)
+  outcome          CallOutcome?
+  abandoned        Boolean     @default(false)
+  disposition      Disposition? @relation(fields: [dispositionId], references: [id])
+  dispositionId    String?
+  notes            String?
+
+  recordingUrl       String?
+  recordingExpiresAt DateTime?
+  legalHold          Boolean   @default(false)
+  costCents          Int?
+
+  transfers Transfer[]
+
+  @@index([tenantId, dialedAt])
+  @@index([campaignId, dialedAt])
+  @@index([leadId, dialedAt])
+  @@index([agentId, dialedAt])
+}
+
+enum TransferKind {
+  WARM
+  COLD
+}
+
+model Transfer {
+  id         String       @id @default(cuid())
+  tenant     Tenant       @relation(fields: [tenantId], references: [id])
+  tenantId   String
+  call       Call         @relation(fields: [callId], references: [id], onDelete: Cascade)
+  callId     String
+  fromAgent  User         @relation("TransferFrom", fields: [fromAgentId], references: [id])
+  fromAgentId String
+  toAgent    User?        @relation("TransferTo", fields: [toAgentId], references: [id])
+  toAgentId  String?
+  kind       TransferKind @default(WARM)
+  createdAt  DateTime     @default(now())
+  completedAt DateTime?
+}
+
+enum CallbackScope {
+  AGENT
+  CAMPAIGN
+}
+
+enum CallbackStatus {
+  SCHEDULED
+  OFFERED
+  DONE
+  MISSED
+  CANCELLED
+}
+
+model Callback {
+  id         String         @id @default(cuid())
+  tenant     Tenant         @relation(fields: [tenantId], references: [id])
+  tenantId   String
+  campaign   Campaign       @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  campaignId String
+  lead       Lead           @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  leadId     String
+  agent      User?          @relation(fields: [agentId], references: [id])
+  agentId    String?
+  scope      CallbackScope  @default(AGENT)
+  dueAt      DateTime
+  status     CallbackStatus @default(SCHEDULED)
+  note       String?
+  createdAt  DateTime       @default(now())
+
+  @@index([campaignId, status, dueAt])
+  @@index([agentId, status, dueAt])
+}
+
+enum AgentState {
+  LOGGED_IN
+  READY
+  RESERVED
+  ON_CALL
+  WRAP_UP
+  PAUSED
+  LOGGED_OUT
+}
+
+/// One row per agent login, with a running log of state changes in `events`
+/// for productivity reporting. Live state itself lives in Redis.
+model AgentSession {
+  id         String     @id @default(cuid())
+  tenant     Tenant     @relation(fields: [tenantId], references: [id])
+  tenantId   String
+  user       User       @relation(fields: [userId], references: [id])
+  userId     String
+  campaign   Campaign?  @relation(fields: [campaignId], references: [id])
+  campaignId String?
+  startedAt  DateTime   @default(now())
+  endedAt    DateTime?
+  lastState  AgentState @default(LOGGED_IN)
+  events     Json       @default("[]")
+
+  @@index([tenantId, startedAt])
+  @@index([userId, startedAt])
+}
+
+enum MessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum MessageStatus {
+  QUEUED
+  SENT
+  DELIVERED
+  FAILED
+  RECEIVED
+}
+
+model Message {
+  id         String           @id @default(cuid())
+  tenant     Tenant           @relation(fields: [tenantId], references: [id])
+  tenantId   String
+  campaign   Campaign?        @relation(fields: [campaignId], references: [id])
+  campaignId String?
+  lead       Lead?            @relation(fields: [leadId], references: [id])
+  leadId     String?
+  agent      User?            @relation(fields: [agentId], references: [id])
+  agentId    String?
+  direction  MessageDirection
+  fromPhone  String
+  toPhone    String
+  body       String
+  provider   String           @default("commio")
+  providerMessageId String?   @unique
+  status     MessageStatus    @default(QUEUED)
+  createdAt  DateTime         @default(now())
+
+  @@index([leadId, createdAt])
+  @@index([tenantId, createdAt])
+}
+
+// ───────────────────────────── Integration & audit ─────────────────────────────
+
+model WebhookEndpoint {
+  id         String    @id @default(cuid())
+  tenant     Tenant    @relation(fields: [tenantId], references: [id])
+  tenantId   String
+  campaign   Campaign? @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  campaignId String?
+  url        String
+  secret     String
+  /// Event names, e.g. ["disposition", "sale", "callback"].
+  events     String[]
+  active     Boolean   @default(true)
+  createdAt  DateTime  @default(now())
+
+  deliveries WebhookDelivery[]
+}
+
+enum DeliveryStatus {
+  PENDING
+  DELIVERED
+  FAILED
+}
+
+model WebhookDelivery {
+  id          String          @id @default(cuid())
+  endpoint    WebhookEndpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  endpointId  String
+  event       String
+  payload     Json
+  status      DeliveryStatus  @default(PENDING)
+  attempts    Int             @default(0)
+  lastError   String?
+  createdAt   DateTime        @default(now())
+  deliveredAt DateTime?
+
+  @@index([endpointId, status, createdAt])
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  tenant    Tenant   @relation(fields: [tenantId], references: [id])
+  tenantId  String
+  actor     User?    @relation(fields: [actorId], references: [id])
+  actorId   String?
+  action    String
+  target    String?
+  before    Json?
+  after     Json?
+  createdAt DateTime @default(now())
+
+  @@index([tenantId, createdAt])
+}
