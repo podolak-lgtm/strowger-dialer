@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { requireRole } from "@/lib/auth";
 import { Badge, Button, Card, Field, PageHeader, Table, Td, inputClass } from "@/components/ui";
 import { deleteDialPlan, saveDialPlan, saveDisposition, updateCampaign } from "../actions";
+import { addWebhook, deleteWebhook, testWebhook, toggleWebhook } from "../webhook-actions";
 
 function Check({ name, label, checked }: { name: string; label: string; checked: boolean }) {
   return (
@@ -23,6 +24,7 @@ export default async function CampaignPage({ params }: PageProps<"/campaigns/[id
       lists: { select: { id: true, name: true, totalLeads: true, dialableLeads: true, status: true, priority: true }, orderBy: { priority: "asc" } },
       dialPlans: { orderBy: [{ ageFromDays: "asc" }, { leadType: "asc" }] },
       dispositions: { orderBy: { sortOrder: "asc" } },
+      webhooks: { include: { deliveries: { orderBy: { createdAt: "desc" }, take: 1 } }, orderBy: { createdAt: "asc" } },
       _count: { select: { agents: true } },
     },
   });
@@ -250,6 +252,49 @@ export default async function CampaignPage({ params }: PageProps<"/campaigns/[id
               <Button type="submit" variant="ghost">
                 Add
               </Button>
+            </form>
+          </div>
+        </Card>
+
+        <Card title="CRM push (webhooks)" className="lg:col-span-2">
+          <p className="mb-3 text-xs text-zinc-500">
+            Each disposition posts JSON to these URLs with header <code>x-strowger-signature: t=&lt;unix&gt;,v1=&lt;hex HMAC-SHA256 of &quot;t.body&quot; with the secret&gt;</code>. Failed deliveries retry with backoff for up to ten attempts.
+          </p>
+          <div className="space-y-2">
+            {c.webhooks.map((w) => (
+              <div key={w.id} className="flex flex-wrap items-center gap-2 rounded-md border border-zinc-800 p-2 text-sm">
+                <code className="flex-1 truncate font-mono text-xs">{w.url}</code>
+                <span className="text-xs text-zinc-400">{w.events.join(", ")}</span>
+                <span className="font-mono text-[10px] text-zinc-500">secret {w.secret.slice(0, 12)}…</span>
+                {w.deliveries[0] ? <Badge tone={w.deliveries[0].status === "DELIVERED" ? "green" : w.deliveries[0].status === "FAILED" ? "red" : "amber"}>{`last: ${w.deliveries[0].status.toLowerCase()}${w.deliveries[0].lastError ? ` (${w.deliveries[0].lastError})` : ""}`}</Badge> : null}
+                <Badge tone={w.active ? "green" : "zinc"}>{w.active ? "active" : "paused"}</Badge>
+                <form action={testWebhook}>
+                  <input type="hidden" name="id" value={w.id} />
+                  <Button type="submit" variant="ghost">Test</Button>
+                </form>
+                <form action={toggleWebhook}>
+                  <input type="hidden" name="id" value={w.id} />
+                  <Button type="submit" variant="ghost">{w.active ? "Pause" : "Resume"}</Button>
+                </form>
+                <form action={deleteWebhook}>
+                  <input type="hidden" name="id" value={w.id} />
+                  <Button type="submit" variant="danger">Remove</Button>
+                </form>
+              </div>
+            ))}
+            <form action={addWebhook} className="flex flex-wrap items-end gap-2 rounded-md border border-dashed border-zinc-800 p-2 text-sm">
+              <input type="hidden" name="campaignId" value={c.id} />
+              <div className="min-w-[280px] flex-1">
+                <Field label="Endpoint URL">
+                  <input name="url" placeholder="https://crm.example.com/strowger" className={inputClass} />
+                </Field>
+              </div>
+              {(["disposition", "sale", "callback", "dnc"] as const).map((e) => (
+                <label key={e} className="flex items-center gap-1 text-xs text-zinc-300">
+                  <input type="checkbox" name="events" value={e} defaultChecked={e === "disposition"} className="h-3.5 w-3.5" /> {e}
+                </label>
+              ))}
+              <Button type="submit" variant="ghost">Add</Button>
             </form>
           </div>
         </Card>

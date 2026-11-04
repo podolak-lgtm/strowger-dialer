@@ -21,13 +21,16 @@ import {
   leadById,
   leadHistory,
   nextLead,
+  sendText,
   skipLead,
   sprint,
+  textThread,
   updateLeadNotes,
   type AgentLive,
   type LeadCard,
   type LeadHistory,
   type Sprint,
+  type TextMessage,
 } from "./actions";
 
 type JambonzClient = ReturnType<typeof createJambonzClient>;
@@ -136,6 +139,8 @@ export function AgentConsole(props: ConsoleProps) {
   const [notes, setNotes] = useState("");
   const [callbackAt, setCallbackAt] = useState("");
   const [stats, setStats] = useState<Sprint | null>(null);
+  const [thread, setThread] = useState<TextMessage[]>([]);
+  const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [pauseMenu, setPauseMenu] = useState(false);
 
@@ -178,6 +183,16 @@ export function AgentConsole(props: ConsoleProps) {
     };
   }, [refreshStats]);
 
+  // Text thread follows the lead on screen.
+  useEffect(() => {
+    if (!lead) {
+      const t = setTimeout(() => setThread([]), 0);
+      return () => clearTimeout(t);
+    }
+    const t = setTimeout(() => void textThread(lead.id).then(setThread), 0);
+    return () => clearTimeout(t);
+  }, [lead]);
+
   // Realtime from the engine.
   useEffect(() => {
     const sock = io(engineUrl, { path: "/rt", auth: { token: rtToken }, transports: ["websocket"] });
@@ -191,6 +206,11 @@ export function AgentConsole(props: ConsoleProps) {
         setCallStatus("idle");
         setCallStart(null);
       }
+    });
+    sock.on("text:in", (m: { leadId: string | null; body: string; from: string }) => {
+      setNotice(`Text from ${m.from.replace(/(\d{3})(\d{3})(\d{4})/, "($1) $2-$3")}: ${m.body.slice(0, 80)}`);
+      if (m.leadId) void textThread(m.leadId).then(setThread);
+      void refreshStats();
     });
     sock.on("call:update", (u: { callId: string; status: string; leadId?: string; outcome?: string }) => {
       setCallId(u.callId);
@@ -348,6 +368,15 @@ export function AgentConsole(props: ConsoleProps) {
   const endCall = () =>
     run(async () => {
       if (callId) await hangup(callId);
+    });
+
+  const send = () =>
+    run(async () => {
+      if (!lead || !draft.trim()) return;
+      const r = await sendText(lead.id, draft.trim());
+      if (!r.ok) throw new Error(r.error);
+      setDraft("");
+      setThread(await textThread(lead.id));
     });
 
   const toggleMute = () => {
@@ -640,6 +669,39 @@ export function AgentConsole(props: ConsoleProps) {
                   </div>
                 </Panel>
               )}
+
+              {lead ? (
+                <Panel title="SMS" right={<span className="text-xs text-zinc-500">{thread.length} messages</span>}>
+                  <div className="mb-2 max-h-56 space-y-1 overflow-y-auto pr-1 text-sm">
+                    {thread.map((m) => (
+                      <div key={m.id} className={`flex ${m.direction === "OUTBOUND" ? "justify-end" : "justify-start"}`}>
+                        <div className={`max-w-[80%] rounded-xl px-3 py-1.5 ${m.direction === "OUTBOUND" ? "bg-sky-500/20 text-sky-100" : "bg-white/10 text-zinc-100"}`}>
+                          <div>{m.body}</div>
+                          <div className="mt-0.5 text-[10px] text-zinc-500">
+                            {new Date(m.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
+                            {m.purpose ? ` · ${m.purpose.replace("_", " ")}` : ""}
+                            {m.status === "FAILED" ? " · failed" : ""}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                    {thread.length === 0 ? <div className="text-xs text-zinc-500">No texts yet with this lead.</div> : null}
+                  </div>
+                  <div className="flex gap-2">
+                    <input value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => e.key === "Enter" && send()} placeholder="Type a text…" className="flex-1 rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm placeholder:text-zinc-600" />
+                    <button onClick={send} disabled={busy || !draft.trim()} className="rounded-lg bg-white/10 px-3 py-2 text-sm font-medium hover:bg-white/15 disabled:opacity-40">
+                      Send
+                    </button>
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-1">
+                    {["Hi {{first_name}}, this is {{agent}} following up on your request. Is now a good time?", "Sorry I missed you! When is a good time to call back?", "Thanks for your time today, {{first_name}}."].map((t) => (
+                      <button key={t} onClick={() => setDraft(t.replace("{{first_name}}", lead.firstName ?? "there").replace("{{agent}}", me.name))} className="rounded-md border border-white/10 px-2 py-0.5 text-[11px] text-zinc-300 hover:bg-white/10">
+                        {t.slice(0, 34)}…
+                      </button>
+                    ))}
+                  </div>
+                </Panel>
+              ) : null}
 
               <Panel title="Live Activity Feed">
                 <ul className="space-y-2 text-sm">

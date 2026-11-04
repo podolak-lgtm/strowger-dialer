@@ -9,6 +9,7 @@ import { getAgent, patchAgent } from "../agents/state";
 import { agentRoom, hookUrl, jambonz, jambonzConfigured } from "../jambonz/client";
 import { afterAttempt, daypartNow } from "./cadence";
 import { removeInflight } from "./pacing";
+import { enqueueWebhooks, type WebhookEvent } from "../webhooks/deliver";
 
 const sidKey = (sid: string) => `callsid:${sid}`;
 
@@ -219,6 +220,19 @@ export async function dispositionCall(input: DispositionInput): Promise<{ ok: tr
     await patchAgent(input.actorId, { currentCallId: null, state: agent.agentCallSid ? "READY" : "LOGGED_IN" });
   }
   emitToTenant(call.tenantId, "floor:call", { callId: call.id, status: "dispositioned", code: disp.code });
+
+  // CRM push: one delivery per endpoint that subscribes to any of these events.
+  const events: WebhookEvent[] = ["disposition", ...(disp.isSale ? (["sale"] as const) : []), ...(disp.isCallback ? (["callback"] as const) : []), ...(disp.isDnc ? (["dnc"] as const) : [])];
+  const agentUser = await prisma.user.findUnique({ where: { id: input.actorId }, select: { email: true, firstName: true, lastName: true } });
+  await enqueueWebhooks(call.tenantId, call.campaign.id, events, {
+    call: { id: call.id, direction: call.direction, phone: call.phone, caller_id: call.callerId, dialed_at: call.dialedAt, answered_at: call.answeredAt, bridged_at: call.bridgedAt, ended_at: call.endedAt, outcome: call.outcome, recording_url: call.recordingUrl },
+    disposition: { code: disp.code, label: disp.label, is_sale: disp.isSale, is_contact: disp.isContact, is_callback: disp.isCallback, is_dnc: disp.isDnc, notes: input.notes ?? null, callback_at: input.callbackAt ?? null },
+    agent: agentUser ? { id: input.actorId, email: agentUser.email, name: [agentUser.firstName, agentUser.lastName].filter(Boolean).join(" ") } : { id: input.actorId },
+    campaign: { id: call.campaign.id, name: call.campaign.name },
+    lead: call.lead
+      ? { id: call.lead.id, phone: call.lead.phone, first_name: call.lead.firstName, last_name: call.lead.lastName, email: call.lead.email, address: call.lead.address, city: call.lead.city, state: call.lead.state, zip: call.lead.zip, lead_type: call.lead.leadType, list_id: call.lead.listId, custom: call.lead.custom, jornaya_lead_id: call.lead.consentJornayaId, trustedform_cert_url: call.lead.consentTrustedFormId }
+      : null,
+  }).catch((e) => log.warn({ err: e, callId: call.id }, "webhook enqueue failed"));
   return { ok: true };
 }
 

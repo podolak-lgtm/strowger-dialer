@@ -10,6 +10,9 @@ import { onLeadPosted } from "../dialer/cadence";
 import { crossbarConfigured } from "../scrub/crossbar";
 import { scrubPendingForTenant } from "../scrub/job";
 import { getSupervision, setSupervisionMode, startSupervision, stopSupervision, takeOver } from "../supervise";
+import { handleInboundText } from "../sms/inbound";
+import { sendSms } from "../sms/provider";
+import { deliverPending } from "../webhooks/deliver";
 import { releaseLead, reserveNextLead } from "../dialer/hopper";
 import { jambonz, jambonzConfigured } from "../jambonz/client";
 
@@ -99,6 +102,32 @@ export async function registerInternalRoutes(app: FastifyInstance): Promise<void
     const { userId } = req.params as { userId: string };
     return { supervision: await getSupervision(userId) };
   });
+
+  // ── Texting ─────────────────────────────────────────────────────────────
+  app.post("/internal/sms/inbound", async (req) => {
+    const b = z.object({ provider: z.string(), providerMessageId: z.string().nullable(), from: z.string(), to: z.string(), body: z.string(), raw: z.unknown().optional() }).parse(req.body);
+    return handleInboundText(b);
+  });
+  app.post("/internal/sms/send", async (req) => {
+    const b = Ids.extend({ leadId: z.string(), body: z.string().min(1).max(1000) }).parse(req.body);
+    const lead = await prisma.lead.findFirst({ where: { id: b.leadId, tenantId: b.tenantId }, include: { list: { select: { campaignId: true } } } });
+    if (!lead) return { ok: false, error: "Unknown lead" };
+    if (lead.status === "DNC" || lead.status === "BLOCKED") return { ok: false, error: "This number has opted out or is blocked" };
+    const dnc = await prisma.dncEntry.findFirst({ where: { tenantId: b.tenantId, phone: lead.phone, scope: "SYSTEM" } });
+    if (dnc) return { ok: false, error: "This number is on the do-not-call list" };
+    let from = lead.assignedCallerId;
+    if (from) {
+      const n = await prisma.callerIdNumber.findFirst({ where: { tenantId: b.tenantId, phone: from, smsEnabled: true, status: "ACTIVE" } });
+      if (!n) from = null;
+    }
+    if (!from) from = (await prisma.callerIdNumber.findFirst({ where: { tenantId: b.tenantId, smsEnabled: true, status: "ACTIVE", areaCode: lead.phone.slice(0, 3) } }))?.phone ?? (await prisma.callerIdNumber.findFirst({ where: { tenantId: b.tenantId, smsEnabled: true, status: "ACTIVE" } }))?.phone ?? null;
+    if (!from) return { ok: false, error: "No SMS-enabled number in the pool" };
+    const r = await sendSms({ tenantId: b.tenantId, campaignId: lead.list.campaignId, leadId: lead.id, agentId: b.userId, from, to: lead.phone, body: b.body, purpose: null });
+    if (!lead.assignedCallerId) await prisma.lead.update({ where: { id: lead.id }, data: { assignedCallerId: from } });
+    return r.ok ? { ok: true } : { ok: false, error: r.error ?? "Send failed" };
+  });
+
+  app.post("/internal/webhooks/deliver", async () => deliverPending());
 
   // ── Cadence trigger: lead.created ───────────────────────────────────────
   app.post("/internal/leads/posted", async (req) => {

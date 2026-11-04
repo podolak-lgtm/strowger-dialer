@@ -5,6 +5,7 @@ import { prisma } from "@strowger/db";
 import { log } from "../log";
 import { redis } from "../redis";
 import { scrubAllTenants } from "../scrub/job";
+import { deliverPending } from "../webhooks/deliver";
 
 interface Job {
   name: string;
@@ -38,6 +39,7 @@ async function dailyReset(): Promise<void> {
 const JOBS: Job[] = [
   { name: "scrub", everyMs: 2 * 60_000, run: scrubAllTenants },
   { name: "dailyReset", everyMs: 10 * 60_000, run: dailyReset },
+  { name: "webhooks", everyMs: 30_000, run: deliverPending },
 ];
 
 export function startScheduler(): () => void {

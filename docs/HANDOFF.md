@@ -86,6 +86,27 @@ built and why; this says how it is wired and what will trip you.
   `evaluateDialWindow`. Ineligible leads are parked 30 minutes so a scan
   does not keep re-checking the same refusal.
 
+## Texting and CRM webhooks (Phase 5a)
+
+- Inbound texts: `apps/web/src/app/api/webhooks/sms/telnyx` (Ed25519 with
+  `TELNYX_PUBLIC_KEY`) and `.../sms/commio?token=SMS_WEBHOOK_TOKEN` forward
+  to the engine's `handleInboundText`: tenant by the receiving number
+  (`CallerIdNumber`), lead by the sender (most recent in the tenant),
+  `Message` INBOUND + `LeadEvent TEXT_IN`. **STOP** (and the CTIA list,
+  `shared/sms.ts`) → system `DncEntry` source STOP_KEYWORD, every lead with
+  the number → DNC, callbacks cancelled, one confirmation text. HELP →
+  help reply. START lifts a STOP entry. The owning agent gets `text:in`
+  on the socket; the floor gets `floor:text`.
+- Agent send: `/internal/sms/send` from the lead's assigned caller ID if
+  SMS-enabled, else an SMS-enabled pool number matching the area code,
+  refused for DNC/blocked numbers. Console: SMS panel under the call panel.
+- Webhooks: `WebhookEndpoint` (tenant- or campaign-scoped, events
+  disposition/sale/callback/dnc) on the campaign page; `dispositionCall`
+  enqueues `WebhookDelivery`; the scheduler delivers every 30 s with
+  `x-strowger-signature: t=<unix>,v1=<HMAC-SHA256(secret, "t.body")>`,
+  backoff 30 s doubling to 6 h, abandoned after 10 attempts. "Test" queues
+  a sample payload.
+
 ## Supervision (Phase 4)
 
 `apps/engine/src/supervise/`. A supervisor leg is a REST call to the
