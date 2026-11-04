@@ -269,3 +269,25 @@ export async function campaignScript(campaignId: string | null): Promise<string 
   const sc = await prisma.script.findFirst({ where: { tenantId: s.tenant.id, campaignId, active: true }, orderBy: { version: "desc" } });
   return sc?.body ?? null;
 }
+
+export async function holdCall(callId: string, hold: boolean): Promise<{ ok: true } | { ok: false; error: string }> {
+  const s = await me();
+  return engine(`/calls/${callId}/hold`, { method: "POST", body: JSON.stringify({ userId: s.user.id, hold }) });
+}
+
+export type TransferTarget = { userId: string; name: string; mode: string; since: number };
+export async function transferTargets(campaignId: string | null): Promise<TransferTarget[]> {
+  const s = await me();
+  const r = await engine<{ targets: TransferTarget[] }>(`/transfer-targets?tenantId=${s.tenant.id}&userId=${s.user.id}${campaignId ? `&campaignId=${campaignId}` : ""}`);
+  return r.targets;
+}
+
+export async function transferCall(callId: string, toAgentId: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  const s = await me();
+  return engine(`/calls/${callId}/transfer`, { method: "POST", body: JSON.stringify({ userId: s.user.id, toAgentId }) });
+}
+
+export async function manualDial(phone: string): Promise<{ ok: true; callId: string } | { ok: false; error: string }> {
+  const s = await me();
+  return engine("/calls/manual", { method: "POST", body: JSON.stringify({ tenantId: s.tenant.id, userId: s.user.id, phone }) });
+}

@@ -352,6 +352,17 @@ export async function registerJambonzRoutes(app: FastifyInstance): Promise<void>
 
   app.post("/jambonz/conf-exit", async (_req, reply) => reply.send([{ verb: "hangup" }]));
 
+  // Warm transfer: the lead leg joins the closer's room.
+  app.post("/jambonz/transfer", async (req, reply) => {
+    const { callId, toAgentId } = req.query as { callId?: string; toAgentId?: string };
+    if (!callId || !toAgentId) return reply.send([{ verb: "hangup" }]);
+    const call = await prisma.call.findUnique({ where: { id: callId } });
+    return reply.send([
+      { verb: "conference", name: agentRoom(toAgentId), memberTag: "lead", startConferenceOnEnter: false, endConferenceOnExit: false, beep: false, statusHook: hookUrl("/jambonz/conf", { callId, tenantId: call?.tenantId ?? "" }), statusEvents: ["join", "leave"], actionHook: hookUrl("/jambonz/conf-exit", { callId }) },
+      { verb: "hangup" },
+    ]);
+  });
+
   // Agent pressed "Leave voicemail": the lead leg is redirected here, out of the room.
   app.post("/jambonz/vm-drop", async (req, reply) => {
     const callId = (req.query as { callId?: string }).callId;

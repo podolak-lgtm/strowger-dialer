@@ -21,9 +21,13 @@ import {
   dialLead,
   disposition,
   hangup,
+  holdCall,
   leadById,
   leadHistory,
   leaveVoicemail,
+  manualDial,
+  transferCall,
+  transferTargets,
   nextLead,
   sendText,
   skipLead,
@@ -36,6 +40,7 @@ import {
   type MyCallback,
   type Sprint,
   type TextMessage,
+  type TransferTarget,
   type UpcomingLead,
 } from "./actions";
 
@@ -151,6 +156,9 @@ export function AgentConsole(props: ConsoleProps) {
   const [callbacks, setCallbacks] = useState<MyCallback[]>([]);
   const [script, setScript] = useState<string | null>(null);
   const [twoScreen, setTwoScreen] = useState(false);
+  const [held, setHeld] = useState(false);
+  const [targets, setTargets] = useState<TransferTarget[] | null>(null);
+  const [manual, setManual] = useState("");
   const assistWin = useRef<Window | null>(null);
   const [busy, setBusy] = useState(false);
   const [pauseMenu, setPauseMenu] = useState(false);
@@ -278,7 +286,11 @@ export function AgentConsole(props: ConsoleProps) {
         });
       }
       if (u.status === "bridged" || u.status === "answered") setCallStart((s) => s ?? Date.now());
-      if (u.status === "ended") void refreshStats();
+      if (u.status === "ended") {
+        setHeld(false);
+        setTargets(null);
+        void refreshStats();
+      }
     });
     return () => {
       sock.disconnect();
@@ -432,6 +444,44 @@ export function AgentConsole(props: ConsoleProps) {
       if (!r.ok) throw new Error(r.error);
       setDraft("");
       setThread(await textThread(lead.id));
+    });
+
+  const toggleHold = () =>
+    run(async () => {
+      if (!callId) return;
+      const r = await holdCall(callId, !held);
+      if (!r.ok) throw new Error(r.error);
+      setHeld(!held);
+    });
+
+  const openTransfer = () =>
+    run(async () => {
+      setTargets(await transferTargets(campaignId || null));
+    });
+
+  const doTransfer = (toAgentId: string) =>
+    run(async () => {
+      if (!callId) return;
+      const r = await transferCall(callId, toAgentId);
+      if (!r.ok) throw new Error(r.error);
+      setTargets(null);
+      setNotice("Transferred. Disposition your part of the call.");
+    });
+
+  const dialManual = () =>
+    run(async () => {
+      if (!manual.trim()) return;
+      const r = await manualDial(manual.trim());
+      if (!r.ok) throw new Error(r.error);
+      setManual("");
+      setCallId(r.callId);
+      setCallStatus("dialing");
+      setCallStart(null);
+      const cur = await agentCurrent();
+      if (cur?.reservedLeadId) {
+        const l = await leadById(cur.reservedLeadId);
+        if (l) setLead(l);
+      }
     });
 
   const dropVoicemail = () =>
@@ -624,6 +674,14 @@ export function AgentConsole(props: ConsoleProps) {
                       </button>
                     ) : null}
                     {campaign && !canDialOut ? <p className="text-xs">You are a closer on this campaign: you receive transfers and callbacks.</p> : null}
+                    {ready && canDialOut ? (
+                      <div className="flex gap-2">
+                        <input value={manual} onChange={(e) => setManual(e.target.value)} onKeyDown={(e) => e.key === "Enter" && dialManual()} placeholder="Dial a number…" className="flex-1 rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm placeholder:text-zinc-600" />
+                        <button onClick={dialManual} disabled={busy || !manual.trim()} className="rounded-lg border border-white/15 px-3 py-2 text-sm text-zinc-200 hover:bg-white/10 disabled:opacity-40">
+                          Dial
+                        </button>
+                      </div>
+                    ) : null}
                   </div>
                 ) : (
                   <div className="space-y-3 text-sm">
@@ -715,8 +773,8 @@ export function AgentConsole(props: ConsoleProps) {
                     <button onClick={toggleMute} disabled={!onCall} className={`rounded-xl px-3 py-3 text-sm font-medium ${muted ? "bg-amber-400 text-amber-950" : "bg-sky-500/20 text-sky-200"} disabled:opacity-40`}>
                       {muted ? "Unmute" : "Mute"}
                     </button>
-                    <button disabled className="rounded-xl bg-white/10 px-3 py-3 text-sm font-medium text-zinc-400 disabled:opacity-40" title="Phase 4">
-                      Hold
+                    <button onClick={toggleHold} disabled={!onCall || busy} className={`rounded-xl px-3 py-3 text-sm font-medium disabled:opacity-40 ${held ? "bg-amber-400 text-amber-950" : "bg-white/10 text-zinc-200"}`}>
+                      {held ? "Resume" : "Hold"}
                     </button>
                     <button onClick={dropVoicemail} disabled={!onCall || busy} className="rounded-xl bg-violet-500/20 px-3 py-3 text-sm font-medium text-violet-200 disabled:opacity-40" title="It's a machine: leave the campaign's message and move on">
                       Leave VM & next
@@ -725,6 +783,32 @@ export function AgentConsole(props: ConsoleProps) {
                       End Call
                     </button>
                   </div>
+                  {onCall ? (
+                    <div className="mt-3">
+                      {targets === null ? (
+                        <button onClick={openTransfer} disabled={busy} className="rounded-lg border border-white/15 px-3 py-1.5 text-sm text-zinc-200 hover:bg-white/10">
+                          Transfer to a closer…
+                        </button>
+                      ) : (
+                        <div className="rounded-xl border border-white/10 bg-black/30 p-3">
+                          <div className="mb-2 flex items-center justify-between text-xs text-zinc-400">
+                            <span>Ready now on this campaign</span>
+                            <button onClick={() => setTargets(null)} className="hover:text-zinc-100">
+                              close
+                            </button>
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            {targets.map((t) => (
+                              <button key={t.userId} onClick={() => doTransfer(t.userId)} disabled={busy} className="rounded-lg border border-emerald-400/40 bg-emerald-400/10 px-3 py-1.5 text-sm text-emerald-100 hover:bg-emerald-400/20">
+                                {t.name} <span className="text-[10px] text-emerald-300/80">{t.mode.toLowerCase()}</span>
+                              </button>
+                            ))}
+                            {targets.length === 0 ? <span className="text-sm text-zinc-500">Nobody is free right now.</span> : null}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ) : null}
                 </Panel>
               ) : (
                 <Panel title="System & Queue Activity" collapsible={false}>

@@ -86,6 +86,22 @@ built and why; this says how it is wired and what will trip you.
   `evaluateDialWindow`. Ineligible leads are parked 30 minutes so a scan
   does not keep re-checking the same refusal.
 
+## Mid-call controls (`dialer/controls.ts`)
+
+- **Hold**: `conf_hold_status` on the lead leg.
+- **Warm transfer**: the closer is claimed first (ON_CALL), the lead leg is
+  redirected to `/jambonz/transfer` which joins the closer's room; the
+  fronter's `Call` closes with a `Transfer` row and a second `Call` under
+  the closer inherits the provider call sid (so status hooks follow it);
+  the lead's owner becomes the closer; fronter → WRAP_UP. Targets =
+  READY agents on the campaign with the line up, closers first.
+- **Manual dial**: typed number → DNC (system + campaign) and the window
+  by the lead's or area code's zone, then the normal dial. Unknown numbers
+  become a lead in a per-campaign "Manual dials" list (priority 9) so they
+  report like everything else.
+- `/leads`: find a lead by phone, name or email; calls, texts, timeline,
+  consent evidence, DNC hits.
+
 ## Inbound calls, teams and rooms, hardening
 
 - **Inbound** (`dialer/inbound.ts`): a PSTN call to one of our numbers

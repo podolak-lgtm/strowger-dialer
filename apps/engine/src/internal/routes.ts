@@ -14,6 +14,7 @@ import { handleInboundText } from "../sms/inbound";
 import { sendSms } from "../sms/provider";
 import { deliverPending } from "../webhooks/deliver";
 import { agentVoicemailDrop } from "../dialer/voicemail";
+import { holdCall, manualDial, transferCall, transferTargets } from "../dialer/controls";
 import { nightlyRecordings } from "../recordings/export";
 import { releaseLead, reserveNextLead } from "../dialer/hopper";
 import { jambonz, jambonzConfigured } from "../jambonz/client";
@@ -191,6 +192,25 @@ export async function registerInternalRoutes(app: FastifyInstance): Promise<void
     const { callId } = req.params as { callId: string };
     await hangupCall(callId);
     return { ok: true };
+  });
+
+  app.post("/internal/calls/:callId/hold", async (req) => {
+    const { callId } = req.params as { callId: string };
+    const { userId, hold } = z.object({ userId: z.string(), hold: z.boolean() }).parse(req.body);
+    return holdCall(callId, userId, hold);
+  });
+  app.get("/internal/transfer-targets", async (req) => {
+    const { tenantId, userId, campaignId } = req.query as { tenantId: string; userId: string; campaignId?: string };
+    return { targets: await transferTargets(tenantId, campaignId || null, userId) };
+  });
+  app.post("/internal/calls/:callId/transfer", async (req) => {
+    const { callId } = req.params as { callId: string };
+    const { userId, toAgentId } = z.object({ userId: z.string(), toAgentId: z.string() }).parse(req.body);
+    return transferCall(callId, userId, toAgentId);
+  });
+  app.post("/internal/calls/manual", async (req) => {
+    const { tenantId, userId, phone } = Ids.extend({ phone: z.string() }).parse(req.body);
+    return manualDial(tenantId, userId, phone);
   });
 
   app.post("/internal/calls/:callId/voicemail", async (req) => {

@@ -14,6 +14,7 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
     { href: "/affiliates", label: "Affiliates", show: hasRole(session, "SUPERVISOR") },
     { href: "/compliance", label: "Compliance", show: hasRole(session, "SUPERVISOR") },
     { href: "/dids", label: "DIDs", show: hasRole(session, "SUPERVISOR") },
+    { href: "/leads", label: "Find a lead", show: hasRole(session, "SUPERVISOR", "ROOM_SUPERVISOR", "TEAM_LEADER") },
     { href: "/reports", label: "Reports", show: hasRole(session, "SUPERVISOR", "ROOM_SUPERVISOR", "TEAM_LEADER") },
     { href: "/people", label: "People", show: hasRole(session, "SUPERVISOR") },
     { href: "/teams", label: "Teams & rooms", show: hasRole(session, "SUPERVISOR") },
