@@ -180,6 +180,13 @@ export default async function CampaignPage({ params }: PageProps<"/campaigns/[id
 
         <Card title="Caller ID">
           <div className="space-y-3">
+            <p className="text-xs text-zinc-500">
+              Numbers pinned to this campaign are ordered and registered on the{" "}
+              <Link href={`/numbers?campaign=${c.id}`} className="text-sky-300 underline">
+                Numbers page
+              </Link>
+              ; they must be registered with the carrier and jambonz before the campaign dials.
+            </p>
             <Field label="Mode">
               <select name="callerIdMode" defaultValue={c.callerIdMode} className={inputClass}>
                 <option value="LOCAL_PRESENCE">Local presence: rotate numbers matching the lead&apos;s area code</option>

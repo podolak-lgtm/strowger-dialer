@@ -34,6 +34,9 @@ export const config = readEnv({
   COMMIO_USERNAME: z.string().optional(),
   COMMIO_TOKEN: z.string().optional(),
   TELNYX_API_KEY: z.string().optional(),
+  TELNYX_API_URL: z.string().default("https://api.telnyx.com/v2"),
+  /** Where Telnyx sends inbound calls: the jambonz SBC. Default = the account's SIP realm, which on jambonz.cloud resolves to the SBC. */
+  JAMBONZ_SBC_FQDN: z.string().optional(),
   /** AI read of inbound text replies (opt-out intent, callback requests). Unset = keyword matching only. */
   ANTHROPIC_API_KEY: z.string().optional(),
   SMS_AI_MODEL: z.string().default("claude-opus-5-5"),

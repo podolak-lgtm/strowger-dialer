@@ -124,6 +124,57 @@ the engine and `TELNYX_PUBLIC_KEY` on web for inbound webhook signatures.
 `docs/TELNYX-SETUP.md` has the portal steps. The Commio SMS adapter stays
 in `sms/provider.ts` for a second trunk later.
 
+## Number provisioning from Strowger (`/numbers`, 4 Nov)
+
+Owner's rule: a campaign's DIDs are ordered, attached and registered
+before the campaign dials, from one screen. `apps/engine/src/provision/`:
+
+- `telnyx.ts`: Telnyx v2 REST (shapes from the published OpenAPI spec:
+  available numbers, number orders, phone numbers, FQDN connections and
+  FQDN records, outbound voice profiles, messaging profiles, 10DLC brand /
+  campaignBuilder / phoneNumberAssignmentByProfile). `jambonz-admin.ts`:
+  jambonz REST for VoipCarriers, SipGateways, PhoneNumbers (the SDK client
+  only covers calls/conferences/queues).
+- **Setup** (`setupCarrier`, idempotent, reuses by name): outbound voice
+  profile "Strowger"; FQDN connection "Strowger (jambonz)" with
+  credential auth outbound and an FQDN record for the jambonz SBC
+  (`JAMBONZ_SBC_FQDN`, default = `JAMBONZ_SIP_REALM`, which on
+  jambonz.cloud resolves to the SBC; correct it from the portal's
+  Carriers page if inbound calls do not arrive) set as primary inbound
+  route; messaging profile "Strowger – <tenant>" with webhook
+  `WEB_PUBLIC_URL/api/webhooks/sms/telnyx` (one per tenant, because 10DLC
+  campaigns attach to a profile); jambonz carrier `JAMBONZ_CARRIER` with
+  the connection's username/password as outbound auth, outbound gateway
+  `sip.telnyx.com:5060`, inbound gateways = Telnyx signalling IPs
+  (`TELNYX_SIGNALLING_IPS`, from sip.telnyx.com/voice.json, US + CA). Ids
+  are stored on `Tenant` (`telnyx*Id`, `jambonzCarrierSid`). The voice
+  connection and carrier are shared across tenants on one Telnyx/jambonz
+  account; the messaging profile is per tenant.
+- **Order** (`orderNumbers`): `NumberOrder` row → Telnyx number order
+  with connection + messaging profile → `CallerIdNumber` rows
+  (`provider telnyx`, `provisionStatus ordered`, `orderId`, pinned to the
+  chosen campaign or shared) → `syncOrder` finishes numbers Telnyx reports
+  `success`: `finishNumber` confirms the number is `active`, sets
+  connection/profile if missing, adds it to jambonz PhoneNumbers under the
+  carrier and `JAMBONZ_APPLICATION_SID`, and marks `ready` (`voice` when
+  there is no messaging profile). The scheduler job `numberOrders` (3 min)
+  re-syncs pending orders. `registeredAt` stays null: the number will not
+  dial until marked registered at the Free Caller Registry on /dids.
+- **Sync** (`syncNumbers`): adopts numbers on the Telnyx account that we
+  do not know (on our connection or unassigned), finishes pending ones,
+  links `manual` numbers that turn out to be at Telnyx, retires numbers
+  gone from the account. **Release** deletes at Telnyx and jambonz and
+  retires the row (status `released`).
+- **10DLC**: brand (`POST /10dlc/brand`) and campaign
+  (`/10dlc/campaignBuilder`) are submitted from the page; snapshots and
+  ids on `Tenant` (`tenDlc*`); status refreshes on every page load;
+  "Assign all numbers" calls `phoneNumberAssignmentByProfile` once the
+  campaign status is accepted/provisioned. Opt-out/help keyword lists sent
+  to TCR match `shared/sms.ts`.
+- Errors from either API come back to the page verbatim (`?msg=`); every
+  action is audit-logged (`provision.*`). The engine's internal routes are
+  under `/internal/provision/*`.
+
 ## Media bucket
 
 Railway bucket `media` (S3-compatible, region sjc). The web service reads

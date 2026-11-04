@@ -8,6 +8,7 @@ import { scrubAllTenants } from "../scrub/job";
 import { deliverPending } from "../webhooks/deliver";
 import { nightlyRecordings } from "../recordings/export";
 import { queueTick } from "../inbound/router";
+import { syncPendingOrders } from "../provision";
 
 interface Job {
   name: string;
@@ -55,6 +56,7 @@ const JOBS: Job[] = [
   { name: "webhooks", everyMs: 30_000, run: deliverPending },
   { name: "nightlyRecordings", everyMs: 15 * 60_000, run: nightly },
   { name: "queues", everyMs: 1_000, run: queueTick },
+  { name: "numberOrders", everyMs: 3 * 60_000, run: syncPendingOrders },
 ];
 
 export function startScheduler(): () => void {

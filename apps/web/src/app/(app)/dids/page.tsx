@@ -84,9 +84,14 @@ export default async function DidsPage({ searchParams }: PageProps<"/dids">) {
           </>
         }
         actions={
-          <Link href="/settings" className="rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-zinc-200 hover:bg-zinc-800">
-            Number pool settings
-          </Link>
+          <>
+            <Link href="/numbers" className="rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-zinc-200 hover:bg-zinc-800">
+              Order & provision numbers
+            </Link>
+            <Link href="/settings" className="rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-zinc-200 hover:bg-zinc-800">
+              Number pool settings
+            </Link>
+          </>
         }
       />
 

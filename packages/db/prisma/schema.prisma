@@ -25,6 +25,17 @@ model Tenant {
   /// {"type":"sftp","host":"","port":22,"username":"","password":"<enc>","path":"/recordings"}
   /// or {"type":"dropbox","token":"<enc>","path":"/Strowger"}; null = no export.
   recordingExport        Json?
+  /// Carrier provisioning (owner, 4 Nov: order and register numbers from Strowger).
+  /// Telnyx resources this tenant's numbers are attached to, and the jambonz carrier.
+  telnyxConnectionId        String?
+  telnyxOutboundProfileId   String?
+  telnyxMessagingProfileId  String?
+  jambonzCarrierSid         String?
+  /// 10DLC (A2P texting registration) at Telnyx: brand and campaign ids plus the last snapshot seen.
+  tenDlcBrandId    String?
+  tenDlcCampaignId String?
+  tenDlcBrand      Json?
+  tenDlcCampaign   Json?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -37,6 +48,7 @@ model Tenant {
   affiliates     Affiliate[]
   dncEntries     DncEntry[]
   callerIds      CallerIdNumber[]
+  numberOrders   NumberOrder[]
   audioAssets    AudioAsset[]
   calls          Call[]
   messages       Message[]
@@ -288,6 +300,7 @@ model Campaign {
   messages      Message[]
   webhooks      WebhookEndpoint[]
   callerIds     CallerIdNumber[]
+  numberOrders  NumberOrder[]
   queues        Queue[]
 
   @@unique([tenantId, name])
@@ -756,6 +769,15 @@ model CallerIdNumber {
   restUntil       DateTime?
   shortCallsToday Int       @default(0)
 
+  /// Provisioning: ids at the carrier and in jambonz, and how far along the number is.
+  /// manual = added by hand; ordered = bought, waiting at Telnyx; voice = in jambonz; ready = voice + messaging profile; failed.
+  telnyxNumberId       String?
+  jambonzPhoneNumberSid String?
+  provisionStatus      String   @default("manual")
+  provisionError       String?
+  order                NumberOrder? @relation(fields: [orderId], references: [id])
+  orderId              String?
+
   scans DidScan[]
 
   @@unique([tenantId, phone])
@@ -764,6 +786,27 @@ model CallerIdNumber {
 }
 
 /// One reputation reading of one number, kept so a change can be dated.
+/// One purchase at the carrier: which area code, how many, for which campaign, and what came back.
+model NumberOrder {
+  id            String   @id @default(cuid())
+  tenant        Tenant   @relation(fields: [tenantId], references: [id])
+  tenantId      String
+  campaign      Campaign? @relation(fields: [campaignId], references: [id])
+  campaignId    String?
+  areaCode      String
+  quantity      Int
+  telnyxOrderId String?
+  /// pending | success | failure (Telnyx order status) or error
+  status        String   @default("pending")
+  error         String?
+  requestedBy   String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  numbers       CallerIdNumber[]
+
+  @@index([tenantId, createdAt])
+}
+
 model DidScan {
   id             String         @id @default(cuid())
   number         CallerIdNumber @relation(fields: [numberId], references: [id], onDelete: Cascade)

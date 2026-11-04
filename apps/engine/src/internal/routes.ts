@@ -18,6 +18,8 @@ import { holdCall, manualDial, transferCall, transferTargets } from "../dialer/c
 import { nightlyRecordings } from "../recordings/export";
 import { releaseLead, reserveNextLead } from "../dialer/hopper";
 import { jambonz, jambonzConfigured } from "../jambonz/client";
+import { assignNumbersToCampaign, createBrand, createTenDlcCampaign, orderNumbers, provisionStatus, releaseNumber, searchNumbers, setupCarrier, syncNumbers, tenDlcStatus, usecaseFees } from "../provision";
+import type { BrandInput, CampaignInput } from "../provision/telnyx";
 
 const Ids = z.object({ tenantId: z.string(), userId: z.string() });
 
@@ -230,5 +232,45 @@ export async function registerInternalRoutes(app: FastifyInstance): Promise<void
       .object({ userId: z.string(), dispositionId: z.string(), notes: z.string().nullable().optional(), callbackAt: z.string().nullable().optional(), callbackScope: z.enum(["AGENT", "CAMPAIGN"]).optional() })
       .parse(req.body);
     return dispositionCall({ callId, actorId: body.userId, dispositionId: body.dispositionId, notes: body.notes ?? null, callbackAt: body.callbackAt ?? null, callbackScope: body.callbackScope });
+  });
+
+  // ---- Provisioning (numbers at Telnyx + jambonz, 10DLC). Errors come back as 400 with the carrier's message.
+  const wrap = async <T,>(fn: () => Promise<T>, reply: { code: (n: number) => { send: (b: unknown) => unknown } }) => {
+    try {
+      return await fn();
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      return reply.code(400).send({ error: message });
+    }
+  };
+  app.get("/internal/provision/status", async (req) => provisionStatus(z.object({ tenantId: z.string() }).parse(req.query).tenantId));
+  app.post("/internal/provision/setup", async (req, reply) => wrap(() => setupCarrier(z.object({ tenantId: z.string() }).parse(req.body).tenantId), reply));
+  app.post("/internal/provision/search", async (req, reply) =>
+    wrap(() => searchNumbers(z.object({ areaCode: z.string().optional(), state: z.string().optional(), locality: z.string().optional(), limit: z.number().int().min(1).max(100).optional() }).parse(req.body)), reply),
+  );
+  app.post("/internal/provision/order", async (req, reply) =>
+    wrap(() => orderNumbers(z.object({ tenantId: z.string(), phones: z.array(z.string()).min(1).max(100), campaignId: z.string().nullable(), areaCode: z.string(), requestedBy: z.string().optional() }).parse(req.body)), reply),
+  );
+  app.post("/internal/provision/sync", async (req, reply) => wrap(() => syncNumbers(z.object({ tenantId: z.string() }).parse(req.body).tenantId), reply));
+  app.post("/internal/provision/release", async (req, reply) => {
+    const b = z.object({ tenantId: z.string(), id: z.string() }).parse(req.body);
+    return wrap(async () => {
+      await releaseNumber(b.tenantId, b.id);
+      return { ok: true };
+    }, reply);
+  });
+  app.get("/internal/provision/tendlc", async (req) => tenDlcStatus(z.object({ tenantId: z.string() }).parse(req.query).tenantId));
+  app.post("/internal/provision/tendlc/brand", async (req, reply) => {
+    const b = z.object({ tenantId: z.string(), brand: z.custom<BrandInput>() }).parse(req.body);
+    return wrap(() => createBrand(b.tenantId, b.brand), reply);
+  });
+  app.post("/internal/provision/tendlc/campaign", async (req, reply) => {
+    const b = z.object({ tenantId: z.string(), campaign: z.custom<Omit<CampaignInput, "brandId">>() }).parse(req.body);
+    return wrap(() => createTenDlcCampaign(b.tenantId, b.campaign), reply);
+  });
+  app.post("/internal/provision/tendlc/assign", async (req, reply) => wrap(() => assignNumbersToCampaign(z.object({ tenantId: z.string() }).parse(req.body).tenantId), reply));
+  app.get("/internal/provision/tendlc/fees", async (req, reply) => {
+    const q = z.object({ tenantId: z.string(), usecase: z.string() }).parse(req.query);
+    return wrap(() => usecaseFees(q.tenantId, q.usecase), reply);
   });
 }

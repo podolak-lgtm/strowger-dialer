@@ -5,6 +5,17 @@ through its messaging API). Nothing in Strowger names Commio; the engine's
 `JAMBONZ_CARRIER=Telnyx` and `SMS_PROVIDER=telnyx` are already set on
 Railway.
 
+## The short version (4 Nov): do it from Strowger
+
+With `TELNYX_API_KEY` and `JAMBONZ_API_KEY` on the engine, **Strowger →
+Numbers** does steps 1 and 2 below for you ("Run carrier setup"), buys
+numbers by area code for a campaign and registers them in jambonz, and
+submits the 10DLC brand and campaign (step 3). The portal steps remain here
+for reference and for checking what the setup created. The one thing to
+verify in the jambonz portal is the SBC address Telnyx should send inbound
+calls to (Carriers page); if it differs from the account's SIP realm, set
+`JAMBONZ_SBC_FQDN` on the engine and run setup again.
+
 ## 1. Telnyx portal: voice
 
 1. **SIP connection** (Voice → SIP Connections → Add): type *Credentials*
