@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@fastify/cors": "^11.0.0",
+    "@jambonz/sdk": "^0.12.1",
     "@prisma/client": "^6.19.3",
     "@strowger/db": "workspace:*",
     "@strowger/shared": "workspace:*",

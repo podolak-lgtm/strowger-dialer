@@ -9,7 +9,8 @@
     "./phone": "./src/phone.ts",
     "./env": "./src/env.ts",
     "./geo": "./src/geo/index.ts",
-    "./intake": "./src/intake.ts"
+    "./intake": "./src/intake.ts",
+    "./secrets": "./src/secrets.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

@@ -10,4 +10,18 @@ export const config = readEnv({
   ENGINE_INTERNAL_KEY: z.string().min(32),
   WEB_ORIGIN: z.string().default("http://localhost:3000"),
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
+
+  // jambonz. Without API key + account SID the engine runs but cannot dial.
+  JAMBONZ_API_URL: z.string().default("https://api.jambonz.cloud"),
+  JAMBONZ_API_KEY: z.string().optional(),
+  JAMBONZ_ACCOUNT_SID: z.string().optional(),
+  /** The jambonz application whose hooks point at this engine. */
+  JAMBONZ_APPLICATION_SID: z.string().optional(),
+  JAMBONZ_SIP_REALM: z.string().optional(),
+  /** Webhook signing secret from the jambonz account (header Jambonz-Signature). */
+  JAMBONZ_WEBHOOK: z.string().optional(),
+  /** Refuse unsigned webhooks. Off until the signature format is confirmed live. */
+  JAMBONZ_REQUIRE_SIGNATURE: z.coerce.boolean().default(false),
+  /** Carrier (BYOC) name in jambonz for outbound PSTN calls; empty = account default. */
+  JAMBONZ_CARRIER: z.string().optional(),
 });

@@ -23,7 +23,17 @@ built and why; this says how it is wired and what will trip you.
   is a Railway-generated shared variable both services reference.
   **`CLERK_SECRET_KEY` on the web service is set by the owner in the
   Railway dashboard, never by a session.**
-- Next: Phase 2 (jambonz + Commio, agent softphone, preview dialing).
+- **Phase 2 (preview dialing end to end) is built, pending live telephony**:
+  engine jambonz hooks (registration digest check, call/AMD/status/
+  conference), agent state in Redis, nailed-up agent legs as per-agent
+  conference rooms, next-lead reservation with compliance checks, outbound
+  dial via REST with AMD and local-presence caller ID, hangup, dispositions
+  (callbacks, DNC, recycle), People page with SIP credentials, Settings
+  (audio by URL, caller ID pool), and the agent console at `/agent`
+  (`docs/design/`). Not yet exercised against jambonz: the account's API
+  key and application SID are still to be set (`docs/JAMBONZ-SETUP.md`).
+- Next: finish jambonz wiring live, then Phase 2b (DID manager) and Phase 3
+  (ratio dialing).
 
 ## Decisions baked into the schema
 
@@ -42,6 +52,34 @@ built and why; this says how it is wired and what will trip you.
   `abandonWarnPct`, dropping to 1:1 at `abandonCapPct`.
 - `CampaignAgent.agentMode` is `FRONTER | CLOSER | BOTH`; `outboundOn` is the
   closer's checkbox, allowed only when `Campaign.closersMayDial`.
+
+## Telephony model
+
+- An agent's line is a **conference room named `agent-<userId>`**. Clicking
+  Ready makes the browser softphone call the jambonz application; the engine
+  answers with a `conference` verb (`memberTag: agent`,
+  `endConferenceOnExit: true`) and records the leg's call_sid in Redis
+  (`agent:<userId>.agentCallSid`, `agentsid:<sid>`). The leg stays up until
+  logout. Supervisors (Phase 4) join the same room muted, or with
+  `coach` to whisper.
+- A lead call is created over REST with `tag: {kind: "lead", callId}`; on
+  answer jambonz hits `/jambonz/call`, which replies with the optional
+  disclosure `play` and a `conference` join into the agent's room
+  (`startConferenceOnEnter: false`, so a lead can never sit in an empty
+  room). `callsid:<sid>` in Redis maps provider call_sid to our `Call.id` for
+  hooks that lack customerData.
+- AMD runs on the lead leg (`/jambonz/amd?callId=`): machine + HANGUP
+  policy → hangup; machine + DROP → wait for the tone, `play` the drop file,
+  hangup. All prompts are `play` verbs: **no TTS anywhere**, so the account
+  needs no speech vendor.
+- Registration: jambonz forwards the SIP digest to `/jambonz/register`; the
+  engine recomputes it from the agent's decrypted password
+  (`User.sipSecret`, AES-GCM under ENGINE_INTERNAL_KEY) and returns
+  `application_sid` so anything the phone dials lands in our app.
+- Compliance is evaluated at reservation time (`dialer/hopper.ts`): dial
+  plan by lead age and type, attempts today in the lead's local day, then
+  `evaluateDialWindow`. Ineligible leads are parked 30 minutes so a scan
+  does not keep re-checking the same refusal.
 
 ## Lead intake
 

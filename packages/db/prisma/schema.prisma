@@ -68,9 +68,12 @@ model User {
   lastName    String?
   roles       Role[]   @default([AGENT])
   active      Boolean  @default(true)
-  /// SIP credentials for the browser softphone (Phase 2). Password is stored
-  /// encrypted at rest by the engine, never in plain text.
+  /// SIP credentials for the browser softphone. The password is stored
+  /// encrypted (AES-GCM under a key derived from ENGINE_INTERNAL_KEY): the
+  /// registration hook needs it to verify digests and the agent's own browser
+  /// needs it to register. Never shown to anyone else.
   sipUsername String?  @unique
+  sipSecret   String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -695,6 +698,8 @@ model Call {
   recordingExpiresAt DateTime?
   legalHold          Boolean   @default(false)
   costCents          Int?
+  /// Raw provider facts worth keeping (final SIP status, AMD events).
+  providerData       Json      @default("{}")
 
   transfers Transfer[]
 

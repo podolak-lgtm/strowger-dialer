@@ -11,12 +11,14 @@
   },
   "dependencies": {
     "@clerk/nextjs": "^6.33.0",
+    "@jambonz/client-sdk-web": "^0.1.5",
     "@strowger/db": "workspace:*",
     "@strowger/shared": "workspace:*",
     "next": "16.4.5",
     "papaparse": "^5.7.0",
     "react": "19.3.0",
     "react-dom": "19.3.0",
+    "socket.io-client": "^4.8.4",
     "zod": "^3.25.0"
   },
   "devDependencies": {
