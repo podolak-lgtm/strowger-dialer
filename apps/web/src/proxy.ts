@@ -7,5 +7,10 @@ export default clerkMiddleware(async (auth, req) => {
 });
 
 export const config = {
-  matcher: ["/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)", "/(api|trpc)(.*)"],
+  // /api/health and /api/v1 (affiliate posting, keyed by its own bearer token)
+  // never touch Clerk, so the healthcheck and posting work with no session.
+  matcher: [
+    "/((?!_next|api/health|api/v1|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)",
+    "/(api(?!/health|/v1)|trpc)(.*)",
+  ],
 };

@@ -7,11 +7,13 @@
     ".": "./src/index.ts",
     "./compliance": "./src/compliance/index.ts",
     "./phone": "./src/phone.ts",
-    "./env": "./src/env.ts"
+    "./env": "./src/env.ts",
+    "./geo": "./src/geo/index.ts",
+    "./intake": "./src/intake.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test src/**/*.test.ts"
+    "test": "node --import tsx --test \"src/**/*.test.ts\""
   },
   "dependencies": {
     "zod": "^3.25.0"
