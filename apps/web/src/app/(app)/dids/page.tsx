@@ -4,7 +4,9 @@ import Link from "next/link";
 import { requireRole } from "@/lib/auth";
 import { Badge, Button, Card, Field, PageHeader, inputClass } from "@/components/ui";
 import { discrepant, provider, worst } from "@/lib/did-reputation";
-import { assignNumberCampaign, bulkCheck, resolveNumber, rotateNumber, setAutoRecheck, testNumber } from "./actions";
+import { assignNumberCampaign, bulkCheck, resolveNumber, setAutoRecheck, testNumber } from "./actions";
+import { markRegistered, setDailyCap, setRest } from "./hygiene-actions";
+import { capForNumber, numbersNeeded, warmupStage } from "@strowger/shared/did-hygiene";
 
 function VerdictCell({ v }: { v: CarrierVerdict }) {
   const style =
@@ -55,6 +57,10 @@ export default async function DidsPage({ searchParams }: PageProps<"/dids">) {
   const settings = (s.tenant.settings ?? {}) as { didDailyRecheck?: boolean };
   const recheck = settings.didDailyRecheck ?? true;
   const vendor = provider().name;
+  const unregistered = all.filter((n) => !n.registeredAt).length;
+  const resting = all.filter((n) => n.restUntil && n.restUntil > new Date()).length;
+  const dialsToday = all.reduce((n, x) => n + x.usedToday, 0);
+  const shortToday = all.reduce((n, x) => n + x.shortCallsToday, 0);
 
   const stat = (label: string, value: number, tone: "zinc" | "green" | "red" | "amber") => (
     <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
@@ -89,6 +95,40 @@ export default async function DidsPage({ searchParams }: PageProps<"/dids">) {
         {stat("Good status (all carriers)", all.filter(good).length, "green")}
         {stat("Blocked / spam (ATT, VZW, T-MO)", all.filter(bad).length, "red")}
         {stat("Carrier discrepancies", all.filter(disc).length, "amber")}
+      </div>
+      <div className="mb-6 rounded-lg border border-zinc-800 bg-zinc-900 p-4 text-sm">
+        <div className="mb-2 flex flex-wrap items-center gap-4">
+          <span className="font-semibold">Hygiene</span>
+          <span className="text-zinc-400">
+            Not yet registered at the Free Caller Registry: <b className={unregistered ? "text-amber-300" : "text-zinc-100"}>{unregistered}</b> (they will not dial)
+          </span>
+          <span className="text-zinc-400">
+            Resting after a flag: <b>{resting}</b>
+          </span>
+          <span className="text-zinc-400">
+            Dials today across the pool: <b>{dialsToday}</b> · short calls (&lt;10 s): <b className={shortToday > dialsToday * 0.3 ? "text-amber-300" : ""}>{shortToday}</b>
+          </span>
+          <span className="text-zinc-400">
+            Pool supports about <b>{(all.filter((n) => n.status === "ACTIVE" && n.registeredAt).length * 75).toLocaleString()}</b> dials/day at the established cap; 2,000/day needs {numbersNeeded(2000)} numbers.
+          </span>
+        </div>
+        <p className="text-xs text-zinc-500">
+          Caps by number age: week 1 → 40/day, weeks 2–3 → 65/day, then 75/day, spread over 10 hours. Any spam or blocked reading pulls the number for 21 days. Local
+          area codes are matched first. Short calls (hangups, voicemail drops, abandons) are what carriers punish most; keep the abandon rate low.
+        </p>
+        {unregistered ? (
+          <form action={markRegistered} className="mt-2 flex items-center gap-2">
+            {all.filter((n) => !n.registeredAt).map((n) => (
+              <input key={n.id} type="hidden" name="ids" value={n.id} />
+            ))}
+            <Button type="submit" variant="ghost">
+              Mark all {unregistered} as registered at freecallerregistry.com
+            </Button>
+            <a href="https://www.freecallerregistry.com/" target="_blank" rel="noreferrer" className="text-xs text-sky-300 underline">
+              Register them first ↗
+            </a>
+          </form>
+        ) : null}
       </div>
 
       <div className="grid gap-6 lg:grid-cols-[320px_1fr]">
@@ -143,6 +183,7 @@ export default async function DidsPage({ searchParams }: PageProps<"/dids">) {
                     The Big Three matrix
                   </th>
                   <th className="px-2 py-2">Attestation</th>
+                  <th className="px-2 py-2">Today / cap</th>
                   <th className="px-2 py-2">Last scanned</th>
                   <th className="px-2 py-2">Status</th>
                   <th className="px-2 py-2">Action</th>
@@ -154,6 +195,7 @@ export default async function DidsPage({ searchParams }: PageProps<"/dids">) {
                   <th className="px-2 pb-1 text-center">Verizon</th>
                   <th className="px-2 pb-1 text-center">T-Mobile</th>
                   <th />
+                  <th className="px-2 pb-1">warm-up stage</th>
                   <th />
                   <th />
                   <th />
@@ -198,9 +240,23 @@ export default async function DidsPage({ searchParams }: PageProps<"/dids">) {
                       <td className="px-2 py-2 text-center">
                         <Att a={n.attestation} />
                       </td>
+                      <td className="px-2 py-2 text-xs">
+                        <form action={setDailyCap} className="flex items-center gap-1">
+                          <input type="hidden" name="id" value={n.id} />
+                          <span className="tabular-nums">{n.usedToday}</span>
+                          <span className="text-zinc-600">/</span>
+                          <input name="dailyCap" defaultValue={n.dailyCap ?? ""} placeholder={String(capForNumber(n))} className={`${inputClass} w-14 py-0.5 text-xs`} title="Daily cap; blank = automatic by age" />
+                          <button type="submit" className="text-zinc-400 hover:text-zinc-100" title="Save cap">✓</button>
+                        </form>
+                        <div className="text-[10px] text-zinc-500">
+                          {warmupStage(n)} · {n.shortCallsToday} short
+                          {n.registeredAt ? "" : <span className="ml-1 text-amber-300">· not registered</span>}
+                        </div>
+                      </td>
                       <td className="px-2 py-2 text-xs text-zinc-400">{ago(n.lastScannedAt)}</td>
                       <td className="px-2 py-2">
                         <Badge tone={n.status === "ACTIVE" ? "green" : n.status === "SPAM_FLAGGED" ? "red" : "amber"}>{n.status.toLowerCase().replace("_", " ")}</Badge>
+                        {n.restUntil && n.restUntil > new Date() ? <div className="text-[10px] text-zinc-500">rests until {n.restUntil.toISOString().slice(0, 10)}</div> : null}
                       </td>
                       <td className="px-2 py-2">
                         <div className="flex gap-1">
@@ -211,10 +267,27 @@ export default async function DidsPage({ searchParams }: PageProps<"/dids">) {
                             </Button>
                           </form>
                           {n.status === "ACTIVE" ? (
-                            <form action={rotateNumber}>
+                            <form action={setRest}>
                               <input type="hidden" name="id" value={n.id} />
+                              <input type="hidden" name="days" value="21" />
+                              <Button type="submit" variant="ghost" className="px-2 py-1 text-xs" title="Pull from rotation for 21 days">
+                                Rest
+                              </Button>
+                            </form>
+                          ) : (
+                            <form action={setRest}>
+                              <input type="hidden" name="id" value={n.id} />
+                              <input type="hidden" name="days" value="0" />
                               <Button type="submit" variant="ghost" className="px-2 py-1 text-xs">
-                                Rotate
+                                Restore
+                              </Button>
+                            </form>
+                          )}
+                          {!n.registeredAt ? (
+                            <form action={markRegistered}>
+                              <input type="hidden" name="ids" value={n.id} />
+                              <Button type="submit" variant="ghost" className="px-2 py-1 text-xs" title="Registered at the Free Caller Registry">
+                                Registered
                               </Button>
                             </form>
                           ) : null}

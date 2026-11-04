@@ -12,7 +12,8 @@
     "./intake": "./src/intake.ts",
     "./secrets": "./src/secrets.ts",
     "./cadence": "./src/cadence.ts",
-    "./sms": "./src/sms.ts"
+    "./sms": "./src/sms.ts",
+    "./did-hygiene": "./src/did-hygiene.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

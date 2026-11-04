@@ -20,6 +20,7 @@ import {
   hangup,
   leadById,
   leadHistory,
+  leaveVoicemail,
   nextLead,
   sendText,
   skipLead,
@@ -379,6 +380,19 @@ export function AgentConsole(props: ConsoleProps) {
       setThread(await textThread(lead.id));
     });
 
+  const dropVoicemail = () =>
+    run(async () => {
+      if (!callId) return;
+      const r = await leaveVoicemail(callId);
+      if (!r.ok) throw new Error(r.error);
+      setNotice("Voicemail is being left; you are back to Ready.");
+      setLead(null);
+      setCallId(null);
+      setCallStatus("idle");
+      setCallStart(null);
+      void refreshStats();
+    });
+
   const toggleMute = () => {
     const c = roomCallRef.current;
     if (!c) return;
@@ -640,8 +654,8 @@ export function AgentConsole(props: ConsoleProps) {
                     <button disabled className="rounded-xl bg-white/10 px-3 py-3 text-sm font-medium text-zinc-400 disabled:opacity-40" title="Phase 4">
                       Hold
                     </button>
-                    <button disabled className="rounded-xl bg-white/10 px-3 py-3 text-sm font-medium text-zinc-400 disabled:opacity-40" title="Phase 3">
-                      Drop VM
+                    <button onClick={dropVoicemail} disabled={!onCall || busy} className="rounded-xl bg-violet-500/20 px-3 py-3 text-sm font-medium text-violet-200 disabled:opacity-40" title="It's a machine: leave the campaign's message and move on">
+                      Leave VM & next
                     </button>
                     <button onClick={endCall} disabled={!onCall || busy} className="rounded-xl bg-red-500/80 px-3 py-3 text-sm font-semibold text-white disabled:opacity-40">
                       End Call

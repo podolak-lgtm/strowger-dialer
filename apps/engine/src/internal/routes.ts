@@ -13,6 +13,8 @@ import { getSupervision, setSupervisionMode, startSupervision, stopSupervision, 
 import { handleInboundText } from "../sms/inbound";
 import { sendSms } from "../sms/provider";
 import { deliverPending } from "../webhooks/deliver";
+import { agentVoicemailDrop } from "../dialer/voicemail";
+import { nightlyRecordings } from "../recordings/export";
 import { releaseLead, reserveNextLead } from "../dialer/hopper";
 import { jambonz, jambonzConfigured } from "../jambonz/client";
 
@@ -20,6 +22,17 @@ const Ids = z.object({ tenantId: z.string(), userId: z.string() });
 
 export async function registerInternalRoutes(app: FastifyInstance): Promise<void> {
   app.get("/internal/ping", async () => ({ pong: true, telephony: jambonzConfigured, scrub: crossbarConfigured }));
+
+  /** Proves the jambonz key works: a cheap authenticated read. */
+  app.get("/internal/jambonz/check", async () => {
+    if (!jambonzConfigured) return { ok: false, error: "not configured" };
+    try {
+      const count = await jambonz.calls.count();
+      return { ok: true, activeCalls: count };
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    }
+  });
 
   app.post("/internal/scrub/run", async (req) => {
     const { tenantId } = z.object({ tenantId: z.string() }).parse(req.body);
@@ -177,6 +190,17 @@ export async function registerInternalRoutes(app: FastifyInstance): Promise<void
   app.post("/internal/calls/:callId/hangup", async (req) => {
     const { callId } = req.params as { callId: string };
     await hangupCall(callId);
+    return { ok: true };
+  });
+
+  app.post("/internal/calls/:callId/voicemail", async (req) => {
+    const { callId } = req.params as { callId: string };
+    const { userId } = z.object({ userId: z.string() }).parse(req.body);
+    return agentVoicemailDrop(callId, userId);
+  });
+
+  app.post("/internal/recordings/run", async () => {
+    await nightlyRecordings();
     return { ok: true };
   });
 

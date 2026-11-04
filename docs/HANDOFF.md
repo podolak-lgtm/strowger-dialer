@@ -86,6 +86,32 @@ built and why; this says how it is wired and what will trip you.
   `evaluateDialWindow`. Ineligible leads are parked 30 minutes so a scan
   does not keep re-checking the same refusal.
 
+## Voicemail, recordings, DID hygiene (owner, 4 Nov)
+
+- **Voicemail** per campaign: `voicemailAction` HANGUP (retry after
+  `voicemailRetryMinutes`) or DROP; `voicemailMode` FILE (audio asset) or
+  TTS (`voicemailScript` with {{first_name}}, {{last_name}}, {{company}},
+  {{callback_number}}, {{agent}}; needs a speech vendor on the jambonz
+  account). With AMD on, **preview calls are parked on a pause too**, so a
+  machine never reaches the agent; the AMD hook joins humans. Agent button
+  "Leave VM & next" → `/internal/calls/:id/voicemail` → jambonz redirect to
+  `/jambonz/vm-drop` (pause 1 s, message, hangup), auto-disposition with the
+  campaign's VM code, agent back to READY.
+- **Recordings**: `Tenant.recordingRetentionDays` (default 60) and
+  `recordingExport` (SFTP or Dropbox, secrets AES-encrypted). Nightly after
+  06:00 UTC (`recordings/export.ts`): export un-exported recordings (bytes
+  from `Call.recordingUrl` or jambonz's recent-calls recording endpoint),
+  then sweep past retention (`recordingDeletedAt`, URL cleared) unless
+  `legalHold`. Files: `<folder>/<YYYY-MM-DD>/<time>_<phone>_<callId>.wav`.
+  Nothing flows until the jambonz account records to a bucket.
+- **DID hygiene** (`shared/did-hygiene.ts`, tested): a number dials only if
+  ACTIVE, `registeredAt` set (Free Caller Registry), not `restUntil`, under
+  its cap (week 1 40, weeks 2–3 65, then 75, or `dailyCap`) and under the
+  hourly spread (cap/10, Redis `did:hour:<hour>`). Local area code first,
+  then least used. Any spam/blocked reading → SPAM_FLAGGED with a 21-day
+  `restUntil`. Short calls (<10 s after answer) are counted per number
+  (`shortCallsToday`). DIDs page shows all of it and bulk "mark registered".
+
 ## Campaign builder
 
 `/campaigns/<id>/builder` (`builder.tsx`): drag-to-reorder lists (priority

@@ -7,3 +7,4 @@ export * from "./intake";
 export * from "./secrets";
 export * from "./cadence";
 export * from "./sms";
+export * from "./did-hygiene";

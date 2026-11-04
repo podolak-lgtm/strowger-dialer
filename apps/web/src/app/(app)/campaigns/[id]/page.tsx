@@ -135,11 +135,25 @@ export default async function CampaignPage({ params }: PageProps<"/campaigns/[id
         <Card title="Answering machines and screeners">
           <div className="space-y-3">
             <Check name="amdEnabled" label="Detect answering machines" checked={c.amdEnabled} />
-            <Field label="On voicemail">
+            <Field label="On voicemail" hint="A machine is never handed to an agent in either mode.">
               <select name="voicemailAction" defaultValue={c.voicemailAction} className={inputClass}>
-                <option value="HANGUP">Hang up</option>
-                <option value="DROP">Leave the recorded voicemail message</option>
+                <option value="HANGUP">Hang up and try again later</option>
+                <option value="DROP">Leave a message, then try again later</option>
               </select>
+            </Field>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Message type">
+                <select name="voicemailMode" defaultValue={c.voicemailMode} className={inputClass}>
+                  <option value="FILE">Recorded file (Settings → Audio)</option>
+                  <option value="TTS">Spoken script with variables</option>
+                </select>
+              </Field>
+              <Field label="Retry after (minutes)">
+                <input name="voicemailRetryMinutes" type="number" min="15" defaultValue={c.voicemailRetryMinutes} className={inputClass} />
+              </Field>
+            </div>
+            <Field label="Spoken script" hint="Variables: {{first_name}}, {{last_name}}, {{company}}, {{callback_number}}, {{agent}}. Needs a speech vendor on the jambonz account; otherwise use a file.">
+              <textarea name="voicemailScript" rows={3} defaultValue={c.voicemailScript ?? ""} className={inputClass} placeholder="Hi {{first_name}}, this is {{agent}} with {{company}} returning your request. Call us back at {{callback_number}}." />
             </Field>
             <Check name="screenerDetection" label="Detect call-screening services (Google Call Screen and the like)" checked={c.screenerDetection} />
             <Field label="When a screener answers">

@@ -23,6 +23,7 @@ import { detectScreener } from "@strowger/shared/compliance";
 import { emitToAgent } from "../realtime";
 import type { Call, Campaign } from "@strowger/db";
 import { getSupervision, supervisorJoinVerbs, supervisorLegEnded } from "../supervise";
+import { voicemailVerbs } from "../dialer/voicemail";
 import { log } from "../log";
 import { agentRoom, hookUrl, jambonz } from "./client";
 
@@ -226,9 +227,11 @@ export async function registerJambonzRoutes(app: FastifyInstance): Promise<void>
         : [];
 
     if (call.agentId) {
-      // Preview: the agent was reserved before the dial.
+      // Preview: the agent was reserved before the dial. With AMD on, a machine
+      // is never handed to them: hold until the AMD hook decides.
       const agent = await getAgent(call.agentId);
       if (!agent?.agentCallSid) return [...screener, ...(await abandonVerbs(call, campaign))];
+      if (campaign.amdEnabled) return [...screener, { verb: "pause", length: 8 }, { verb: "hangup" }];
       return [...screener, ...(await joinVerbs(call, campaign, call.agentId))];
     }
 
@@ -294,8 +297,11 @@ export async function registerJambonzRoutes(app: FastifyInstance): Promise<void>
         if (b.type === "amd_human_detected") patch.amdResult = "HUMAN";
         else if (!call.amdResult) patch.amdResult = "UNKNOWN";
         await prisma.call.update({ where: { id: callId }, data: patch });
-        // Ratio call parked on a pause: this reply replaces it with the bridge (or safe harbor).
-        if (!call.agentId && !call.bridgedAt && !call.screenerDetected) return reply.send(await bridgeToReadyAgent({ ...call, ...patch } as Call, call.campaign));
+        // The call is parked on a pause: this reply replaces it with the bridge (or safe harbor).
+        if (!call.bridgedAt && !call.screenerDetected) {
+          if (call.agentId) return reply.send(await joinVerbs(call, call.campaign, call.agentId));
+          return reply.send(await bridgeToReadyAgent({ ...call, ...patch } as Call, call.campaign));
+        }
         return reply.send([]);
       }
       case "amd_machine_detected": {
@@ -311,9 +317,11 @@ export async function registerJambonzRoutes(app: FastifyInstance): Promise<void>
       case "amd_tone_detected": {
         await prisma.call.update({ where: { id: callId }, data: patch });
         if (call.campaign.voicemailAction === "DROP" && call.amdResult === "MACHINE") {
-          const url = await audioUrl(call.campaign.voicemailDropAudioId);
-          await prisma.call.update({ where: { id: callId }, data: { outcome: url ? "VOICEMAIL_DROPPED" : "VOICEMAIL" } });
-          return reply.send([...(url ? [{ verb: "play", url }] : []), { verb: "hangup" }]);
+          const lead = call.leadId ? await prisma.lead.findUnique({ where: { id: call.leadId } }) : null;
+          const agentUser = call.agentId ? await prisma.user.findUnique({ where: { id: call.agentId }, select: { firstName: true } }) : null;
+          const verbs = await voicemailVerbs(call.campaign, lead, call.callerId, agentUser?.firstName ?? null);
+          await prisma.call.update({ where: { id: callId }, data: { outcome: verbs.length > 1 ? "VOICEMAIL_DROPPED" : "VOICEMAIL" } });
+          return reply.send(verbs);
         }
         return reply.send([]);
       }
@@ -336,6 +344,16 @@ export async function registerJambonzRoutes(app: FastifyInstance): Promise<void>
   });
 
   app.post("/jambonz/conf-exit", async (_req, reply) => reply.send([{ verb: "hangup" }]));
+
+  // Agent pressed "Leave voicemail": the lead leg is redirected here, out of the room.
+  app.post("/jambonz/vm-drop", async (req, reply) => {
+    const callId = (req.query as { callId?: string }).callId;
+    const call = callId ? await prisma.call.findUnique({ where: { id: callId }, include: { campaign: true, lead: true } }) : null;
+    if (!call?.campaign) return reply.send([{ verb: "hangup" }]);
+    const agentUser = call.agentId ? await prisma.user.findUnique({ where: { id: call.agentId }, select: { firstName: true } }) : null;
+    // A beep has usually just played when the agent hears the greeting end; a short pause lands after it.
+    return reply.send([{ verb: "pause", length: 1 }, ...(await voicemailVerbs(call.campaign, call.lead, call.callerId, agentUser?.firstName ?? null))]);
+  });
 
   // ── Call status lifecycle ───────────────────────────────────────────────
   app.post("/jambonz/status", async (req, reply) => {

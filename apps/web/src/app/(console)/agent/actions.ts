@@ -214,3 +214,8 @@ export async function sendText(leadId: string, body: string): Promise<{ ok: true
   const s = await me();
   return engine("/sms/send", { method: "POST", body: JSON.stringify({ tenantId: s.tenant.id, userId: s.user.id, leadId, body }) });
 }
+
+export async function leaveVoicemail(callId: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  const s = await me();
+  return engine(`/calls/${callId}/voicemail`, { method: "POST", body: JSON.stringify({ userId: s.user.id }) });
+}

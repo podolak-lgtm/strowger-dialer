@@ -1,6 +1,7 @@
 // Placing a call to a lead, and what happens when it ends or is dispositioned.
 import { prisma, type Campaign, type Lead } from "@strowger/db";
 import { toE164 } from "@strowger/shared/phone";
+import { DID_RULES, capForNumber, hourlyCap } from "@strowger/shared/did-hygiene";
 import { config } from "../config";
 import { log } from "../log";
 import { redis } from "../redis";
@@ -18,23 +19,40 @@ export async function callIdForSid(sid: string): Promise<string | null> {
 }
 
 /** Choose the number to show the lead. Local presence first, then any active, then the campaign's fixed number. */
+/**
+ * Choose the number to show the lead. Local presence first (same area code),
+ * then any; within that, the least-used today. A number is eligible only if
+ * it is ACTIVE, registered (Free Caller Registry) when the rules require it,
+ * not resting after a flag, under its daily cap for its age, and under the
+ * per-hour spread. Caps are data in shared/did-hygiene.
+ */
 export async function pickCallerId(campaign: Campaign, leadPhone: string): Promise<string | null> {
   if (campaign.callerIdMode === "FIXED") return campaign.fixedCallerId;
+  const now = new Date();
   const area = leadPhone.slice(0, 3);
-  const same = await prisma.callerIdNumber.findFirst({
-    where: { tenantId: campaign.tenantId, status: "ACTIVE", areaCode: area },
-    orderBy: [{ usedToday: "asc" }, { lastUsedAt: "asc" }],
-  });
-  const pick =
-    same ??
-    (await prisma.callerIdNumber.findFirst({
-      where: { tenantId: campaign.tenantId, status: "ACTIVE" },
-      orderBy: [{ usedToday: "asc" }, { lastUsedAt: "asc" }],
-    }));
-  if (pick) {
-    await prisma.callerIdNumber.update({ where: { id: pick.id }, data: { usedToday: { increment: 1 }, lastUsedAt: new Date() } });
-    return pick.phone;
+  const base = {
+    tenantId: campaign.tenantId,
+    status: "ACTIVE" as const,
+    OR: [{ campaignId: null }, { campaignId: campaign.id }],
+    AND: [{ OR: [{ restUntil: null }, { restUntil: { lte: now } }] }, ...(DID_RULES.requireRegistration ? [{ registeredAt: { not: null } }] : [])],
+  };
+  const candidates = [
+    ...(await prisma.callerIdNumber.findMany({ where: { ...base, areaCode: area }, orderBy: [{ usedToday: "asc" }, { lastUsedAt: "asc" }], take: 10 })),
+    ...(await prisma.callerIdNumber.findMany({ where: { ...base, areaCode: { not: area } }, orderBy: [{ usedToday: "asc" }, { lastUsedAt: "asc" }], take: 20 })),
+  ];
+  const hourKey = `did:hour:${now.toISOString().slice(0, 13)}`;
+  for (const n of candidates) {
+    const cap = capForNumber(n, now);
+    if (n.usedToday >= cap) continue;
+    const usedThisHour = Number((await redis.hget(hourKey, n.id)) ?? 0);
+    if (usedThisHour >= hourlyCap(cap)) continue;
+    await prisma.callerIdNumber.update({ where: { id: n.id }, data: { usedToday: { increment: 1 }, lastUsedAt: now, firstUsedAt: n.firstUsedAt ?? now } });
+    await redis.hincrby(hourKey, n.id, 1);
+    await redis.expire(hourKey, 2 * 3600);
+    return n.phone;
   }
+  if (candidates.length === 0) log.warn({ campaignId: campaign.id }, "no eligible caller ID: pool empty, unregistered, or resting");
+  else log.warn({ campaignId: campaign.id }, "no eligible caller ID: every number at its cap for now");
   return campaign.fixedCallerId;
 }
 
@@ -136,12 +154,18 @@ export async function leadCallEnded(callId: string, status: string, sipStatus: n
     data: { endedAt: new Date(), outcome, providerData: { ...(call.providerData as object), finalStatus: status, sipStatus: sipStatus ?? null, duration: duration ?? null } },
   });
   if (call.campaignId) await removeInflight(call.campaignId, callId);
+  // Short calls (hangups, voicemail drops, abandons) are what carrier analytics punish: count them per number.
+  const talk = call.answeredAt ? (Date.now() - call.answeredAt.getTime()) / 1000 : 0;
+  if (call.callerId && call.answeredAt && talk < DID_RULES.shortCallSeconds) {
+    await prisma.callerIdNumber.updateMany({ where: { tenantId: call.tenantId, phone: call.callerId }, data: { shortCallsToday: { increment: 1 } } }).catch(() => undefined);
+  }
 
   if (call.lead && call.campaign) {
     // Default recycle from the dial plan; the disposition may override it.
     const age = Math.floor((Date.now() - call.lead.postedAt.getTime()) / 86_400_000);
     const plan = call.campaign.dialPlans.find((p) => p.active && (p.leadType === null || p.leadType === call.lead!.leadType) && age >= p.ageFromDays && (p.ageToDays === null || age <= p.ageToDays));
-    const gap = plan?.retryGapMinutes ?? 180;
+    const voicemail = outcome === "VOICEMAIL" || outcome === "VOICEMAIL_DROPPED";
+    const gap = voicemail ? call.campaign.voicemailRetryMinutes : (plan?.retryGapMinutes ?? 180);
     if (call.lead.status === "DIALING") {
       await prisma.lead.update({ where: { id: call.lead.id }, data: { status: call.bridgedAt ? "CONTACTED" : "NEW", nextDialAt: new Date(Date.now() + gap * 60_000) } });
     }

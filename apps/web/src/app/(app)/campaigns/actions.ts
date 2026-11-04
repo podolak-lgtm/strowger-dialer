@@ -1,6 +1,6 @@
 "use server";
 
-import { prisma, type CampaignStatus, type DialMode, type ScreenerAction, type VoicemailAction, type CallerIdMode, type HopperOrder, type ListSelection } from "@strowger/db";
+import { prisma, type CampaignStatus, type DialMode, type ScreenerAction, type VoicemailAction, type VoicemailMode, type CallerIdMode, type HopperOrder, type ListSelection } from "@strowger/db";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { requireRole } from "@/lib/auth";
@@ -66,6 +66,9 @@ export async function updateCampaign(formData: FormData) {
     abandonTimerMs: Math.max(500, Math.min(2000, num(formData, "abandonTimerMs", 2000))),
     amdEnabled: formData.get("amdEnabled") === "on",
     voicemailAction: String(formData.get("voicemailAction") ?? before.voicemailAction) as VoicemailAction,
+    voicemailMode: String(formData.get("voicemailMode") ?? before.voicemailMode) as VoicemailMode,
+    voicemailScript: String(formData.get("voicemailScript") ?? "").trim() || null,
+    voicemailRetryMinutes: Math.max(15, num(formData, "voicemailRetryMinutes", 240)),
     screenerDetection: formData.get("screenerDetection") === "on",
     screenerAction: String(formData.get("screenerAction") ?? before.screenerAction) as ScreenerAction,
     recordingOn: formData.get("recordingOn") === "on",

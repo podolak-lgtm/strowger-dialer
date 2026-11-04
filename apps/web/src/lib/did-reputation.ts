@@ -62,8 +62,8 @@ export async function recordReading(numberId: string, vendor: string, r: Reading
         tmobileVerdict: r.tmobile,
         attestation: r.attestation,
         lastScannedAt: new Date(),
-        // A number blocked or marked spam anywhere comes out of rotation on its own.
-        ...([r.att, r.verizon, r.tmobile].some((v) => v === "SPAM" || v === "BLOCKED") ? { status: "SPAM_FLAGGED" as const } : {}),
+        // A number blocked or marked spam anywhere comes out of rotation on its own and rests three weeks.
+        ...([r.att, r.verizon, r.tmobile].some((v) => v === "SPAM" || v === "BLOCKED") ? { status: "SPAM_FLAGGED" as const, restUntil: new Date(Date.now() + 21 * 86_400_000) } : {}),
       },
     }),
   ]);

@@ -19,8 +19,12 @@ model Tenant {
   /// Clerk organization id, when the tenant is backed by a Clerk org.
   clerkOrgId String? @unique
   settings  Json     @default("{}")
-  /// Recording retention in days. 730 = two years (plan §11).
-  recordingRetentionDays Int @default(730)
+  /// Recording retention in days (owner, 4 Nov: 30–60 to keep storage cost down).
+  recordingRetentionDays Int @default(60)
+  /// Nightly batch export of recordings before they expire:
+  /// {"type":"sftp","host":"","port":22,"username":"","password":"<enc>","path":"/recordings"}
+  /// or {"type":"dropbox","token":"<enc>","path":"/Strowger"}; null = no export.
+  recordingExport        Json?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -159,6 +163,11 @@ enum VoicemailAction {
   DROP
 }
 
+enum VoicemailMode {
+  FILE
+  TTS
+}
+
 enum ScreenerAction {
   MESSAGE
   AGENT
@@ -211,6 +220,13 @@ model Campaign {
   amdEnabled           Boolean         @default(true)
   voicemailAction      VoicemailAction @default(HANGUP)
   voicemailDropAudioId String?
+  /// FILE plays voicemailDropAudioId; TTS speaks voicemailScript with
+  /// variables ({{first_name}}, {{last_name}}, {{company}}, {{callback_number}},
+  /// {{agent}}). TTS needs a speech vendor on the jambonz account.
+  voicemailMode        VoicemailMode   @default(FILE)
+  voicemailScript      String?
+  /// Minutes before a lead that reached voicemail is tried again.
+  voicemailRetryMinutes Int            @default(240)
 
   screenerDetection Boolean        @default(true)
   screenerAction    ScreenerAction @default(MESSAGE)
@@ -706,6 +722,16 @@ model CallerIdNumber {
   /// Re-check this number on the daily sweep.
   autoRecheck   Boolean        @default(true)
 
+  /// Hygiene (owner, 4 Nov): registered at the Free Caller Registry before
+  /// the first dial; warm-up caps by age; rest after a flag.
+  registeredAt    DateTime?
+  firstUsedAt     DateTime?
+  /// Null = automatic by age: week 1 → 40/day, weeks 2–3 → 65/day, then 75/day.
+  dailyCap        Int?
+  /// Out of rotation until this time (auto-pull on a spam flag: 3 weeks).
+  restUntil       DateTime?
+  shortCallsToday Int       @default(0)
+
   scans DidScan[]
 
   @@unique([tenantId, phone])
@@ -808,6 +834,9 @@ model Call {
 
   recordingUrl       String?
   recordingExpiresAt DateTime?
+  /// Where the nightly export put it (sftp://host/path or dropbox:/path).
+  recordingExportedTo String?
+  recordingDeletedAt DateTime?
   legalHold          Boolean   @default(false)
   costCents          Int?
   /// Raw provider facts worth keeping (final SIP status, AMD events).

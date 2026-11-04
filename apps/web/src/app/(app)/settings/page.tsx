@@ -3,6 +3,7 @@ import { formatPhone } from "@strowger/shared";
 import { requireRole } from "@/lib/auth";
 import { Badge, Button, Card, Field, PageHeader, Table, Td, inputClass } from "@/components/ui";
 import { addAudioAsset, addCallerIds, deleteAudioAsset, setCallerIdStatus, setCampaignAudio } from "./actions";
+import { runRecordingExportNow, saveRecordingPolicy } from "./recording-actions";
 
 const KINDS = ["SAFE_HARBOR", "VOICEMAIL_DROP", "SCREENER_MESSAGE", "DISCLOSURE", "HOLD", "OTHER"] as const;
 
@@ -14,6 +15,11 @@ export default async function SettingsPage() {
     prisma.campaign.findMany({ where: { tenantId: s.tenant.id, status: { not: "ARCHIVED" } }, orderBy: { name: "asc" } }),
   ]);
   const byKind = (k: string) => audio.filter((a) => a.kind === k || a.kind === "OTHER");
+  const exp = (s.tenant.recordingExport ?? null) as { type?: string; host?: string; port?: number; username?: string; path?: string } | null;
+  const [exportedCount, pendingExport] = await Promise.all([
+    prisma.call.count({ where: { tenantId: s.tenant.id, recordingExportedTo: { not: null } } }),
+    prisma.call.count({ where: { tenantId: s.tenant.id, recordingExportedTo: null, recordingDeletedAt: null, bridgedAt: { not: null }, endedAt: { not: null } } }),
+  ]);
 
   return (
     <div>
@@ -111,6 +117,61 @@ export default async function SettingsPage() {
           ) : (
             <p className="text-sm text-zinc-500">No numbers yet. Without one, campaigns need a fixed caller ID.</p>
           )}
+        </Card>
+
+        <Card title="Call recordings: retention and nightly export" className="lg:col-span-2">
+          <p className="mb-3 text-xs text-zinc-500">
+            Recordings are kept {s.tenant.recordingRetentionDays} days, then forgotten (legal holds excepted). Every night the ones not yet exported are copied to your own storage first, so the
+            long-term copy costs you nothing here. Exported so far: {exportedCount.toLocaleString()} · waiting: {pendingExport.toLocaleString()}.
+          </p>
+          <form action={saveRecordingPolicy} className="grid gap-3 md:grid-cols-4">
+            <Field label="Keep recordings for (days)">
+              <select name="retentionDays" defaultValue={s.tenant.recordingRetentionDays} className={inputClass}>
+                <option value={30}>30 days</option>
+                <option value={60}>60 days</option>
+                <option value={90}>90 days</option>
+                <option value={180}>180 days</option>
+              </select>
+            </Field>
+            <Field label="Nightly export to">
+              <select name="exportType" defaultValue={exp?.type ?? "none"} className={inputClass}>
+                <option value="none">Nowhere (just delete after retention)</option>
+                <option value="sftp">SFTP server</option>
+                <option value="dropbox">Dropbox</option>
+              </select>
+            </Field>
+            <div className="md:col-span-2" />
+            <Field label="SFTP host">
+              <input name="sftpHost" defaultValue={exp?.type === "sftp" ? exp.host : ""} className={inputClass} placeholder="files.example.com" />
+            </Field>
+            <Field label="Port">
+              <input name="sftpPort" type="number" defaultValue={exp?.type === "sftp" ? exp.port ?? 22 : 22} className={inputClass} />
+            </Field>
+            <Field label="Username">
+              <input name="sftpUser" defaultValue={exp?.type === "sftp" ? exp.username : ""} className={inputClass} />
+            </Field>
+            <Field label="Password" hint="Stored encrypted. Leave blank to keep the current one.">
+              <input name="sftpPassword" type="password" className={inputClass} />
+            </Field>
+            <Field label="SFTP folder">
+              <input name="sftpPath" defaultValue={exp?.type === "sftp" ? exp.path : "/recordings"} className={inputClass} />
+            </Field>
+            <Field label="Dropbox access token" hint="From a Dropbox app with files.content.write. Stored encrypted.">
+              <input name="dropboxToken" type="password" className={inputClass} />
+            </Field>
+            <Field label="Dropbox folder">
+              <input name="dropboxPath" defaultValue={exp?.type === "dropbox" ? exp.path : "/Strowger"} className={inputClass} />
+            </Field>
+            <div className="flex items-end gap-2">
+              <Button type="submit">Save policy</Button>
+            </div>
+          </form>
+          <form action={runRecordingExportNow} className="mt-3">
+            <Button type="submit" variant="ghost">
+              Run export now
+            </Button>
+          </form>
+          <p className="mt-2 text-xs text-zinc-500">Files land as {`<folder>/<YYYY-MM-DD>/<time>_<phone>_<callId>.wav`}. Export runs after 06:00 UTC each day.</p>
         </Card>
 
         <Card title="Campaign prompts" className="lg:col-span-2">
