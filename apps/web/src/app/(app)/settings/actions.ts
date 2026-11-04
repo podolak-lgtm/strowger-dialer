@@ -56,3 +56,11 @@ export async function setCallerIdStatus(formData: FormData) {
   await prisma.callerIdNumber.updateMany({ where: { id, tenantId: s.tenant.id }, data: { status } });
   revalidatePath("/settings");
 }
+
+export async function saveGoals(formData: FormData) {
+  const s = await requireRole("SUPERVISOR");
+  const n = (k: string, d: number) => Math.max(1, Number(formData.get(k)) || d);
+  const settings = (s.tenant.settings ?? {}) as Record<string, unknown>;
+  await prisma.tenant.update({ where: { id: s.tenant.id }, data: { settings: { ...settings, goals: { dials: n("dials", 200), contacts: n("contacts", 20), sales: n("sales", 3) } } } });
+  revalidatePath("/settings");
+}

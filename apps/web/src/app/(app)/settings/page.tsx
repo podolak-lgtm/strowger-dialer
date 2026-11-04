@@ -2,7 +2,7 @@ import { prisma } from "@strowger/db";
 import { formatPhone } from "@strowger/shared";
 import { requireRole } from "@/lib/auth";
 import { Badge, Button, Card, Field, PageHeader, Table, Td, inputClass } from "@/components/ui";
-import { addAudioAsset, addCallerIds, deleteAudioAsset, setCallerIdStatus, setCampaignAudio } from "./actions";
+import { addAudioAsset, addCallerIds, deleteAudioAsset, saveGoals, setCallerIdStatus, setCampaignAudio } from "./actions";
 import { runRecordingExportNow, saveRecordingPolicy } from "./recording-actions";
 
 const KINDS = ["SAFE_HARBOR", "VOICEMAIL_DROP", "SCREENER_MESSAGE", "DISCLOSURE", "HOLD", "OTHER"] as const;
@@ -117,6 +117,29 @@ export default async function SettingsPage() {
           ) : (
             <p className="text-sm text-zinc-500">No numbers yet. Without one, campaigns need a fixed caller ID.</p>
           )}
+        </Card>
+
+        <Card title="Daily goals per agent" className="lg:col-span-2">
+          <p className="mb-3 text-xs text-zinc-500">What the sprint bars on the agent screen count toward.</p>
+          {(() => {
+            const g = ((s.tenant.settings ?? {}) as { goals?: { dials?: number; contacts?: number; sales?: number } }).goals ?? {};
+            return (
+              <form action={saveGoals} className="flex flex-wrap items-end gap-3">
+                <Field label="Dials">
+                  <input name="dials" type="number" min="1" defaultValue={g.dials ?? 200} className={`${inputClass} w-28`} />
+                </Field>
+                <Field label="Contacts">
+                  <input name="contacts" type="number" min="1" defaultValue={g.contacts ?? 20} className={`${inputClass} w-28`} />
+                </Field>
+                <Field label="Sales">
+                  <input name="sales" type="number" min="1" defaultValue={g.sales ?? 3} className={`${inputClass} w-28`} />
+                </Field>
+                <Button type="submit" variant="ghost">
+                  Save goals
+                </Button>
+              </form>
+            );
+          })()}
         </Card>
 
         <Card title="Call recordings: retention and nightly export" className="lg:col-span-2">

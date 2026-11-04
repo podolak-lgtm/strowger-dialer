@@ -6,6 +6,7 @@
 import { prisma } from "@strowger/db";
 import { intakeLead, loadList } from "@/lib/intake";
 import { affiliateForKey, applyFieldMapping } from "@/lib/affiliates";
+import { allow } from "@/lib/rate-limit";
 
 export const dynamic = "force-dynamic";
 
@@ -38,6 +39,8 @@ export async function POST(req: Request) {
   const bearer = auth?.toLowerCase().startsWith("bearer ") ? auth.slice(7) : req.headers.get("x-api-key");
   const affiliate = await affiliateForKey(bearer);
   if (!affiliate) return json(401, { status: "error", error: "invalid_api_key" });
+  const rl = allow(`post:${affiliate.id}`);
+  if (!rl.ok) return new Response(JSON.stringify({ status: "error", error: "rate_limited", retry_after_seconds: rl.retryAfterSeconds }), { status: 429, headers: { "content-type": "application/json", "retry-after": String(rl.retryAfterSeconds) } });
 
   const payload = await readBody(req);
   if (!payload) return json(400, { status: "error", error: "unreadable_body", detail: "Send JSON or form-encoded fields" });

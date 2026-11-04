@@ -24,6 +24,7 @@ import { emitToAgent } from "../realtime";
 import type { Call, Campaign } from "@strowger/db";
 import { getSupervision, supervisorJoinVerbs, supervisorLegEnded } from "../supervise";
 import { voicemailVerbs } from "../dialer/voicemail";
+import { handleInboundCall } from "../dialer/inbound";
 import { log } from "../log";
 import { agentRoom, hookUrl, jambonz } from "./client";
 
@@ -140,6 +141,12 @@ export async function registerJambonzRoutes(app: FastifyInstance): Promise<void>
     const sipUser = (b.from ?? "").replace(/^sip:/, "").split("@")[0] ?? "";
     const user = await prisma.user.findUnique({ where: { sipUsername: sipUser } });
     if (user) return reply.send(await agentLegVerbs(user.id, user.tenantId, b));
+
+    // A caller from the PSTN ringing one of our numbers: a lead calling back.
+    if (b.direction === "inbound" && b.to) {
+      const r = await handleInboundCall(b.call_sid, b.from ?? "", b.to);
+      if (r.call) return reply.send(r.verbs);
+    }
 
     log.warn({ from: b.from, to: b.to, sid: b.call_sid }, "call for nobody; hanging up");
     return reply.send([{ verb: "hangup" }]);

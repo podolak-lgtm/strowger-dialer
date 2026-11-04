@@ -86,6 +86,24 @@ built and why; this says how it is wired and what will trip you.
   `evaluateDialWindow`. Ineligible leads are parked 30 minutes so a scan
   does not keep re-checking the same refusal.
 
+## Inbound calls, teams and rooms, hardening
+
+- **Inbound** (`dialer/inbound.ts`): a PSTN call to one of our numbers
+  (`CallerIdNumber`) becomes an INBOUND `Call`; the lead is the most recent
+  with the caller's phone. Routed to the lead's owner if READY, else the
+  longest-idle READY agent on the number's campaign, else anywhere in the
+  tenant; bridged into that agent's room with a screen pop
+  (`call:update.inbound`). Nobody free → a CAMPAIGN (or owner) callback due
+  now, lead → CALLBACK, caller hears the safe-harbor/hold file and the call
+  ends. Recording a message waits for cloud recording on the account.
+- **Teams & rooms** (`/teams`): rooms with a room supervisor, teams with a
+  leader and optional room, and a who-sits-where table (one team, one room
+  per person; a team inside a room places its members in the room). The
+  floor's scope reads these.
+- Posting API: per-affiliate token bucket (300/min, burst 60) → 429 with
+  Retry-After. Tenant goals (Settings) feed the sprint bars. Campaign page
+  shows the 30-day abandon rate from the ledger against warn/cap.
+
 ## Two-screen agent console
 
 `/agent` is the main window (softphone lives here). `/agent?screen=assist`

@@ -31,6 +31,12 @@ export default async function CampaignPage({ params }: PageProps<"/campaigns/[id
     },
   });
   if (!c) notFound();
+  const since = new Date();
+  since.setUTCDate(since.getUTCDate() - 30);
+  const ledger = await prisma.abandonLedger.aggregate({ where: { campaignId: c.id, day: { gte: since } }, _sum: { answered: true, abandoned: true } });
+  const answered30 = ledger._sum.answered ?? 0;
+  const abandoned30 = ledger._sum.abandoned ?? 0;
+  const abandonRate = answered30 ? (abandoned30 / answered30) * 100 : 0;
 
   return (
     <div>
@@ -39,7 +45,10 @@ export default async function CampaignPage({ params }: PageProps<"/campaigns/[id
         subtitle={
           <>
             <Badge tone={c.status === "ACTIVE" ? "green" : c.status === "PAUSED" ? "amber" : "zinc"}>{c.status}</Badge> · {c.dialMode === "RATIO" ? `Ratio ${c.ratio.toString()}:1` : "Preview"} ·{" "}
-            {c.lists.length} lists · {c._count.agents} agents
+            {c.lists.length} lists · {c._count.agents} agents · 30-day abandon{" "}
+            <Badge tone={abandonRate >= Number(c.abandonCapPct) ? "red" : abandonRate >= Number(c.abandonWarnPct) ? "amber" : "green"}>
+              {abandonRate.toFixed(2)}% ({abandoned30}/{answered30})
+            </Badge>
           </>
         }
         actions={

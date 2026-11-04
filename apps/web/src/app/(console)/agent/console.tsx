@@ -264,9 +264,10 @@ export function AgentConsole(props: ConsoleProps) {
       if (m.leadId) void textThread(m.leadId).then(setThread);
       void refreshStats();
     });
-    sock.on("call:update", (u: { callId: string; status: string; leadId?: string; outcome?: string }) => {
+    sock.on("call:update", (u: { callId: string; status: string; leadId?: string; outcome?: string; inbound?: boolean; from?: string | null }) => {
       setCallId(u.callId);
       setCallStatus(u.status);
+      if (u.inbound) setNotice(`Inbound call${u.from ? ` from ${u.from.replace(/(\d{3})(\d{3})(\d{4})/, "($1) $2-$3")}` : ""}: connected to you.`);
       if (u.leadId) {
         // Ratio mode: the lead arrives with the live call.
         void leadById(u.leadId).then((l) => {
