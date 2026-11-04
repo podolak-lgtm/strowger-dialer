@@ -2,7 +2,8 @@ import { prisma } from "@strowger/db";
 import { formatPhone } from "@strowger/shared";
 import { requireRole } from "@/lib/auth";
 import { Badge, Button, Card, Field, PageHeader, Table, Td, inputClass } from "@/components/ui";
-import { addAudioAsset, addCallerIds, deleteAudioAsset, saveGoals, setCallerIdStatus, setCampaignAudio } from "./actions";
+import { addAudioAsset, addCallerIds, deleteAudioAsset, saveGoals, setCallerIdStatus, setCampaignAudio, uploadAudio } from "./actions";
+import { storageConfigured } from "@/lib/storage";
 import { runRecordingExportNow, saveRecordingPolicy } from "./recording-actions";
 
 const KINDS = ["SAFE_HARBOR", "VOICEMAIL_DROP", "SCREENER_MESSAGE", "DISCLOSURE", "HOLD", "OTHER"] as const;
@@ -27,9 +28,33 @@ export default async function SettingsPage() {
       <div className="grid gap-6 lg:grid-cols-2">
         <Card title="Audio files">
           <p className="mb-3 text-xs text-zinc-500">
-            Prompts the dialer plays: safe-harbor on an abandoned call, voicemail drop, the screener answer, and the recording disclosure. Give a public https URL to an
-            MP3 or WAV (8 kHz mono WAV plays cleanest). Uploads come later.
+            Prompts the dialer plays: safe-harbor on an abandoned call, voicemail drop, the screener answer, and the recording disclosure. Upload a WAV or MP3 (8 kHz mono
+            WAV plays cleanest), or give a public https URL.
           </p>
+          {storageConfigured ? (
+            <form action={uploadAudio} className="mb-4 grid grid-cols-[1fr_160px_auto] items-end gap-2 rounded-md border border-zinc-800 p-3">
+              <Field label="Name">
+                <input name="name" required className={inputClass} placeholder="Voicemail drop - Solar" />
+              </Field>
+              <Field label="Kind">
+                <select name="kind" className={inputClass}>
+                  {KINDS.map((k) => (
+                    <option key={k} value={k}>
+                      {k.replace("_", " ").toLowerCase()}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Button type="submit">Upload</Button>
+              <div className="col-span-3">
+                <Field label="File (WAV or MP3)">
+                  <input name="file" type="file" accept=".wav,.mp3,audio/*" required className="block text-sm text-zinc-300 file:mr-3 file:rounded-md file:border-0 file:bg-zinc-800 file:px-3 file:py-1.5 file:text-zinc-100" />
+                </Field>
+              </div>
+            </form>
+          ) : (
+            <p className="mb-3 text-xs text-amber-300">Uploads need the media bucket (S3_* variables); URLs still work.</p>
+          )}
           <form action={addAudioAsset} className="mb-4 grid grid-cols-[1fr_160px_auto] items-end gap-2">
             <Field label="Name">
               <input name="name" required className={inputClass} placeholder="Safe harbor - Acme" />

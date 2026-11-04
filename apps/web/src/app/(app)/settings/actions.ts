@@ -4,6 +4,8 @@ import { prisma, type AudioKind } from "@strowger/db";
 import { normalizePhone, stateForAreaCode } from "@strowger/shared";
 import { revalidatePath } from "next/cache";
 import { requireRole } from "@/lib/auth";
+import { mediaUrl, putObject, storageConfigured } from "@/lib/storage";
+import { randomBytes } from "node:crypto";
 
 export async function addAudioAsset(formData: FormData) {
   const s = await requireRole("SUPERVISOR");
@@ -62,5 +64,23 @@ export async function saveGoals(formData: FormData) {
   const n = (k: string, d: number) => Math.max(1, Number(formData.get(k)) || d);
   const settings = (s.tenant.settings ?? {}) as Record<string, unknown>;
   await prisma.tenant.update({ where: { id: s.tenant.id }, data: { settings: { ...settings, goals: { dials: n("dials", 200), contacts: n("contacts", 20), sales: n("sales", 3) } } } });
+  revalidatePath("/settings");
+}
+
+/** Upload an audio file to the media bucket and register it as a prompt. */
+export async function uploadAudio(formData: FormData) {
+  const s = await requireRole("SUPERVISOR");
+  if (!storageConfigured) throw new Error("Media storage is not configured on this install");
+  const name = String(formData.get("name") ?? "").trim();
+  const kind = String(formData.get("kind") ?? "OTHER") as AudioKind;
+  const file = formData.get("file");
+  if (!name || !(file instanceof File) || file.size === 0) throw new Error("Name and a file are required");
+  if (file.size > 20 * 1024 * 1024) throw new Error("Keep prompts under 20 MB");
+  const ext = (file.name.split(".").pop() ?? "").toLowerCase();
+  const type = ext === "wav" ? "audio/wav" : ext === "mp3" ? "audio/mpeg" : file.type || "application/octet-stream";
+  if (!/^audio\//.test(type)) throw new Error("Upload a WAV or MP3");
+  const key = `audio/${s.tenant.id}/${randomBytes(12).toString("base64url")}.${ext || "wav"}`;
+  await putObject(key, Buffer.from(await file.arrayBuffer()), type);
+  await prisma.audioAsset.create({ data: { tenantId: s.tenant.id, name, kind, storageUrl: mediaUrl(key) } });
   revalidatePath("/settings");
 }

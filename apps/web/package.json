@@ -10,6 +10,8 @@
     "typecheck": "next typegen && tsc --noEmit"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1161.0",
+    "@aws-sdk/s3-request-presigner": "^3.1161.0",
     "@clerk/nextjs": "^6.33.0",
     "@jambonz/client-sdk-web": "^0.1.5",
     "@strowger/db": "workspace:*",

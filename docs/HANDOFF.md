@@ -86,6 +86,17 @@ built and why; this says how it is wired and what will trip you.
   `evaluateDialWindow`. Ineligible leads are parked 30 minutes so a scan
   does not keep re-checking the same refusal.
 
+## Media bucket
+
+Railway bucket `media` (S3-compatible, region sjc). The web service reads
+it through `${{media.*}}` references as `S3_*` (never copied values).
+`lib/storage.ts` uploads prompts under `audio/<tenantId>/<random>.<ext>` and
+serves them from `/api/media/<key>` (public read, unguessable key, so the
+dialer fetches prompts with no session). Settings → Audio files has
+upload and URL. The same bucket is the natural target for jambonz call
+recording: in the jambonz portal, Account → recording, use the bucket's
+endpoint, name and keys from the Railway dashboard.
+
 ## Mid-call controls (`dialer/controls.ts`)
 
 - **Hold**: `conf_hold_status` on the lead leg.
