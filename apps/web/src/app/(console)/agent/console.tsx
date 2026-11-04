@@ -18,6 +18,7 @@ import {
   dialLead,
   disposition,
   hangup,
+  leadById,
   leadHistory,
   nextLead,
   skipLead,
@@ -194,6 +195,15 @@ export function AgentConsole(props: ConsoleProps) {
     sock.on("call:update", (u: { callId: string; status: string; leadId?: string; outcome?: string }) => {
       setCallId(u.callId);
       setCallStatus(u.status);
+      if (u.leadId) {
+        // Ratio mode: the lead arrives with the live call.
+        void leadById(u.leadId).then((l) => {
+          if (l) {
+            setLead(l);
+            void leadHistory(l.id).then(setHistory);
+          }
+        });
+      }
       if (u.status === "bridged" || u.status === "answered") setCallStart((s) => s ?? Date.now());
       if (u.status === "ended") void refreshStats();
     });

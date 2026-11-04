@@ -71,6 +71,12 @@ export async function nextLead(): Promise<Ok<{ lead: LeadCard }> | Err> {
   return engine("/leads/next", { method: "POST", body: JSON.stringify({ tenantId: s.tenant.id, userId: s.user.id }) });
 }
 
+export async function leadById(leadId: string): Promise<LeadCard | null> {
+  const s = await me();
+  const l = await prisma.lead.findFirst({ where: { id: leadId, tenantId: s.tenant.id } });
+  return l ? ({ ...l, postedAt: l.postedAt.toISOString(), custom: (l.custom ?? {}) as Record<string, unknown> } as unknown as LeadCard) : null;
+}
+
 export async function skipLead(leadId: string): Promise<{ ok: boolean }> {
   const s = await me();
   return engine("/leads/skip", { method: "POST", body: JSON.stringify({ tenantId: s.tenant.id, userId: s.user.id, leadId }) });

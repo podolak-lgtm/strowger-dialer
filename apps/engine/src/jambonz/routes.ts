@@ -18,8 +18,12 @@ import { getAgent, patchAgent } from "../agents/state";
 import { redis } from "../redis";
 import { config } from "../config";
 import { callIdForSid, leadCallAnswered, leadCallBridged, leadCallEnded } from "../dialer/calls";
+import { readyAgents, recordLedger } from "../dialer/pacing";
+import { detectScreener } from "@strowger/shared/compliance";
+import { emitToAgent } from "../realtime";
+import type { Call, Campaign } from "@strowger/db";
 import { log } from "../log";
-import { agentRoom, hookUrl } from "./client";
+import { agentRoom, hookUrl, jambonz } from "./client";
 
 type Verb = Record<string, unknown>;
 
@@ -154,37 +158,116 @@ export async function registerJambonzRoutes(app: FastifyInstance): Promise<void>
     ];
   }
 
-  async function leadAnsweredVerbs(callId: string, b: JambonzCallBody): Promise<Verb[]> {
-    const call = await prisma.call.findUnique({ where: { id: callId }, include: { campaign: true } });
-    if (!call || !call.campaign || !call.agentId) return [{ verb: "hangup" }];
-    await leadCallAnswered(callId);
-    const agent = await getAgent(call.agentId);
-    if (!agent?.agentCallSid) {
-      // Agent dropped between dial and answer. No safe-harbor needed in
-      // preview (the agent was reserved), but never leave a person hanging.
-      const safe = await audioUrl(call.campaign.safeHarborAudioId);
-      await prisma.call.update({ where: { id: callId }, data: { outcome: "ABANDONED", abandoned: true } });
-      return [...(safe ? [{ verb: "play", url: safe }] : []), { verb: "hangup" }];
-    }
+  /** Conference-join verbs into an agent's room, with the optional disclosure first. */
+  async function joinVerbs(call: Call, campaign: Campaign, agentId: string): Promise<Verb[]> {
     const verbs: Verb[] = [];
-    if (call.campaign.disclosureOn) {
-      const url = await audioUrl(call.campaign.disclosureAudioId);
+    if (campaign.disclosureOn) {
+      const url = await audioUrl(campaign.disclosureAudioId);
       if (url) verbs.push({ verb: "play", url });
     }
     verbs.push({
       verb: "conference",
-      name: agentRoom(call.agentId),
+      name: agentRoom(agentId),
       memberTag: "lead",
       startConferenceOnEnter: false,
       endConferenceOnExit: false,
       beep: false,
-      statusHook: hookUrl("/jambonz/conf", { callId, tenantId: call.tenantId }),
+      statusHook: hookUrl("/jambonz/conf", { callId: call.id, tenantId: call.tenantId }),
       statusEvents: ["join", "leave"],
-      actionHook: hookUrl("/jambonz/conf-exit", { callId }),
+      actionHook: hookUrl("/jambonz/conf-exit", { callId: call.id }),
     });
     verbs.push({ verb: "hangup" });
     return verbs;
   }
+
+  async function abandonVerbs(call: Call, campaign: Campaign): Promise<Verb[]> {
+    const safe = await audioUrl(campaign.safeHarborAudioId);
+    await prisma.call.update({ where: { id: call.id }, data: { outcome: "ABANDONED", abandoned: true } });
+    await recordLedger(campaign, "abandoned");
+    log.warn({ callId: call.id, campaignId: campaign.id }, "abandoned call: no agent free");
+    return [...(safe ? [{ verb: "play", url: safe }] : []), { verb: "hangup" }];
+  }
+
+  /**
+   * A human is on an unreserved (ratio) call. Hand it to the longest-idle Ready
+   * agent, or play the safe-harbor message and count the abandon.
+   */
+  async function bridgeToReadyAgent(call: Call, campaign: Campaign): Promise<Verb[]> {
+    if (call.agentId) return joinVerbs(call, campaign, call.agentId);
+    await recordLedger(campaign, "answered");
+    const agent = (await readyAgents(campaign))[0];
+    if (!agent) return abandonVerbs(call, campaign);
+    const claimed = await prisma.call.updateMany({ where: { id: call.id, agentId: null }, data: { agentId: agent.userId } });
+    if (claimed.count !== 1) return [{ verb: "hangup" }];
+    await patchAgent(agent.userId, { state: "ON_CALL", currentCallId: call.id, reservedLeadId: null });
+    if (call.leadId) await prisma.lead.update({ where: { id: call.leadId }, data: { ownerId: agent.userId } });
+    emitToAgent(agent.userId, "call:update", { callId: call.id, status: "answered", leadId: call.leadId });
+    return joinVerbs(call, campaign, agent.userId);
+  }
+
+  async function leadAnsweredVerbs(callId: string, b: JambonzCallBody): Promise<Verb[]> {
+    const call = await prisma.call.findUnique({ where: { id: callId }, include: { campaign: true } });
+    if (!call || !call.campaign) return [{ verb: "hangup" }];
+    await leadCallAnswered(callId);
+    const campaign = call.campaign;
+
+    // Screener detection: a background transcription of the first seconds.
+    const screener: Verb[] =
+      campaign.screenerDetection && config.SCREENER_STT_VENDOR
+        ? [{ verb: "config", transcribe: { enable: true, transcriptionHook: hookUrl("/jambonz/transcript", { callId }), recognizer: { vendor: config.SCREENER_STT_VENDOR, language: config.SCREENER_STT_LANGUAGE, interim: false } } }]
+        : [];
+
+    if (call.agentId) {
+      // Preview: the agent was reserved before the dial.
+      const agent = await getAgent(call.agentId);
+      if (!agent?.agentCallSid) return [...screener, ...(await abandonVerbs(call, campaign))];
+      return [...screener, ...(await joinVerbs(call, campaign, call.agentId))];
+    }
+
+    // Ratio: with AMD on, hold the line until the AMD hook decides (it replies
+    // with the bridge or the hangup). Without AMD, bridge now.
+    if (campaign.amdEnabled) return [...screener, { verb: "pause", length: 8 }, { verb: "hangup" }];
+    return [...screener, ...(await bridgeToReadyAgent(call, campaign))];
+  }
+
+  // ── Screener transcript + action ────────────────────────────────────────
+  app.post("/jambonz/transcript", async (req, reply) => {
+    const callId = (req.query as { callId?: string }).callId;
+    const b = req.body as { speech?: { alternatives?: Array<{ transcript?: string }> } };
+    const text = b.speech?.alternatives?.[0]?.transcript ?? "";
+    if (!callId || !text) return reply.send({});
+    const call = await prisma.call.findUnique({ where: { id: callId }, include: { campaign: true } });
+    if (!call?.campaign || call.bridgedAt || call.screenerDetected || call.endedAt) return reply.send({});
+    if (call.answeredAt && Date.now() - call.answeredAt.getTime() > 12_000) return reply.send({});
+    const m = detectScreener(text);
+    if (!m.matched) return reply.send({});
+    await prisma.call.update({ where: { id: callId }, data: { screenerDetected: true, amdResult: "SCREENER", providerData: { ...(call.providerData as object), screenerPhrase: m.phrase, screenerText: text } } });
+    if (call.providerCallId) {
+      await jambonz.calls.redirect(call.providerCallId, { url: hookUrl("/jambonz/screener", { callId }), method: "POST" }).catch((e) => log.warn({ err: e, callId }, "screener redirect failed"));
+    }
+    return reply.send({});
+  });
+
+  app.post("/jambonz/screener", async (req, reply) => {
+    const callId = (req.query as { callId?: string }).callId;
+    const call = callId ? await prisma.call.findUnique({ where: { id: callId }, include: { campaign: true } }) : null;
+    if (!call?.campaign) return reply.send([{ verb: "hangup" }]);
+    const campaign = call.campaign;
+    switch (campaign.screenerAction) {
+      case "AGENT": {
+        await prisma.call.update({ where: { id: call.id }, data: { outcome: "SCREENER_AGENT" } });
+        return reply.send(await bridgeToReadyAgent(call, campaign));
+      }
+      case "MESSAGE": {
+        const url = await audioUrl(campaign.screenerAudioId);
+        await prisma.call.update({ where: { id: call.id }, data: { outcome: "SCREENER_MESSAGE" } });
+        return reply.send([...(url ? [{ verb: "play", url }] : []), { verb: "hangup" }]);
+      }
+      default:
+        await prisma.call.update({ where: { id: call.id }, data: { outcome: "SCREENER_HANGUP" } });
+        return reply.send([{ verb: "hangup" }]);
+    }
+  });
 
   // ── AMD events on a lead leg ────────────────────────────────────────────
   app.post("/jambonz/amd", async (req, reply) => {
@@ -198,9 +281,15 @@ export async function registerJambonzRoutes(app: FastifyInstance): Promise<void>
 
     switch (b.type) {
       case "amd_human_detected":
-        patch.amdResult = "HUMAN";
+      case "amd_no_speech_detected":
+      case "amd_decision_timeout": {
+        if (b.type === "amd_human_detected") patch.amdResult = "HUMAN";
+        else if (!call.amdResult) patch.amdResult = "UNKNOWN";
         await prisma.call.update({ where: { id: callId }, data: patch });
+        // Ratio call parked on a pause: this reply replaces it with the bridge (or safe harbor).
+        if (!call.agentId && !call.bridgedAt && !call.screenerDetected) return reply.send(await bridgeToReadyAgent({ ...call, ...patch } as Call, call.campaign));
         return reply.send([]);
+      }
       case "amd_machine_detected": {
         patch.amdResult = "MACHINE";
         if (call.campaign.voicemailAction === "HANGUP") {

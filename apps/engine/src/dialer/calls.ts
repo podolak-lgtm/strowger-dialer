@@ -8,6 +8,7 @@ import { emitToAgent, emitToTenant } from "../realtime";
 import { getAgent, patchAgent } from "../agents/state";
 import { agentRoom, hookUrl, jambonz, jambonzConfigured } from "../jambonz/client";
 import { afterAttempt, daypartNow } from "./cadence";
+import { removeInflight } from "./pacing";
 
 const sidKey = (sid: string) => `callsid:${sid}`;
 
@@ -133,6 +134,7 @@ export async function leadCallEnded(callId: string, status: string, sipStatus: n
     where: { id: callId },
     data: { endedAt: new Date(), outcome, providerData: { ...(call.providerData as object), finalStatus: status, sipStatus: sipStatus ?? null, duration: duration ?? null } },
   });
+  if (call.campaignId) await removeInflight(call.campaignId, callId);
 
   if (call.lead && call.campaign) {
     // Default recycle from the dial plan; the disposition may override it.

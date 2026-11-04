@@ -40,4 +40,8 @@ export const config = readEnv({
   CROSSBAR_AGENT_KEY: z.string().optional(),
   /** Run the paid SubscriberVerify layer, not only Crossbar's own lists. */
   SCRUB_PAID: z.coerce.boolean().default(true),
+
+  /** Screener detection needs an STT vendor configured on the jambonz account (deepgram, google, …). Unset = detection off. */
+  SCREENER_STT_VENDOR: z.string().optional(),
+  SCREENER_STT_LANGUAGE: z.string().default("en-US"),
 });

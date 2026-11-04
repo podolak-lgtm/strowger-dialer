@@ -81,6 +81,38 @@ built and why; this says how it is wired and what will trip you.
   `evaluateDialWindow`. Ineligible leads are parked 30 minutes so a scan
   does not keep re-checking the same refusal.
 
+## Ratio dialing (Phase 3)
+
+`apps/engine/src/dialer/pacing.ts`, started from `index.ts`, one holder of
+`lock:pacing` at a time, every 500 ms:
+
+- per ACTIVE campaign in RATIO mode: `ready` = agents READY with the line
+  up and nothing reserved (closers only if the campaign allows and their
+  outbound switch is on); `inflight` = Redis set
+  `campaign:<id>:inflight` of unbridged pacer calls; `want = floor(ready ×
+  effectiveRatio) − inflight`, at most 10 per tick, **zero when nobody is
+  Ready**.
+- `effectiveRatio`: configured ratio (≤ maxRatio); with fewer than 50
+  answered calls in 30 days capped at 2; linear step-down from
+  `abandonWarnPct` to 1:1 at `abandonCapPct`. The 30-day rate comes from
+  `AbandonLedger` (`answered` = human answers, `abandoned` = answers with
+  no agent free), cached 30 s in Redis.
+- A pacer call has `agentId null`. On answer `/jambonz/call` parks it on
+  `pause 8` while AMD runs; the AMD hook's reply **replaces** the pause:
+  human / no speech / decision timeout → `bridgeToReadyAgent` (longest-idle
+  READY agent claims the call atomically, `patchAgent ON_CALL`, conference
+  join), or safe-harbor `play` + hangup and an `abandoned` ledger row.
+  Machine → the campaign's voicemail action. With AMD off the bridge
+  happens on answer.
+- Screener detection is on only when `SCREENER_STT_VENDOR` is set (the
+  jambonz account must have that STT vendor): a `config.transcribe` runs
+  on the first 12 s; a phrase match (`shared/compliance/screener.ts`)
+  redirects the call to `/jambonz/screener`, which plays the message,
+  bridges, or hangs up per `Campaign.screenerAction`.
+- The hopper for ratio reuses the eligibility rules; the Redis sorted-set
+  hopper is still an optimisation for later, Postgres handles the current
+  scale.
+
 ## Cadences (list-level dial rules)
 
 The owner's 4 Nov spec. A `CadenceProfile` hangs off a `List`; a list without
