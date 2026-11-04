@@ -17,8 +17,8 @@ built and why; this says how it is wired and what will trip you.
   timezone resolution. Still open from Phase 1: the Crossbar/SubscriberVerify
   litigator scrub job.
 - **Deployed on Railway** (project `strowger`): services `web`, `engine`,
-  `Postgres`, `Redis`, all from branch `claude/wonderful-hopper-kdugij`
-  until there is a `main`. Engine: https://engine-production-d809.up.railway.app,
+  `Postgres`, `Redis`, deploying from **`main`** (created 4 Nov from the
+  build branch; work continues on branches and merges to `main`). Engine: https://engine-production-d809.up.railway.app,
   web: https://web-production-c3af0.up.railway.app. `ENGINE_INTERNAL_KEY`
   is a Railway-generated shared variable both services reference.
   **`CLERK_SECRET_KEY` on the web service is set by the owner in the
