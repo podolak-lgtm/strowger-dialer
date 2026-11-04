@@ -52,6 +52,11 @@ model Tenant {
   dialPlans      DialPlan[]
   scripts        Script[]
   cadences       CadenceProfile[]
+  skills         Skill[]
+  ivrs           Ivr[]
+  queues         Queue[]
+  voicemailBoxes VoicemailBox[]
+  voicemails     Voicemail[]
 }
 
 enum Role {
@@ -82,6 +87,12 @@ model User {
   /// For AFFILIATE-role users: the partner whose lists they may see.
   affiliate   Affiliate? @relation(fields: [affiliateId], references: [id])
   affiliateId String?
+  /// Short dialable extension (e.g. 101), unique per tenant.
+  extension   String?
+  skills      AgentSkill[]
+  voicemailBoxes VoicemailBox[] @relation("BoxOwner")
+  voicemails  Voicemail[]    @relation("VoicemailAssignee")
+  routedNumbers CallerIdNumber[] @relation("NumberRouteUser")
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -101,6 +112,7 @@ model User {
   messages        Message[]
 
   @@unique([tenantId, email])
+  @@unique([tenantId, extension])
   @@index([tenantId])
 }
 
@@ -276,6 +288,7 @@ model Campaign {
   messages      Message[]
   webhooks      WebhookEndpoint[]
   callerIds     CallerIdNumber[]
+  queues        Queue[]
 
   @@unique([tenantId, name])
   @@index([tenantId, status])
@@ -712,6 +725,15 @@ model CallerIdNumber {
   campaign   Campaign?      @relation(fields: [campaignId], references: [id])
   campaignId String?
 
+  /// Where an inbound call to this number goes.
+  routeTo     InboundRoute @default(CAMPAIGN)
+  ivr         Ivr?         @relation(fields: [ivrId], references: [id])
+  ivrId       String?
+  queue       Queue?       @relation(fields: [queueId], references: [id])
+  queueId     String?
+  routeUser   User?        @relation("NumberRouteUser", fields: [routeUserId], references: [id])
+  routeUserId String?
+
   /// Latest reputation reading per carrier (the Big Three), the STIR/SHAKEN
   /// attestation seen on our outbound calls, and when we last checked.
   attVerdict    CarrierVerdict @default(UNKNOWN)
@@ -755,12 +777,128 @@ model DidScan {
   @@index([numberId, createdAt])
 }
 
+enum InboundRoute {
+  CAMPAIGN
+  IVR
+  QUEUE
+  USER
+}
+
+/// Something an agent can do: a language, a product line, a support tier.
+model Skill {
+  id       String @id @default(cuid())
+  tenant   Tenant @relation(fields: [tenantId], references: [id])
+  tenantId String
+  name     String
+  agents   AgentSkill[]
+
+  @@unique([tenantId, name])
+}
+
+model AgentSkill {
+  user    User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId  String
+  skill   Skill @relation(fields: [skillId], references: [id], onDelete: Cascade)
+  skillId String
+  /// 1 (basic) to 5 (expert).
+  level   Int   @default(3)
+
+  @@id([userId, skillId])
+}
+
+/// A menu: greeting, digit options, optional extension dialing.
+model Ivr {
+  id              String  @id @default(cuid())
+  tenant          Tenant  @relation(fields: [tenantId], references: [id])
+  tenantId        String
+  name            String
+  greetingAudioId String?
+  /// [{ "digit": "1", "label": "Sales", "action": "QUEUE"|"USER"|"VOICEMAIL"|"IVR"|"HANGUP", "targetId": "…" }]
+  options         Json    @default("[]")
+  /// Callers may dial an agent's extension at any time.
+  allowExtensions Boolean @default(true)
+  /// What happens on no input after `timeoutSeconds` and `repeats` replays.
+  timeoutSeconds  Int     @default(6)
+  repeats         Int     @default(2)
+  timeoutAction   String  @default("HANGUP")
+  timeoutTargetId String?
+  numbers         CallerIdNumber[]
+
+  @@unique([tenantId, name])
+}
+
+/// Callers wait here for an agent with the right skills.
+model Queue {
+  id              String   @id @default(cuid())
+  tenant          Tenant   @relation(fields: [tenantId], references: [id])
+  tenantId        String
+  name            String
+  /// [{ "skillId": "…", "minLevel": 3 }] — all required.
+  requiredSkills  Json     @default("[]")
+  /// Campaign whose agents are preferred and whose context the call carries.
+  campaign        Campaign? @relation(fields: [campaignId], references: [id])
+  campaignId      String?
+  holdAudioId     String?
+  maxWaitSeconds  Int      @default(300)
+  /// VOICEMAIL | QUEUE | HANGUP
+  overflowAction  String   @default("VOICEMAIL")
+  overflowQueueId String?
+  voicemailBox    VoicemailBox? @relation(fields: [voicemailBoxId], references: [id])
+  voicemailBoxId  String?
+  numbers         CallerIdNumber[]
+
+  @@unique([tenantId, name])
+}
+
+model VoicemailBox {
+  id              String  @id @default(cuid())
+  tenant          Tenant  @relation(fields: [tenantId], references: [id])
+  tenantId        String
+  name            String
+  owner           User?   @relation("BoxOwner", fields: [ownerId], references: [id])
+  ownerId         String?
+  greetingAudioId String?
+  notifyEmail     String?
+  queues          Queue[]
+  messages        Voicemail[]
+
+  @@unique([tenantId, name])
+}
+
+enum VoicemailStatus {
+  NEW
+  LISTENED
+  DONE
+}
+
+model Voicemail {
+  id           String          @id @default(cuid())
+  tenant       Tenant          @relation(fields: [tenantId], references: [id])
+  tenantId     String
+  box          VoicemailBox    @relation(fields: [boxId], references: [id], onDelete: Cascade)
+  boxId        String
+  callId       String?
+  fromPhone    String
+  durationSec  Int?
+  recordingUrl String?
+  transcript   String?
+  status       VoicemailStatus @default(NEW)
+  assignee     User?           @relation("VoicemailAssignee", fields: [assigneeId], references: [id])
+  assigneeId   String?
+  createdAt    DateTime        @default(now())
+
+  @@index([tenantId, status, createdAt])
+  @@index([boxId, createdAt])
+}
+
 enum AudioKind {
   SAFE_HARBOR
   VOICEMAIL_DROP
   SCREENER_MESSAGE
   DISCLOSURE
   HOLD
+  IVR_GREETING
+  VM_GREETING
   OTHER
 }
 

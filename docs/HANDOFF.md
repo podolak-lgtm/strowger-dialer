@@ -86,6 +86,36 @@ built and why; this says how it is wired and what will trip you.
   `evaluateDialWindow`. Ineligible leads are parked 30 minutes so a scan
   does not keep re-checking the same refusal.
 
+## Inbound contact center (owner, 4 Nov)
+
+`apps/engine/src/inbound/router.ts`. A call to one of our numbers follows
+`CallerIdNumber.routeTo`:
+
+- **CAMPAIGN**: the callback path (owner → campaign → anyone Ready; nobody
+  → callback booked + message in the "<Campaign> callbacks" box).
+- **USER**: direct DID → that agent if Ready, else their own box
+  (auto-created).
+- **IVR**: `gather` on digits with the greeting file; options are
+  `{digit, label, action, targetId}` (QUEUE | USER | VOICEMAIL | IVR |
+  HANGUP); extensions (`User.extension`, up to 4 digits + #) can be dialed
+  when `allowExtensions`; no input repeats `repeats` times then the
+  timeout action.
+- **QUEUE**: Redis sorted set `queue:<id>` + `enqueue` verb with hold music
+  from `waitHook`. The 1 s `queues` job assigns the first qualified agent
+  (`qualifiedAgents`: free, every required skill at ≥ min level, highest
+  total rating, then longest idle; a queue with no skills prefers its
+  campaign's agents) by REST-redirecting the caller to `/jambonz/bridge`,
+  and overflows past `maxWaitSeconds` to voicemail / another queue / hangup.
+- **Voicemail**: greeting, `/beep.wav`, then `listen` streams the caller to
+  the engine's `/audio/voicemail` WebSocket (`inbound/recorder.ts`); on
+  close the PCM is wrapped as WAV into the media bucket
+  (`voicemail/<tenant>/<id>.wav`, served by the web `/api/media`) and the
+  `Voicemail` row gets duration + URL; owner notified `voicemail:new`.
+  The engine therefore holds the bucket's `S3_*` variables too.
+
+Admin: `/inbound` (routing, IVRs, queues, boxes), `/skills` (skills,
+ratings, extensions), `/voicemails` (agents see their own; supervisors all).
+
 ## Media bucket
 
 Railway bucket `media` (S3-compatible, region sjc). The web service reads

@@ -44,4 +44,11 @@ export const config = readEnv({
   /** Screener detection needs an STT vendor configured on the jambonz account (deepgram, google, …). Unset = detection off. */
   SCREENER_STT_VENDOR: z.string().optional(),
   SCREENER_STT_LANGUAGE: z.string().default("en-US"),
+
+  // Media bucket (voicemail recordings). Same bucket the web app serves prompts from.
+  S3_ENDPOINT: z.string().optional(),
+  S3_BUCKET: z.string().optional(),
+  S3_REGION: z.string().optional(),
+  S3_ACCESS_KEY_ID: z.string().optional(),
+  S3_SECRET_ACCESS_KEY: z.string().optional(),
 });

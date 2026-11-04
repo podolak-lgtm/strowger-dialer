@@ -6,6 +6,7 @@ import Fastify, { type FastifyInstance } from "fastify";
 import { config } from "./config";
 import { registerInternalRoutes } from "./internal/routes";
 import { registerJambonzRoutes } from "./jambonz/routes";
+import { registerRecorder } from "./inbound/recorder";
 import { startScheduler } from "./jobs/scheduler";
 import { startPacing } from "./dialer/pacing";
 import { jambonz, jambonzConfigured } from "./jambonz/client";
@@ -54,6 +55,7 @@ app.addHook("onRequest", async (req, reply) => {
   }
 });
 
+await registerRecorder(app);
 await registerJambonzRoutes(app);
 await registerInternalRoutes(app);
 
@@ -71,6 +73,8 @@ const shutdown = async (signal: string) => {
   redis.disconnect();
   process.exit(0);
 };
+// A rejected promise in a background job must not take the whole engine down.
+process.on("unhandledRejection", (err) => log.error({ err }, "unhandled rejection"));
 process.on("SIGTERM", () => void shutdown("SIGTERM"));
 process.on("SIGINT", () => void shutdown("SIGINT"));
 

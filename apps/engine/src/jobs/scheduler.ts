@@ -7,6 +7,7 @@ import { redis } from "../redis";
 import { scrubAllTenants } from "../scrub/job";
 import { deliverPending } from "../webhooks/deliver";
 import { nightlyRecordings } from "../recordings/export";
+import { queueTick } from "../inbound/router";
 
 interface Job {
   name: string;
@@ -53,11 +54,12 @@ const JOBS: Job[] = [
   { name: "dailyReset", everyMs: 10 * 60_000, run: dailyReset },
   { name: "webhooks", everyMs: 30_000, run: deliverPending },
   { name: "nightlyRecordings", everyMs: 15 * 60_000, run: nightly },
+  { name: "queues", everyMs: 1_000, run: queueTick },
 ];
 
 export function startScheduler(): () => void {
   const timers = JOBS.map((job) => {
-    const tick = () => void withLock(job.name, job.everyMs - 1000, job.run);
+    const tick = () => void withLock(job.name, Math.max(900, job.everyMs - 1000), job.run);
     const t = setInterval(tick, job.everyMs);
     setTimeout(tick, 5_000 + Math.random() * 5_000);
     return t;

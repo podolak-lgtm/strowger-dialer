@@ -12,7 +12,9 @@
     "lint": "echo 'engine: no lint step yet'"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1161.0",
     "@fastify/cors": "^11.0.0",
+    "@fastify/websocket": "^11.3.7",
     "@jambonz/sdk": "^0.12.1",
     "@prisma/client": "^6.19.3",
     "@strowger/db": "workspace:*",

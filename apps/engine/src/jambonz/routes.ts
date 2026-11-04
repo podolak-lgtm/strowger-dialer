@@ -24,7 +24,7 @@ import { emitToAgent } from "../realtime";
 import type { Call, Campaign } from "@strowger/db";
 import { getSupervision, supervisorJoinVerbs, supervisorLegEnded } from "../supervise";
 import { voicemailVerbs } from "../dialer/voicemail";
-import { handleInboundCall } from "../dialer/inbound";
+import { ivrResult, joinAgentVerbs, leaveQueue, overflowVerbs, queueWaitVerbs, routeInbound } from "../inbound/router";
 import { log } from "../log";
 import { agentRoom, hookUrl, jambonz } from "./client";
 
@@ -142,10 +142,10 @@ export async function registerJambonzRoutes(app: FastifyInstance): Promise<void>
     const user = await prisma.user.findUnique({ where: { sipUsername: sipUser } });
     if (user) return reply.send(await agentLegVerbs(user.id, user.tenantId, b));
 
-    // A caller from the PSTN ringing one of our numbers: a lead calling back.
+    // A caller from the PSTN ringing one of our numbers.
     if (b.direction === "inbound" && b.to) {
-      const r = await handleInboundCall(b.call_sid, b.from ?? "", b.to);
-      if (r.call) return reply.send(r.verbs);
+      const verbs = await routeInbound(b.call_sid, b.from ?? "", b.to);
+      if (verbs) return reply.send(verbs);
     }
 
     log.warn({ from: b.from, to: b.to, sid: b.call_sid }, "call for nobody; hanging up");
@@ -351,6 +351,34 @@ export async function registerJambonzRoutes(app: FastifyInstance): Promise<void>
   });
 
   app.post("/jambonz/conf-exit", async (_req, reply) => reply.send([{ verb: "hangup" }]));
+
+  // ── Inbound center hooks ────────────────────────────────────────────────
+  app.post("/jambonz/ivr", async (req, reply) => {
+    const q = req.query as { ivrId?: string; callId?: string; attempt?: string; timeout?: string };
+    const b = req.body as { digits?: string; reason?: string };
+    if (!q.ivrId || !q.callId) return reply.send([{ verb: "hangup" }]);
+    return reply.send(await ivrResult(q.ivrId, q.callId, (b.digits ?? "").replace(/#$/, ""), Number(q.attempt ?? 1), q.timeout === "1" || b.reason === "timeout"));
+  });
+  app.post("/jambonz/queue-wait", async (req, reply) => {
+    const { queueId } = req.query as { queueId?: string };
+    return reply.send(queueId ? await queueWaitVerbs(queueId) : [{ verb: "pause", length: 15 }]);
+  });
+  app.post("/jambonz/queue-exit", async (req, reply) => {
+    const { callId } = req.query as { callId?: string };
+    if (callId) await leaveQueue(callId);
+    return reply.send([{ verb: "hangup" }]);
+  });
+  app.post("/jambonz/bridge", async (req, reply) => {
+    const { callId, agentId } = req.query as { callId?: string; agentId?: string };
+    const call = callId ? await prisma.call.findUnique({ where: { id: callId } }) : null;
+    if (!call || !agentId) return reply.send([{ verb: "hangup" }]);
+    return reply.send(joinAgentVerbs(call.id, call.tenantId, agentId));
+  });
+  app.post("/jambonz/overflow", async (req, reply) => {
+    const { queueId, callId } = req.query as { queueId?: string; callId?: string };
+    if (!queueId || !callId) return reply.send([{ verb: "hangup" }]);
+    return reply.send(await overflowVerbs(queueId, callId));
+  });
 
   // Warm transfer: the lead leg joins the closer's room.
   app.post("/jambonz/transfer", async (req, reply) => {

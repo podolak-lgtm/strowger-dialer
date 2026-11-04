@@ -11,6 +11,7 @@ import { agentRoom, hookUrl, jambonz, jambonzConfigured } from "../jambonz/clien
 import { afterAttempt, daypartNow } from "./cadence";
 import { removeInflight } from "./pacing";
 import { enqueueWebhooks, type WebhookEvent } from "../webhooks/deliver";
+import { leaveQueue } from "../inbound/router";
 
 const sidKey = (sid: string) => `callsid:${sid}`;
 
@@ -154,6 +155,7 @@ export async function leadCallEnded(callId: string, status: string, sipStatus: n
     data: { endedAt: new Date(), outcome, providerData: { ...(call.providerData as object), finalStatus: status, sipStatus: sipStatus ?? null, duration: duration ?? null } },
   });
   if (call.campaignId) await removeInflight(call.campaignId, callId);
+  await leaveQueue(callId).catch(() => undefined);
   // Short calls (hangups, voicemail drops, abandons) are what carrier analytics punish: count them per number.
   const talk = call.answeredAt ? (Date.now() - call.answeredAt.getTime()) / 1000 : 0;
   if (call.callerId && call.answeredAt && talk < DID_RULES.shortCallSeconds) {
