@@ -116,6 +116,14 @@ built and why; this says how it is wired and what will trip you.
 Admin: `/inbound` (routing, IVRs, queues, boxes), `/skills` (skills,
 ratings, extensions), `/voicemails` (agents see their own; supervisors all).
 
+## Carrier: Telnyx
+
+Chosen 4 Nov over Commio. Voice: a jambonz carrier named `Telnyx`
+(`JAMBONZ_CARRIER`); SMS: `SMS_PROVIDER=telnyx` with `TELNYX_API_KEY` on
+the engine and `TELNYX_PUBLIC_KEY` on web for inbound webhook signatures.
+`docs/TELNYX-SETUP.md` has the portal steps. The Commio SMS adapter stays
+in `sms/provider.ts` for a second trunk later.
+
 ## Media bucket
 
 Railway bucket `media` (S3-compatible, region sjc). The web service reads

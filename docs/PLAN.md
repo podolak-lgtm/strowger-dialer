@@ -43,7 +43,7 @@ end.
 
 | Topic | Decision |
 |---|---|
-| Carrier | Commio (SIP trunk, numbers, SMS) |
+| Carrier | Telnyx (SIP trunk, numbers, SMS); changed from Commio on 4 Nov |
 | Call control | jambonz |
 | Agent phone | Browser WebRTC softphone, Chrome first |
 | Backend | Node / TypeScript |

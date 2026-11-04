@@ -41,7 +41,12 @@ on the account page; it is of the form `wss://<sbc host>:8443`). Default in
 code is `wss://sip.jambonz.cloud:8443`; correct it if the portal says
 otherwise.
 
-## 4. Carrier: Commio (BYOC)
+## 4. Carrier
+
+The carrier is Telnyx (owner, 4 Nov): see `docs/TELNYX-SETUP.md`. The
+Commio notes below are kept for a later second trunk.
+
+### Commio (alternative BYOC)
 
 Carriers → add carrier `Commio`:
 
