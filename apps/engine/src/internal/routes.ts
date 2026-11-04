@@ -9,6 +9,7 @@ import { dialLeadForAgent, dispositionCall, hangupCall } from "../dialer/calls";
 import { onLeadPosted } from "../dialer/cadence";
 import { crossbarConfigured } from "../scrub/crossbar";
 import { scrubPendingForTenant } from "../scrub/job";
+import { getSupervision, setSupervisionMode, startSupervision, stopSupervision, takeOver } from "../supervise";
 import { releaseLead, reserveNextLead } from "../dialer/hopper";
 import { jambonz, jambonzConfigured } from "../jambonz/client";
 
@@ -74,6 +75,29 @@ export async function registerInternalRoutes(app: FastifyInstance): Promise<void
   app.get("/internal/floor", async (req) => {
     const { tenantId } = req.query as { tenantId: string };
     return { agents: await listAgents(tenantId) };
+  });
+
+  // ── Supervision ─────────────────────────────────────────────────────────
+  app.post("/internal/supervise/start", async (req) => {
+    const { tenantId, userId, agentId, mode } = Ids.extend({ agentId: z.string(), mode: z.enum(["LISTEN", "WHISPER", "BARGE"]) }).parse(req.body);
+    return startSupervision(tenantId, userId, agentId, mode);
+  });
+  app.post("/internal/supervise/mode", async (req) => {
+    const { userId, mode } = Ids.extend({ mode: z.enum(["LISTEN", "WHISPER", "BARGE"]) }).parse(req.body);
+    return setSupervisionMode(userId, mode);
+  });
+  app.post("/internal/supervise/takeover", async (req) => {
+    const { userId } = Ids.parse(req.body);
+    return takeOver(userId);
+  });
+  app.post("/internal/supervise/stop", async (req) => {
+    const { userId } = Ids.parse(req.body);
+    await stopSupervision(userId);
+    return { ok: true };
+  });
+  app.get("/internal/supervise/:userId", async (req) => {
+    const { userId } = req.params as { userId: string };
+    return { supervision: await getSupervision(userId) };
   });
 
   // ── Cadence trigger: lead.created ───────────────────────────────────────

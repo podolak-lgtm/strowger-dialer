@@ -32,8 +32,13 @@ built and why; this says how it is wired and what will trip you.
   (audio by URL, caller ID pool), and the agent console at `/agent`
   (`docs/design/`). Not yet exercised against jambonz: the account's API
   key and application SID are still to be set (`docs/JAMBONZ-SETUP.md`).
-- Next: finish jambonz wiring live, then Phase 2b (DID manager) and Phase 3
-  (ratio dialing).
+- **Phase 2b (DID manager), the cadence engine, the Crossbar scrub, Phase 3
+  (ratio dialing) and Phase 4 (supervision) are built**; see their sections.
+  Nothing has yet carried a real call: the jambonz API key and application
+  SID are the gate (`docs/JAMBONZ-SETUP.md`).
+- Next: live telephony bring-up with the owner, then Phase 5 (texting
+  replies and STOP, disposition webhooks, affiliate portal, reporting) and
+  the campaign-builder extras (drag-reorder, hours grid, workflow designer).
 
 ## Decisions baked into the schema
 
@@ -80,6 +85,24 @@ built and why; this says how it is wired and what will trip you.
   plan by lead age and type, attempts today in the lead's local day, then
   `evaluateDialWindow`. Ineligible leads are parked 30 minutes so a scan
   does not keep re-checking the same refusal.
+
+## Supervision (Phase 4)
+
+`apps/engine/src/supervise/`. A supervisor leg is a REST call to the
+supervisor's own registered softphone (`to: {type: user}`), tagged
+`kind: supervisor`; the floor page's softphone auto-answers it. On answer
+the call hook joins it to the agent's room: `joinMuted` for listen,
+`speakOnlyTo: agent` for whisper, open for barge. Mode changes are
+`conferenceParticipantAction` coach/uncoach plus `conf_mute_status` on that
+leg, so the room is never interrupted. Takeover = barge, then
+`call_status: completed` on the agent's leg; the `Call` moves to the
+supervisor and a COLD `Transfer` row is written. Every action is an
+`AuditLog` row `supervise.<mode>` which the floor shows as action history.
+Live state: Redis `supervise:<supervisorId>` and `supsid:<callSid>`.
+
+Supervisors, room supervisors and admins get a SIP line on creation, same
+as agents (People). Team leaders see their team, room supervisors their
+room, supervisors and admins everything (`floorStats`).
 
 ## Ratio dialing (Phase 3)
 

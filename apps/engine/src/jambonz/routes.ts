@@ -22,6 +22,7 @@ import { readyAgents, recordLedger } from "../dialer/pacing";
 import { detectScreener } from "@strowger/shared/compliance";
 import { emitToAgent } from "../realtime";
 import type { Call, Campaign } from "@strowger/db";
+import { getSupervision, supervisorJoinVerbs, supervisorLegEnded } from "../supervise";
 import { log } from "../log";
 import { agentRoom, hookUrl, jambonz } from "./client";
 
@@ -121,7 +122,14 @@ export async function registerJambonzRoutes(app: FastifyInstance): Promise<void>
   // ── Call reached the application ────────────────────────────────────────
   app.post("/jambonz/call", async (req, reply) => {
     const b = req.body as JambonzCallBody;
-    const tag = (b.customerData ?? {}) as { kind?: string; callId?: string; agentId?: string };
+    const tag = (b.customerData ?? {}) as { kind?: string; callId?: string; agentId?: string; supervisorId?: string };
+
+    // Supervisor leg answered: join the agent's room in the requested mode.
+    if (tag.kind === "supervisor" && tag.supervisorId) {
+      const sup = await getSupervision(tag.supervisorId);
+      if (!sup) return reply.send([{ verb: "hangup" }]);
+      return reply.send(supervisorJoinVerbs(sup));
+    }
 
     // Lead leg we created: it answered. Join the agent's room.
     const callId = tag.kind === "lead" ? tag.callId : await callIdForSid(b.call_sid);
@@ -345,6 +353,8 @@ export async function registerJambonzRoutes(app: FastifyInstance): Promise<void>
       }
       return reply.send({});
     }
+    // A supervisor leg ending.
+    if (["completed", "failed", "busy", "no-answer"].includes(status)) await supervisorLegEnded(b.call_sid);
     // An agent leg ending.
     if (["completed", "failed", "busy", "no-answer"].includes(status)) {
       const userId = await redis.get(`agentsid:${b.call_sid}`);

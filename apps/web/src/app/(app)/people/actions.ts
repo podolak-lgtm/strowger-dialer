@@ -28,7 +28,7 @@ export async function invitePerson(formData: FormData) {
   // Only an admin may make another admin.
   if (roles.includes("ADMIN") && !s.roles.includes("ADMIN")) throw new Error("Only an admin can grant admin");
 
-  const needsPhone = roles.some((r) => r === "AGENT" || r === "TEAM_LEADER");
+  const needsPhone = roles.some((r) => r === "AGENT" || r === "TEAM_LEADER" || r === "SUPERVISOR" || r === "ROOM_SUPERVISOR" || r === "ADMIN");
   const password = needsPhone ? randomPassword() : null;
   const user = await prisma.user.create({
     data: {
