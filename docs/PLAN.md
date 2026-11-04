@@ -179,7 +179,7 @@ notable ones.
 **Lists & leads**
 - `List` (tenant, campaign, name, source `UPLOAD | POST`, affiliate, status,
   counts)
-- `Lead` (tenant, list, `phone` (10 digits, unique per tenant), first/last
+- `Lead` (tenant, list, `phone` (10 digits, unique per list), first/last
   name, address, city, state, zip, email, `timezone`, `leadType`
   (campaign-defined bucket), `postedAt`, `consentJornayaId`,
   `consentTrustedFormId`, `optInUrl`, `optInAt`, `optInIp`, `rawPayload`,
@@ -188,12 +188,18 @@ notable ones.
 - `LeadEvent` (every touch: dial, text, disposition, note, webhook)
 - `Affiliate` (tenant, name, `apiKey`, field mapping, default list,
   duplicate policy)
-- `DuplicatePolicy`: scope `TENANT | CAMPAIGN`, window days, action
-  `REJECT | ACCEPT | UPDATE`
+- Duplicates are judged **per list**: a phone appears once in a list. The
+  affiliate / upload policy on a repeat is `REJECT | ACCEPT | UPDATE`.
+  Across the lists of one campaign the same phone may exist many times, so
+  the **hopper de-duplicates by phone per campaign** and the attempt caps
+  are counted per phone per campaign, not per lead row. A campaign with 22
+  lists never rings one person 22 times.
 
 **Compliance**
-- `DncEntry` (tenant, phone, source `MANUAL | STOP_KEYWORD | DISPOSITION |
-  IMPORT | CROSSBAR`, note)
+- `DncEntry` (tenant, phone, `scope: SYSTEM | CAMPAIGN` with `campaignId`
+  when campaign-scoped, source `MANUAL | STOP_KEYWORD | DISPOSITION |
+  IMPORT | CROSSBAR`, note). A system entry blocks every campaign in the
+  tenant; a campaign entry blocks that campaign only.
 - `StateRule` (seeded, not per tenant: state, hours, max attempts per day,
   day-of-week and holiday rules, source citation, `verifiedAt`)
 - `AbandonLedger` (campaign, day, answered, abandoned) — the 30-day 3% math
@@ -341,21 +347,16 @@ Later: better retry models (best time to call from history and third-party
 data), desktop app wrapper, Crossbar embedding, self-hosted jambonz if the
 numbers call for it.
 
-## 11. Open points
+## 11. Decisions closed on 4 Nov 2026
 
-1. **Duplicate scope default:** tenant-wide, 30-day window, action `REJECT`,
-   overridable per affiliate. Confirm.
-2. **Attempt caps:** "max 3/day" and "up to 5/day after 3 hours" were both
-   mentioned. Proposed: campaign default 3/day; a dial plan may raise it, but
-   never above the state cap, and the UI warns when a plan exceeds 3.
-3. **Texting carrier:** Commio for both voice and SMS (one number, one
-   vendor) vs Telnyx for SMS (already set up in Crossbar). Proposed: Commio
-   first, Telnyx behind the same interface.
-4. **Auth:** Clerk (matches Crossbar, fastest) vs self-hosted. Proposed:
-   Clerk.
-5. **Recording retention default:** proposed 2 years, per-tenant setting,
-   legal hold supported.
-6. **Callback scope default:** proposed `AGENT` (owner gets it first, falls
-   to campaign after 30 minutes).
-7. **Closer screen:** same agent screen with outbound hidden, or a reduced
-   view? Proposed: same screen, mode-aware.
+1. **Duplicates** are per list. DNC is per campaign or system-wide. Hopper
+   de-dupes by phone per campaign so overlapping lists never pile on one
+   person.
+2. **Attempt caps:** campaign default 3/day; a dial plan may raise it, never
+   above the state cap; the UI warns above 3.
+3. **Texting:** Commio first, Telnyx behind the same interface.
+4. **Auth:** Clerk.
+5. **Recording retention:** 2 years default, per tenant, legal hold.
+6. **Callbacks:** owner agent first, falls to campaign after 30 minutes.
+7. **Closers:** same agent screen; outbound is a checkbox they (or a
+   supervisor, per campaign policy) can turn on or off, not hidden.
