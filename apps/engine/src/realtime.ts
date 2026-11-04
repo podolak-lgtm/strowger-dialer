@@ -4,8 +4,8 @@
 // internal key (Phase 2 wires the softphone through the same socket).
 import type { Server as HttpServer } from "node:http";
 import { Server } from "socket.io";
-import { config } from "./config.js";
-import { log } from "./log.js";
+import { config } from "./config";
+import { log } from "./log";
 
 export interface RealtimeAuth {
   tenantId: string;

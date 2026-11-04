@@ -2,7 +2,7 @@
 // normalisation both paths share. The database never sees an un-normalised
 // lead.
 import { z } from "zod";
-import { normalizePhone } from "./phone.js";
+import { normalizePhone } from "./phone";
 
 const optionalString = z
   .union([z.string(), z.number(), z.null(), z.undefined()])

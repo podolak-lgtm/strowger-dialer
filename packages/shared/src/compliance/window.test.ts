@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { evaluateDialWindow, localTimeIn } from "./window.js";
+import { evaluateDialWindow, localTimeIn } from "./window";
 
 // 2026-11-04 is a Wednesday. 18:30Z = 13:30 New York, 10:30 Los Angeles.
 const WED_1830Z = new Date("2026-11-04T18:30:00Z");

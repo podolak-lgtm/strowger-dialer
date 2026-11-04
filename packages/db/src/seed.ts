@@ -1,7 +1,7 @@
 // Seeds what every install needs: the state calling rules (not per tenant)
 // and, in development, a demo tenant with one of each role.
 import { STATE_RULES } from "@strowger/shared/compliance";
-import { prisma } from "./index.js";
+import { prisma } from "./index";
 
 async function seedStateRules() {
   for (const rule of STATE_RULES) {

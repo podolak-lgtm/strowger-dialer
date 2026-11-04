@@ -1,2 +1,2 @@
-export * from "./state-rules.js";
-export * from "./window.js";
+export * from "./state-rules";
+export * from "./window";

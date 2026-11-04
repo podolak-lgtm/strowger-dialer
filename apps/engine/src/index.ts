@@ -4,10 +4,10 @@
 import cors from "@fastify/cors";
 import { prisma } from "@strowger/db";
 import Fastify from "fastify";
-import { config } from "./config.js";
-import { log } from "./log.js";
-import { redis } from "./redis.js";
-import { attachRealtime } from "./realtime.js";
+import { config } from "./config";
+import { log } from "./log";
+import { redis } from "./redis";
+import { attachRealtime } from "./realtime";
 
 const app = Fastify({ loggerInstance: log });
 

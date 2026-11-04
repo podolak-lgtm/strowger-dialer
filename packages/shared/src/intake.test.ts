@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { missingPostFields, normalizeLead } from "./intake.js";
+import { missingPostFields, normalizeLead } from "./intake";
 
 test("normalises a full posted lead", () => {
   const r = normalizeLead({

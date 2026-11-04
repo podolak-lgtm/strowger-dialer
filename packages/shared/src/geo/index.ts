@@ -1,7 +1,7 @@
 // Where a lead is, for the calling window: ZIP first, area code second.
-import { AREA_CODE_STATE, SPLIT_AREA_CODES, STATE_ZONE, STRADDLING_AREA_CODES, ZIP3_RANGES } from "./data.js";
+import { AREA_CODE_STATE, SPLIT_AREA_CODES, STATE_ZONE, STRADDLING_AREA_CODES, ZIP3_RANGES } from "./data";
 
-export * from "./data.js";
+export * from "./data";
 
 export function stateForZip(zip: string | null | undefined): string | null {
   if (!zip) return null;

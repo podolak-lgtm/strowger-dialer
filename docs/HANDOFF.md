@@ -9,7 +9,21 @@ built and why; this says how it is wired and what will trip you.
   plan, Clerk auth with tenant resolution, role guard, engine process with
   health + internal API + Socket.IO hub, compliance rules with tests, CI,
   Railway Dockerfiles. Nothing dials yet.
-- Next: Phase 1 (lists, upload, posting API, dedupe, DNC, Crossbar scrub).
+- **Phase 1 (lists and leads) is mostly done**: campaigns (settings, dial
+  plans, dispositions), lists (create, assign to a campaign, duplicate
+  policy), CSV upload with column mapping, affiliates with keys and
+  generated posting instructions, `POST /api/v1/leads`, DNC list with
+  system/campaign scope, state rules screen with a verified flag, lead
+  timezone resolution. Still open from Phase 1: the Crossbar/SubscriberVerify
+  litigator scrub job.
+- **Deployed on Railway** (project `strowger`): services `web`, `engine`,
+  `Postgres`, `Redis`, all from branch `claude/wonderful-hopper-kdugij`
+  until there is a `main`. Engine: https://engine-production-d809.up.railway.app,
+  web: https://web-production-c3af0.up.railway.app. `ENGINE_INTERNAL_KEY`
+  is a Railway-generated shared variable both services reference.
+  **`CLERK_SECRET_KEY` on the web service is set by the owner in the
+  Railway dashboard, never by a session.**
+- Next: Phase 2 (jambonz + Commio, agent softphone, preview dialing).
 
 ## Decisions baked into the schema
 
@@ -28,6 +42,35 @@ built and why; this says how it is wired and what will trip you.
   `abandonWarnPct`, dropping to 1:1 at `abandonCapPct`.
 - `CampaignAgent.agentMode` is `FRONTER | CLOSER | BOTH`; `outboundOn` is the
   closer's checkbox, allowed only when `Campaign.closersMayDial`.
+
+## Lead intake
+
+One path, `apps/web/src/lib/intake.ts`, for uploads and posts: normalise
+(`@strowger/shared` `normalizeLead`), DNC (system, then the list's campaign),
+per-list duplicate policy, zone (`resolveZone`: ZIP → state, area code for
+the side of a split state), `LeadEvent`. Posting requires the consent field
+set (`POST_REQUIRED_FIELDS`); uploads need only a phone. A DNC hit is kept as
+a `DNC` lead so reports and audit show it; it can never enter a hopper.
+
+**CSV import runs in the browser.** `upload-wizard.tsx` parses with
+papaparse, maps headers (guessed, then remembered per tenant by header set
+in `Tenant.settings.importMappings`), and posts rows to server actions in
+batches of 250. There is no file storage and no size ceiling to hit; a
+`ListImport` row carries the counts.
+
+**Affiliate keys** are shown once and stored as a SHA-256 hash
+(`lib/affiliates.ts`). Each affiliate gets a POST list of its own at
+creation and can only post into lists that carry its `affiliateId`.
+
+## Module resolution
+
+`tsconfig.base.json` uses `moduleResolution: "Bundler"` and relative imports
+have **no extension**. Turbopack (web) cannot map `./x.js` to `./x.ts` inside
+workspace packages, which is why. The engine therefore bundles with tsup
+(`apps/engine/tsup.config.ts`, workspace packages inlined, `@prisma/client`
+external) instead of plain `tsc`; `pnpm --filter @strowger/engine build`
+makes `dist/index.js`, which the Dockerfile runs. Tests run straight from
+source with `tsx`.
 
 ## Auth
 

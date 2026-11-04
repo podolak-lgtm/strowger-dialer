@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { AREA_CODE_STATE, resolveZone, stateForAreaCode, stateForZip } from "./index.js";
+import { AREA_CODE_STATE, resolveZone, stateForAreaCode, stateForZip } from "./index";
 
 test("zip prefixes map to states", () => {
   assert.equal(stateForZip("10001"), "NY");

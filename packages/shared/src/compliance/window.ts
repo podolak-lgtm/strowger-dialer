@@ -2,7 +2,7 @@
  * Decides whether one phone may be dialed right now. Rules are data; the most
  * restrictive wins; every refusal names the rule that caused it.
  */
-import { FEDERAL_RULE, ruleForState, type StateRuleDef } from "./state-rules.js";
+import { FEDERAL_RULE, ruleForState, type StateRuleDef } from "./state-rules";
 
 export interface DialWindowInput {
   /** IANA zone for the lead. Null = unknown; the engine refuses unknown zones. */
