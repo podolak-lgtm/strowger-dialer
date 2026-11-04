@@ -8,6 +8,7 @@ import { registerInternalRoutes } from "./internal/routes";
 import { registerJambonzRoutes } from "./jambonz/routes";
 import { startScheduler } from "./jobs/scheduler";
 import { startPacing } from "./dialer/pacing";
+import { jambonz, jambonzConfigured } from "./jambonz/client";
 import { log } from "./log";
 import { attachRealtime } from "./realtime";
 import { redis } from "./redis";
@@ -16,10 +17,33 @@ const app = Fastify({ loggerInstance: log }) as unknown as FastifyInstance;
 
 await app.register(cors, { origin: [config.WEB_ORIGIN], credentials: true });
 
+// jambonz credential check, cached a minute so health polling costs one API read per minute.
+let jambonzAuth: { at: number; value: string } = { at: 0, value: "unchecked" };
+async function jambonzAuthStatus(): Promise<string> {
+  if (!jambonzConfigured) return "not configured";
+  if (Date.now() - jambonzAuth.at < 60_000) return jambonzAuth.value;
+  try {
+    await jambonz.calls.count();
+    jambonzAuth = { at: Date.now(), value: "ok" };
+  } catch (e) {
+    jambonzAuth = { at: Date.now(), value: `error: ${(e instanceof Error ? e.message : String(e)).slice(0, 120)}` };
+  }
+  return jambonzAuth.value;
+}
+
 app.get("/health", async () => {
-  const [db, cache] = await Promise.allSettled([prisma.$queryRaw`SELECT 1`, redis.ping()]);
+  const [db, cache, auth] = await Promise.allSettled([prisma.$queryRaw`SELECT 1`, redis.ping(), jambonzAuthStatus()]);
   const ok = db.status === "fulfilled" && cache.status === "fulfilled";
-  return { ok, db: db.status, redis: cache.status, telephony: Boolean(config.JAMBONZ_API_KEY), version: process.env.npm_package_version ?? "dev" };
+  return {
+    ok,
+    db: db.status,
+    redis: cache.status,
+    telephony: Boolean(config.JAMBONZ_API_KEY),
+    jambonzAuth: auth.status === "fulfilled" ? auth.value : "error",
+    applicationSid: Boolean(config.JAMBONZ_APPLICATION_SID),
+    sipRealm: config.JAMBONZ_SIP_REALM ?? null,
+    version: process.env.npm_package_version ?? "dev",
+  };
 });
 
 /** Server-to-server calls from the web app carry the internal key. */
