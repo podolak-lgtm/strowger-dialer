@@ -240,8 +240,34 @@ the campaign ACTIVE once it has an active list.
   `Message` INBOUND + `LeadEvent TEXT_IN`. **STOP** (and the CTIA list,
   `shared/sms.ts`) → system `DncEntry` source STOP_KEYWORD, every lead with
   the number → DNC, callbacks cancelled, one confirmation text. HELP →
-  help reply. START lifts a STOP entry. The owning agent gets `text:in`
-  on the socket; the floor gets `floor:text`.
+  help reply. START lifts a STOP (or AI) entry. The owning agent gets
+  `text:in` on the socket; the floor gets `floor:text`.
+- **AI read of replies** (`apps/engine/src/sms/classify.ts`, 4 Nov): any
+  inbound text that matches no keyword is classified with the Claude API
+  (`@anthropic-ai/sdk`, structured output via `zodOutputFormat`, model
+  `SMS_AI_MODEL`, default `claude-opus-5-5`) into OPT_OUT /
+  CALLBACK_REQUEST / QUESTION / WRONG_NUMBER / INTERESTED / NOT_INTERESTED /
+  OTHER with a confidence and a one-line reason, stored on `Message`
+  (`intent`, `intentConfidence`, `intentReason`). Decision rules are pure
+  and tested in `shared/sms.ts` (`decideReplyAction`, `callbackDue`):
+  OPT_OUT at or above `SMS_AI_OPT_OUT_THRESHOLD` (0.8) is treated exactly
+  like STOP (DNC source `AI_OPT_OUT`, leads closed, callbacks cancelled,
+  confirmation text); below it the lead's `nextDialAt` is cleared and a
+  NOTE event flags "possible opt-out" for a person; CALLBACK_REQUEST books
+  a `Callback` (owner-scoped if the lead has an owner) at the time the
+  person named in their local time zone, else in 15 minutes, clamped to the
+  next two weeks. The classifier gets the last six texts of the thread for
+  context and the lead's local time. `ANTHROPIC_API_KEY` unset or the API
+  failing = keyword matching only, never a dropped message. Console: the
+  `text:in` payload carries `intent` and `action`; the SMS thread shows the
+  intent on each inbound bubble.
+- Pre-call text, 4 Nov: the standard Fresh profile reads "your phone is
+  going to ring within the next 30 seconds from {{caller_id_number}} … call
+  that number back … Reply STOP if you'd rather not get a call";
+  `instantDelaySeconds` is capped at 30 (default 15) in the engine and the
+  form; `{{company}}` is a template variable (tenant name, cached per
+  process). Migration `precall_text_30s` rewrote profiles that still had
+  the original default text.
 - Agent send: `/internal/sms/send` from the lead's assigned caller ID if
   SMS-enabled, else an SMS-enabled pool number matching the area code,
   refused for DNC/blocked numbers. Console: SMS panel under the call panel.

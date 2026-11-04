@@ -267,8 +267,9 @@ export function AgentConsole(props: ConsoleProps) {
         setCallStart(null);
       }
     });
-    sock.on("text:in", (m: { leadId: string | null; body: string; from: string }) => {
-      setNotice(`Text from ${m.from.replace(/(\d{3})(\d{3})(\d{4})/, "($1) $2-$3")}: ${m.body.slice(0, 80)}`);
+    sock.on("text:in", (m: { leadId: string | null; body: string; from: string; action?: string; intent?: string | null }) => {
+      const flag = m.action === "opt_out" ? " · OPTED OUT, lead closed" : m.action === "review" ? " · possible opt-out, check before calling" : m.action === "callback" ? " · callback booked" : "";
+      setNotice(`Text from ${m.from.replace(/(\d{3})(\d{3})(\d{4})/, "($1) $2-$3")}: ${m.body.slice(0, 80)}${flag}`);
       if (m.leadId) void textThread(m.leadId).then(setThread);
       void refreshStats();
     });
@@ -843,6 +844,7 @@ export function AgentConsole(props: ConsoleProps) {
                             {new Date(m.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
                             {m.purpose ? ` · ${m.purpose.replace("_", " ")}` : ""}
                             {m.status === "FAILED" ? " · failed" : ""}
+                            {m.intent && m.intent !== "OTHER" ? <span className={m.intent === "OPT_OUT" ? " ml-1 text-rose-400" : " ml-1 text-amber-300"}> · {m.intent.toLowerCase().replace("_", " ")}</span> : null}
                           </div>
                         </div>
                       </div>

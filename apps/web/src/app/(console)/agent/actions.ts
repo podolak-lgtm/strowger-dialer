@@ -202,12 +202,12 @@ export async function sprint(campaignId: string | null): Promise<Sprint> {
   };
 }
 
-export type TextMessage = { id: string; direction: "INBOUND" | "OUTBOUND"; body: string; at: string; status: string; purpose: string | null };
+export type TextMessage = { id: string; direction: "INBOUND" | "OUTBOUND"; body: string; at: string; status: string; purpose: string | null; intent: string | null };
 
 export async function textThread(leadId: string): Promise<TextMessage[]> {
   const s = await me();
   const rows = await prisma.message.findMany({ where: { leadId, tenantId: s.tenant.id }, orderBy: { createdAt: "asc" }, take: 50 });
-  return rows.map((m) => ({ id: m.id, direction: m.direction, body: m.body, at: m.createdAt.toISOString(), status: m.status, purpose: m.purpose }));
+  return rows.map((m) => ({ id: m.id, direction: m.direction, body: m.body, at: m.createdAt.toISOString(), status: m.status, purpose: m.purpose, intent: m.intent }));
 }
 
 export async function sendText(leadId: string, body: string): Promise<{ ok: true } | { ok: false; error: string }> {

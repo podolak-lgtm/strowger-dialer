@@ -12,6 +12,7 @@
     "lint": "echo 'engine: no lint step yet'"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^1.4.0",
     "@aws-sdk/client-s3": "^3.1161.0",
     "@fastify/cors": "^11.0.0",
     "@fastify/websocket": "^11.3.7",

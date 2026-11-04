@@ -22,3 +22,33 @@ export function smsKeyword(body: string | null | undefined): SmsKeyword {
 
 export const DEFAULT_HELP_REPLY = "{{company}}: Reply STOP to opt out. Msg & data rates may apply.";
 export const DEFAULT_STOP_REPLY = "{{company}}: You are unsubscribed and will receive no more messages.";
+
+// --- AI read of free-text replies (the engine calls the model; the decision rules live here so they are testable).
+
+export const REPLY_INTENTS = ["OPT_OUT", "CALLBACK_REQUEST", "QUESTION", "WRONG_NUMBER", "INTERESTED", "NOT_INTERESTED", "OTHER"] as const;
+export type ReplyIntent = (typeof REPLY_INTENTS)[number];
+export interface ReplyRead {
+  intent: ReplyIntent;
+  /** 0–1 */
+  confidence: number;
+  callback_at: string | null;
+}
+export type ReplyAction = "opt_out" | "review" | "callback" | "none";
+
+/** An opt-out at or above the threshold is applied; below it the lead is parked for a person to look. */
+export function decideReplyAction(c: ReplyRead | null, optOutThreshold: number): ReplyAction {
+  if (!c) return "none";
+  if (c.intent === "OPT_OUT") return c.confidence >= optOutThreshold ? "opt_out" : "review";
+  if (c.intent === "CALLBACK_REQUEST" && c.confidence >= 0.6) return "callback";
+  return "none";
+}
+
+/** A callback time the model produced, or soon; never in the past or more than two weeks out. */
+export function callbackDue(iso: string | null, now = new Date()): Date {
+  const soon = new Date(now.getTime() + 15 * 60_000);
+  if (!iso) return soon;
+  const t = new Date(iso);
+  if (Number.isNaN(t.getTime()) || t <= now) return soon;
+  const max = now.getTime() + 14 * 86_400_000;
+  return t.getTime() > max ? new Date(max) : t;
+}

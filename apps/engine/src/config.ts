@@ -34,6 +34,11 @@ export const config = readEnv({
   COMMIO_USERNAME: z.string().optional(),
   COMMIO_TOKEN: z.string().optional(),
   TELNYX_API_KEY: z.string().optional(),
+  /** AI read of inbound text replies (opt-out intent, callback requests). Unset = keyword matching only. */
+  ANTHROPIC_API_KEY: z.string().optional(),
+  SMS_AI_MODEL: z.string().default("claude-opus-5-5"),
+  /** Below this confidence an AI-detected opt-out is flagged for review, not applied. */
+  SMS_AI_OPT_OUT_THRESHOLD: z.coerce.number().min(0).max(1).default(0.8),
 
   // Crossbar scrub (optional). Without both, leads are marked CLEAN with the reason "No scrub source configured".
   CROSSBAR_URL: z.string().optional(),

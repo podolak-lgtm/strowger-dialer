@@ -472,7 +472,7 @@ model CadenceProfile {
   /// FRESH: dial within seconds of the post (when an agent is Ready).
   instantDial         Boolean @default(false)
   /// Seconds between the pre-call text and the dial.
-  instantDelaySeconds Int     @default(5)
+  instantDelaySeconds Int     @default(15)
   /// Text sent from the dialing number just before the call. Null = none.
   preCallSms          String?
   /// Text sent when the call is not answered. Null = none.
@@ -638,6 +638,8 @@ enum DncScope {
 enum DncSource {
   MANUAL
   STOP_KEYWORD
+  /// The AI read of a free-text reply found a request to stop.
+  AI_OPT_OUT
   DISPOSITION
   IMPORT
   CROSSBAR
@@ -1103,6 +1105,10 @@ model Message {
   /// Which automated touch sent it: pre_call, missed_call, or null for manual.
   purpose    String?
   error      String?
+  /// AI read of an inbound reply: OPT_OUT, CALLBACK_REQUEST, QUESTION, WRONG_NUMBER, INTERESTED, NOT_INTERESTED, OTHER. Null = keyword matched or AI not configured.
+  intent           String?
+  intentConfidence Float?
+  intentReason     String?
   createdAt  DateTime         @default(now())
 
   @@index([leadId, createdAt])

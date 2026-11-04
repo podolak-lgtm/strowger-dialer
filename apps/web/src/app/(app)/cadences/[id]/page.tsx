@@ -17,7 +17,7 @@ export default async function CadencePage({ params }: PageProps<"/cadences/[id]"
     <div>
       <PageHeader
         title={c?.name ?? "New cadence profile"}
-        subtitle="Variables for texts: {{first_name}}, {{last_name}}, {{caller_id_number}}, {{quick_callback_link}}"
+        subtitle="Variables for texts: {{first_name}}, {{last_name}}, {{company}}, {{caller_id_number}}, {{quick_callback_link}}"
         actions={
           c ? (
             <form action={deleteCadence}>
@@ -45,8 +45,8 @@ export default async function CadencePage({ params }: PageProps<"/cadences/[id]"
             <label className="flex items-center gap-2 text-sm text-zinc-300">
               <input type="checkbox" name="instantDial" defaultChecked={c?.instantDial ?? false} className="h-4 w-4" /> Instant dial on post (fresh only; needs a Ready agent)
             </label>
-            <Field label="Seconds between the pre-call text and the dial (0–10)">
-              <input name="instantDelaySeconds" type="number" min="0" max="10" defaultValue={c?.instantDelaySeconds ?? 5} className={inputClass} />
+            <Field label="Seconds between the pre-call text and the dial (0–30; the standard text promises a ring within 30 seconds)">
+              <input name="instantDelaySeconds" type="number" min="0" max="30" defaultValue={c?.instantDelaySeconds ?? 15} className={inputClass} />
             </Field>
             <div className="grid grid-cols-2 gap-3">
               <Field label="Max attempts per 24h">
@@ -65,7 +65,7 @@ export default async function CadencePage({ params }: PageProps<"/cadences/[id]"
         <Card title="Texts">
           <div className="space-y-3">
             <Field label="Pre-call text (sent from the number about to dial)">
-              <textarea name="preCallSms" rows={3} defaultValue={c?.preCallSms ?? ""} className={inputClass} placeholder="Hi {{first_name}}, you are about to receive a call from us at {{caller_id_number}}…" />
+              <textarea name="preCallSms" rows={3} defaultValue={c?.preCallSms ?? ""} className={inputClass} placeholder="Hi {{first_name}}, your phone is going to ring within the next 30 seconds from {{caller_id_number}}. If you miss us, call that number back when you're ready. Reply STOP if you'd rather not get a call." />
             </Field>
             <Field label="Missed-call text (sent when nobody answers)">
               <textarea name="missedCallSms" rows={3} defaultValue={c?.missedCallSms ?? ""} className={inputClass} placeholder="Sorry I missed you! Pick a callback time: {{quick_callback_link}}" />

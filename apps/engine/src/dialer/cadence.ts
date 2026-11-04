@@ -12,8 +12,20 @@ import { dialLeadForAgent, pickCallerId } from "./calls";
 
 const timers = new Map<string, NodeJS.Timeout>();
 
-function vars(lead: Lead, callerId: string | null) {
+// Tenant names change rarely; one read per tenant per process is plenty.
+const companyNames = new Map<string, string>();
+async function companyName(tenantId: string): Promise<string> {
+  const cached = companyNames.get(tenantId);
+  if (cached) return cached;
+  const t = await prisma.tenant.findUnique({ where: { id: tenantId }, select: { name: true } });
+  const name = t?.name ?? "";
+  companyNames.set(tenantId, name);
+  return name;
+}
+
+function vars(lead: Lead, callerId: string | null, company = "") {
   return {
+    company,
     first_name: lead.firstName ?? "there",
     last_name: lead.lastName ?? "",
     caller_id_number: callerId ? prettyPhone(callerId) : "",
@@ -91,9 +103,10 @@ export async function runFreshCadence(lead: Lead, cadence: CadenceProfile, campa
   let fresh = await prisma.lead.update({ where: { id: lead.id }, data: { assignedCallerId: callerId } });
   if (cadence.preCallSms && callerId && textingAllowed(fresh, campaign)) {
     fresh = await ensureCallbackToken(fresh);
-    await sendSms({ tenantId: campaign.tenantId, campaignId: campaign.id, leadId: fresh.id, from: callerId, to: fresh.phone, body: renderTemplate(cadence.preCallSms, vars(fresh, callerId)), purpose: "pre_call" });
+    await sendSms({ tenantId: campaign.tenantId, campaignId: campaign.id, leadId: fresh.id, from: callerId, to: fresh.phone, body: renderTemplate(cadence.preCallSms, vars(fresh, callerId, await companyName(campaign.tenantId))), purpose: "pre_call" });
   }
-  const delay = Math.max(0, Math.min(10, cadence.instantDelaySeconds)) * 1000;
+  // The standard pre-call text promises a ring "within the next 30 seconds", so the cap is 30.
+  const delay = Math.max(0, Math.min(30, cadence.instantDelaySeconds)) * 1000;
   await new Promise<void>((resolve) => {
     const t = setTimeout(resolve, delay);
     timers.set(fresh.id, t);
@@ -140,7 +153,7 @@ export async function afterAttempt(leadId: string, answered: boolean, campaign: 
 
   if (cadence.missedCallSms && lead.assignedCallerId && textingAllowed(lead, campaign)) {
     const withToken = await ensureCallbackToken(lead);
-    await sendSms({ tenantId: campaign.tenantId, campaignId: campaign.id, leadId: lead.id, from: lead.assignedCallerId, to: lead.phone, body: renderTemplate(cadence.missedCallSms, vars(withToken, lead.assignedCallerId)), purpose: "missed_call" });
+    await sendSms({ tenantId: campaign.tenantId, campaignId: campaign.id, leadId: lead.id, from: lead.assignedCallerId, to: lead.phone, body: renderTemplate(cadence.missedCallSms, vars(withToken, lead.assignedCallerId, await companyName(campaign.tenantId))), purpose: "missed_call" });
   }
 
   const since = new Date(now.getTime() - 24 * 3600_000);
