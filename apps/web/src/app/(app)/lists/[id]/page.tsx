@@ -10,7 +10,7 @@ import { UploadWizard } from "./upload-wizard";
 export default async function ListPage({ params }: PageProps<"/lists/[id]">) {
   const s = await requireRole("SUPERVISOR");
   const { id } = await params;
-  const [list, campaigns, remembered] = await Promise.all([
+  const [list, campaigns, remembered, cadences] = await Promise.all([
     prisma.list.findFirst({
       where: { id, tenantId: s.tenant.id },
       include: {
@@ -21,6 +21,7 @@ export default async function ListPage({ params }: PageProps<"/lists/[id]">) {
     }),
     prisma.campaign.findMany({ where: { tenantId: s.tenant.id, status: { not: "ARCHIVED" } }, orderBy: { name: "asc" }, select: { id: true, name: true } }),
     rememberedMappings(),
+    prisma.cadenceProfile.findMany({ where: { tenantId: s.tenant.id }, orderBy: { name: "asc" }, select: { id: true, name: true, kind: true } }),
   ]);
   if (!list) notFound();
 
@@ -112,6 +113,23 @@ export default async function ListPage({ params }: PageProps<"/lists/[id]">) {
                 {campaigns.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.name}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Priority tier" hint="Strict priority dials every eligible tier-1 lead before tier 2.">
+              <select name="priority" defaultValue={list.priority} className={inputClass}>
+                <option value={1}>1 · High</option>
+                <option value={2}>2 · Medium</option>
+                <option value={3}>3 · Low</option>
+              </select>
+            </Field>
+            <Field label="Cadence profile" hint="How this list dials and texts. None = the campaign's dial plans.">
+              <select name="cadenceProfileId" defaultValue={list.cadenceProfileId ?? ""} className={inputClass}>
+                <option value="">Campaign dial plans</option>
+                {cadences.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name} ({c.kind.toLowerCase()})
                   </option>
                 ))}
               </select>

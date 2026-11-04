@@ -81,6 +81,46 @@ built and why; this says how it is wired and what will trip you.
   `evaluateDialWindow`. Ineligible leads are parked 30 minutes so a scan
   does not keep re-checking the same refusal.
 
+## Cadences (list-level dial rules)
+
+The owner's 4 Nov spec. A `CadenceProfile` hangs off a `List`; a list without
+one dials by the campaign's `DialPlan`s. Lists have a `priority` tier and the
+campaign a `listSelection` (strict, or weighted round robin 3:2:1).
+
+- **FRESH + instantDial**: `POST /api/v1/leads` → web fires
+  `/internal/leads/posted` → `onLeadPosted`: if the campaign is ACTIVE and
+  an agent is READY with the line up, reserve them, pick the caller ID,
+  send the pre-call text **from that number**, wait `instantDelaySeconds`,
+  dial from the same number. No Ready agent → the lead sits at the front
+  of its tier with `nextDialAt = now`; nothing is dialed with nobody to
+  bridge to, ever.
+- **After an attempt** (`afterAttempt`): answered + cancelRedialsOnAnswer →
+  `redialsCancelledOn = today`, no more automated tries that day; missed →
+  missed-call text with `{{quick_callback_link}}` (`/cb/<token>`, public,
+  books a `Callback` and sets `status CALLBACK`), then `nextDialAt` from
+  `nextAttemptAt` (minimum gap, daypart rotation, 24h attempt cap).
+- Dayparts are in the lead's zone (`packages/shared/src/cadence.ts`, tested).
+  `Lead.lastAttemptDaypart` is written at dial time.
+- SMS goes through `apps/engine/src/sms/provider.ts`: `SMS_PROVIDER` =
+  commio | telnyx | log. With no carrier configured, texts are logged and
+  recorded as sent by provider `log`, so cadences can be exercised end to
+  end without a number.
+
+## Prisma migrations here
+
+`prisma migrate dev` refuses to run in this non-interactive session when a
+migration carries a warning. Generate the SQL instead and apply it:
+
+```bash
+cd packages/db
+D=prisma/migrations/$(date -u +%Y%m%d%H%M%S)_<name>; mkdir -p $D
+pnpm exec prisma migrate diff --from-migrations prisma/migrations \
+  --to-schema-datamodel prisma/schema.prisma \
+  --shadow-database-url postgresql://strowger:strowger@localhost:5432/strowger_shadow \
+  --script > $D/migration.sql
+pnpm exec prisma migrate deploy && pnpm exec prisma generate
+```
+
 ## Lead intake
 
 One path, `apps/web/src/lib/intake.ts`, for uploads and posts: normalise

@@ -20,7 +20,7 @@ export default async function CampaignPage({ params }: PageProps<"/campaigns/[id
   const c = await prisma.campaign.findFirst({
     where: { id, tenantId: s.tenant.id },
     include: {
-      lists: { select: { id: true, name: true, totalLeads: true, dialableLeads: true, status: true } },
+      lists: { select: { id: true, name: true, totalLeads: true, dialableLeads: true, status: true, priority: true }, orderBy: { priority: "asc" } },
       dialPlans: { orderBy: [{ ageFromDays: "asc" }, { leadType: "asc" }] },
       dispositions: { orderBy: { sortOrder: "asc" } },
       _count: { select: { agents: true } },
@@ -80,6 +80,12 @@ export default async function CampaignPage({ params }: PageProps<"/campaigns/[id
                 <option value="LIFO">Newest first (LIFO)</option>
                 <option value="FIFO">Oldest first (FIFO)</option>
                 <option value="PRIORITY">By dial-plan weight</option>
+              </select>
+            </Field>
+            <Field label="Lists of different priority" hint="Set each list's tier on its page.">
+              <select name="listSelection" defaultValue={c.listSelection} className={inputClass}>
+                <option value="STRICT_PRIORITY">Strict priority: tier 1 first, always</option>
+                <option value="WEIGHTED_ROUND_ROBIN">Weighted round robin: 3 : 2 : 1 across tiers</option>
               </select>
             </Field>
             <Check name="closersMayDial" label="Closers may switch outbound on for themselves" checked={c.closersMayDial} />
@@ -173,6 +179,7 @@ export default async function CampaignPage({ params }: PageProps<"/campaigns/[id
                     <Link href={`/lists/${l.id}`} className="hover:underline">
                       {l.name}
                     </Link>
+                    <span className="ml-2 rounded bg-zinc-800 px-1.5 text-[10px] text-zinc-400">P{l.priority}</span>
                   </Td>
                   <Td className="tabular-nums">{l.totalLeads.toLocaleString()}</Td>
                   <Td className="tabular-nums">{l.dialableLeads.toLocaleString()}</Td>

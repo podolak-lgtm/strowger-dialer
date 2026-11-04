@@ -47,6 +47,7 @@ model Tenant {
   dispositions   Disposition[]
   dialPlans      DialPlan[]
   scripts        Script[]
+  cadences       CadenceProfile[]
 }
 
 enum Role {
@@ -172,6 +173,11 @@ enum HopperOrder {
   PRIORITY
 }
 
+enum ListSelection {
+  STRICT_PRIORITY
+  WEIGHTED_ROUND_ROBIN
+}
+
 enum CampaignStatus {
   DRAFT
   ACTIVE
@@ -223,6 +229,8 @@ model Campaign {
   maxAttemptsPerDay Int @default(3)
   wrapUpSeconds     Int @default(30)
   hopperOrder       HopperOrder @default(LIFO)
+  /// How lists of different priority tiers share the dialer.
+  listSelection     ListSelection @default(STRICT_PRIORITY)
 
   /// Whether closers may turn outbound on for themselves (plan §11.7).
   closersMayDial Boolean @default(true)
@@ -367,6 +375,11 @@ model List {
   status      ListStatus @default(ACTIVE)
   /// What to do with a phone already in this list.
   duplicateAction DuplicateAction @default(REJECT)
+  /// 1 = high, 2 = medium, 3 = low. Strict priority dials every eligible
+  /// tier-1 lead before any tier-2 lead.
+  priority        Int             @default(2)
+  cadence         CadenceProfile? @relation(fields: [cadenceProfileId], references: [id])
+  cadenceProfileId String?
   /// Counters kept current by the import and posting paths.
   totalLeads    Int @default(0)
   dialableLeads Int @default(0)
@@ -404,6 +417,47 @@ model ListImport {
   errorReason   String?
   createdAt     DateTime     @default(now())
   finishedAt    DateTime?
+}
+
+enum CadenceKind {
+  FRESH
+  AGED
+}
+
+/// The rules a list dials by: how fast, how often, in which dayparts, and
+/// which texts go out around the call. Attached to lists; a campaign's dial
+/// plans still apply where a list has no cadence.
+model CadenceProfile {
+  id       String      @id @default(cuid())
+  tenant   Tenant      @relation(fields: [tenantId], references: [id])
+  tenantId String
+  name     String
+  kind     CadenceKind @default(AGED)
+
+  /// FRESH: dial within seconds of the post (when an agent is Ready).
+  instantDial         Boolean @default(false)
+  /// Seconds between the pre-call text and the dial.
+  instantDelaySeconds Int     @default(5)
+  /// Text sent from the dialing number just before the call. Null = none.
+  preCallSms          String?
+  /// Text sent when the call is not answered. Null = none.
+  missedCallSms       String?
+
+  maxAttemptsPerDay Int @default(3)
+  minGapMinutes     Int @default(240)
+  /// AGED: rotate dayparts so consecutive attempts never share a window.
+  rotateDayparts    Boolean @default(false)
+  /// {"MORNING":[8.5,11.5],"AFTERNOON":[12.5,16.5],"EVENING":[17,19.5]} local hours.
+  dayparts          Json    @default("{\"MORNING\":[8.5,11.5],\"AFTERNOON\":[12.5,16.5],\"EVENING\":[17,19.5]}")
+  /// A live answer cancels the remaining automated attempts that day.
+  cancelRedialsOnAnswer Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  lists List[]
+
+  @@unique([tenantId, name])
 }
 
 enum ScrubStatus {
@@ -463,6 +517,14 @@ model Lead {
   attemptsTotal Int        @default(0)
   lastAttemptAt DateTime?
   nextDialAt    DateTime?
+  /// MORNING | AFTERNOON | EVENING of the last attempt, in the lead's zone.
+  lastAttemptDaypart String?
+  /// Caller ID the cadence picked, so the SMS and the dial share one number.
+  assignedCallerId   String?
+  /// Token for the self-service callback page sent in the missed-call SMS.
+  callbackToken      String?   @unique
+  /// Set when a live answer cancels the rest of the day's automated redials.
+  redialsCancelledOn DateTime? @db.Date
   owner         User?      @relation("LeadOwner", fields: [ownerId], references: [id])
   ownerId       String?
 
@@ -864,6 +926,9 @@ model Message {
   provider   String           @default("commio")
   providerMessageId String?   @unique
   status     MessageStatus    @default(QUEUED)
+  /// Which automated touch sent it: pre_call, missed_call, or null for manual.
+  purpose    String?
+  error      String?
   createdAt  DateTime         @default(now())
 
   @@index([leadId, createdAt])

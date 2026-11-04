@@ -25,6 +25,12 @@ export async function updateList(formData: FormData) {
   const campaignId = String(formData.get("campaignId") ?? "") || null;
   const duplicateAction = String(formData.get("duplicateAction")) as DuplicateAction;
   const status = String(formData.get("status")) as ListStatus;
+  const priority = Math.min(3, Math.max(1, Number(formData.get("priority")) || 2));
+  const cadenceProfileId = String(formData.get("cadenceProfileId") ?? "") || null;
+  if (cadenceProfileId) {
+    const c = await prisma.cadenceProfile.findFirst({ where: { id: cadenceProfileId, tenantId: s.tenant.id }, select: { id: true } });
+    if (!c) throw new Error("Unknown cadence profile");
+  }
   const before = await prisma.list.findFirst({ where: { id, tenantId: s.tenant.id } });
   if (!before) throw new Error("Unknown list");
   if (campaignId) {
@@ -32,15 +38,15 @@ export async function updateList(formData: FormData) {
     if (!c) throw new Error("Unknown campaign");
   }
   // A list belongs to one campaign at a time: setting campaignId moves it.
-  await prisma.list.update({ where: { id }, data: { campaignId, duplicateAction, status } });
+  await prisma.list.update({ where: { id }, data: { campaignId, duplicateAction, status, priority, cadenceProfileId } });
   await prisma.auditLog.create({
     data: {
       tenantId: s.tenant.id,
       actorId: s.user.id,
       action: "list.update",
       target: id,
-      before: { campaignId: before.campaignId, duplicateAction: before.duplicateAction, status: before.status },
-      after: { campaignId, duplicateAction, status },
+      before: { campaignId: before.campaignId, duplicateAction: before.duplicateAction, status: before.status, priority: before.priority, cadenceProfileId: before.cadenceProfileId },
+      after: { campaignId, duplicateAction, status, priority, cadenceProfileId },
     },
   });
   revalidatePath(`/lists/${id}`);

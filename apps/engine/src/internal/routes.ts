@@ -6,6 +6,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { getAgent, listAgents, patchAgent, removeAgent, setAgent } from "../agents/state";
 import { dialLeadForAgent, dispositionCall, hangupCall } from "../dialer/calls";
+import { onLeadPosted } from "../dialer/cadence";
 import { releaseLead, reserveNextLead } from "../dialer/hopper";
 import { jambonz, jambonzConfigured } from "../jambonz/client";
 
@@ -66,6 +67,14 @@ export async function registerInternalRoutes(app: FastifyInstance): Promise<void
   app.get("/internal/floor", async (req) => {
     const { tenantId } = req.query as { tenantId: string };
     return { agents: await listAgents(tenantId) };
+  });
+
+  // ── Cadence trigger: lead.created ───────────────────────────────────────
+  app.post("/internal/leads/posted", async (req) => {
+    const { leadId } = z.object({ leadId: z.string() }).parse(req.body);
+    // Run in the background: the poster already has its answer.
+    onLeadPosted(leadId).catch((e) => app.log.warn({ err: e, leadId }, "onLeadPosted failed"));
+    return { ok: true };
   });
 
   // ── Preview dialing ─────────────────────────────────────────────────────

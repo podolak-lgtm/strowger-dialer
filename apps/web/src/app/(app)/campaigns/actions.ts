@@ -1,6 +1,6 @@
 "use server";
 
-import { prisma, type CampaignStatus, type DialMode, type ScreenerAction, type VoicemailAction, type CallerIdMode, type HopperOrder } from "@strowger/db";
+import { prisma, type CampaignStatus, type DialMode, type ScreenerAction, type VoicemailAction, type CallerIdMode, type HopperOrder, type ListSelection } from "@strowger/db";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { requireRole } from "@/lib/auth";
@@ -77,6 +77,7 @@ export async function updateCampaign(formData: FormData) {
     maxAttemptsPerDay,
     wrapUpSeconds: Math.max(0, num(formData, "wrapUpSeconds", 30)),
     hopperOrder: String(formData.get("hopperOrder") ?? before.hopperOrder) as HopperOrder,
+    listSelection: String(formData.get("listSelection") ?? before.listSelection) as ListSelection,
     closersMayDial: formData.get("closersMayDial") === "on",
     callbackOwnerMinutes: Math.max(0, num(formData, "callbackOwnerMinutes", 30)),
   };

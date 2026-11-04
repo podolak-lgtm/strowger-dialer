@@ -10,7 +10,8 @@
     "./env": "./src/env.ts",
     "./geo": "./src/geo/index.ts",
     "./intake": "./src/intake.ts",
-    "./secrets": "./src/secrets.ts"
+    "./secrets": "./src/secrets.ts",
+    "./cadence": "./src/cadence.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

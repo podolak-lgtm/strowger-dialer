@@ -24,4 +24,14 @@ export const config = readEnv({
   JAMBONZ_REQUIRE_SIGNATURE: z.coerce.boolean().default(false),
   /** Carrier (BYOC) name in jambonz for outbound PSTN calls; empty = account default. */
   JAMBONZ_CARRIER: z.string().optional(),
+
+  /** Public web URL, for links in texts (callback page). */
+  WEB_PUBLIC_URL: z.string().default("http://localhost:3000"),
+  // SMS: commio | telnyx | log
+  SMS_PROVIDER: z.enum(["commio", "telnyx", "log"]).default("log"),
+  COMMIO_API_URL: z.string().default("https://api.thinq.com"),
+  COMMIO_ACCOUNT_ID: z.string().optional(),
+  COMMIO_USERNAME: z.string().optional(),
+  COMMIO_TOKEN: z.string().optional(),
+  TELNYX_API_KEY: z.string().optional(),
 });

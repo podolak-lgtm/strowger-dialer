@@ -7,6 +7,7 @@ import { redis } from "../redis";
 import { emitToAgent, emitToTenant } from "../realtime";
 import { getAgent, patchAgent } from "../agents/state";
 import { agentRoom, hookUrl, jambonz, jambonzConfigured } from "../jambonz/client";
+import { afterAttempt, daypartNow } from "./cadence";
 
 const sidKey = (sid: string) => `callsid:${sid}`;
 
@@ -45,12 +46,12 @@ export interface DialError {
 }
 
 /** Preview-mode dial: the agent is already reserved; the lead joins the agent's room on answer. */
-export async function dialLeadForAgent(campaign: Campaign, lead: Lead, agentId: string): Promise<DialResult | DialError> {
+export async function dialLeadForAgent(campaign: Campaign, lead: Lead, agentId: string, preferredCallerId?: string): Promise<DialResult | DialError> {
   if (!jambonzConfigured) return { ok: false, error: "Telephony is not configured (jambonz API key missing)" };
   const agent = await getAgent(agentId);
   if (!agent || !agent.agentCallSid) return { ok: false, error: "Your phone line is not up. Click Ready first." };
 
-  const callerId = await pickCallerId(campaign, lead.phone);
+  const callerId = preferredCallerId ?? (await pickCallerId(campaign, lead.phone));
   if (!callerId) return { ok: false, error: "No caller ID number is available for this campaign" };
 
   const call = await prisma.call.create({
@@ -88,7 +89,11 @@ export async function dialLeadForAgent(campaign: Campaign, lead: Lead, agentId: 
     const sid = await jambonz.calls.create(req);
     await redis.set(sidKey(sid), call.id, "EX", 6 * 3600);
     await prisma.call.update({ where: { id: call.id }, data: { providerCallId: sid } });
-    await prisma.lead.update({ where: { id: lead.id }, data: { attemptsTotal: { increment: 1 }, lastAttemptAt: new Date() } });
+    const cadence = await prisma.list.findUnique({ where: { id: lead.listId }, select: { cadence: { select: { dayparts: true } } } });
+    await prisma.lead.update({
+      where: { id: lead.id },
+      data: { attemptsTotal: { increment: 1 }, lastAttemptAt: new Date(), assignedCallerId: callerId, lastAttemptDaypart: daypartNow(lead.timezone, cadence?.cadence?.dayparts) },
+    });
     await prisma.leadEvent.create({ data: { tenantId: campaign.tenantId, leadId: lead.id, kind: "DIAL", actorId: agentId, data: { callId: call.id, callerId } } });
     await patchAgent(agentId, { state: "ON_CALL", currentCallId: call.id, reservedLeadId: null });
     emitToAgent(agentId, "call:update", { callId: call.id, status: "dialing", leadId: lead.id });
@@ -137,6 +142,8 @@ export async function leadCallEnded(callId: string, status: string, sipStatus: n
     if (call.lead.status === "DIALING") {
       await prisma.lead.update({ where: { id: call.lead.id }, data: { status: call.bridgedAt ? "CONTACTED" : "NEW", nextDialAt: new Date(Date.now() + gap * 60_000) } });
     }
+    // Cadence follow-up: missed-call text, next slot by gap and daypart; or cancel the day's redials.
+    afterAttempt(call.lead.id, Boolean(call.bridgedAt), call.campaign).catch((e) => log.warn({ err: e, callId }, "cadence afterAttempt failed"));
   }
 
   if (call.agentId) {

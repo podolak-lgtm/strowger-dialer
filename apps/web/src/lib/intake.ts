@@ -11,6 +11,7 @@
 // is slow and paid, and the lead must exist to carry the result.
 import { prisma, type DuplicateAction, type Lead, type Prisma } from "@strowger/db";
 import { missingPostFields, normalizeLead, resolveZone, type NormalizedLead } from "@strowger/shared";
+import { engine } from "@/lib/engine";
 
 export type IntakeSource = "POST" | "UPLOAD";
 
@@ -118,6 +119,10 @@ export async function intakeLead(ctx: IntakeContext, list: ListInfo, raw: unknow
     }),
     prisma.list.update({ where: { id: list.id }, data: { totalLeads: { increment: 1 }, dialableLeads: { increment: 1 } } }),
   ]);
+  if (ctx.source === "POST") {
+    // lead.created: the engine decides whether a cadence fires. Never block the poster on it.
+    engine("/leads/posted", { method: "POST", body: JSON.stringify({ leadId: created.id }) }).catch(() => undefined);
+  }
   return { status: "accepted", leadId: created.id, timezone };
 }
 
