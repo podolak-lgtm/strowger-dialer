@@ -13,6 +13,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   agentCurrent,
   agentLogin,
+  campaignScript,
+  myCallbacks,
+  upcomingLeads,
   agentLogout,
   agentSetState,
   dialLead,
@@ -30,8 +33,10 @@ import {
   type AgentLive,
   type LeadCard,
   type LeadHistory,
+  type MyCallback,
   type Sprint,
   type TextMessage,
+  type UpcomingLead,
 } from "./actions";
 
 type JambonzClient = ReturnType<typeof createJambonzClient>;
@@ -142,6 +147,11 @@ export function AgentConsole(props: ConsoleProps) {
   const [stats, setStats] = useState<Sprint | null>(null);
   const [thread, setThread] = useState<TextMessage[]>([]);
   const [draft, setDraft] = useState("");
+  const [upcoming, setUpcoming] = useState<UpcomingLead[]>([]);
+  const [callbacks, setCallbacks] = useState<MyCallback[]>([]);
+  const [script, setScript] = useState<string | null>(null);
+  const [twoScreen, setTwoScreen] = useState(false);
+  const assistWin = useRef<Window | null>(null);
   const [busy, setBusy] = useState(false);
   const [pauseMenu, setPauseMenu] = useState(false);
 
@@ -154,11 +164,47 @@ export function AgentConsole(props: ConsoleProps) {
 
   const refreshStats = useCallback(async () => {
     try {
-      setStats(await sprint(campaignId || null));
+      const [st, up, cb, sc] = await Promise.all([sprint(campaignId || null), upcomingLeads(campaignId || null), myCallbacks(campaignId || null), campaignScript(campaignId || null)]);
+      setStats(st);
+      setUpcoming(up);
+      setCallbacks(cb);
+      setScript(sc);
     } catch {
-      /* stats are decoration */
+      /* decoration */
     }
   }, [campaignId]);
+
+  useEffect(() => {
+    const t = setTimeout(() => {
+      try {
+        setTwoScreen(localStorage.getItem("strowger.twoScreen") === "1");
+      } catch {
+        /* no storage */
+      }
+    }, 0);
+    return () => clearTimeout(t);
+  }, []);
+
+  /** Open (or focus) the assist window; must run inside a click so the browser allows it. */
+  const openAssist = useCallback(() => {
+    if (screen !== "main") return;
+    if (assistWin.current && !assistWin.current.closed) {
+      assistWin.current.focus();
+      return;
+    }
+    assistWin.current = window.open("/agent?screen=assist", "strowger-assist", "popup=yes,width=1280,height=900");
+  }, [screen]);
+
+  const toggleTwoScreen = () => {
+    const next = !twoScreen;
+    setTwoScreen(next);
+    try {
+      localStorage.setItem("strowger.twoScreen", next ? "1" : "0");
+    } catch {
+      /* no storage */
+    }
+    if (next) openAssist();
+  };
 
   // Pick up a session that already exists (page reload).
   useEffect(() => {
@@ -201,6 +247,11 @@ export function AgentConsole(props: ConsoleProps) {
     sock.on("agent:state", (live: AgentLive) => {
       if (live.userId !== me.id) return;
       setAgent(live.state === "LOGGED_OUT" ? null : live);
+      if (screen === "assist") {
+        const id = live.reservedLeadId ?? null;
+        if (id) void leadById(id).then((l) => l && setLead(l));
+        if (!id && !live.currentCallId) setLead(null);
+      }
       if (live.currentCallId && live.currentCallId !== callId) setCallId(live.currentCallId);
       if (live.state === "READY" && !live.currentCallId) {
         setCallId(null);
@@ -305,13 +356,15 @@ export function AgentConsole(props: ConsoleProps) {
     }
   };
 
-  const login = () =>
-    run(async () => {
+  const login = () => {
+    if (twoScreen) openAssist();
+    return run(async () => {
       if (!campaignId) throw new Error("Pick a campaign");
       const r = await agentLogin(campaignId);
       if (!r.ok) throw new Error(r.error);
       setAgent(r.agent);
     });
+  };
 
   const goReady = () =>
     run(async () => {
@@ -465,9 +518,11 @@ export function AgentConsole(props: ConsoleProps) {
             {glyph}
           </a>
         ))}
-        <a href="/agent?screen=assist" target="strowger-assist" title="Open assist on a second screen" className="grid h-10 w-10 place-items-center rounded-xl text-lg text-zinc-400 hover:bg-white/10">
-          ⧉
-        </a>
+        {screen === "main" ? (
+          <button onClick={openAssist} title="Open the assist screen in a second window (drag it to your other monitor)" className="grid h-10 w-10 place-items-center rounded-xl text-lg text-zinc-400 hover:bg-white/10">
+            ⧉
+          </button>
+        ) : null}
         <div className="flex-1" />
         <a href="/dashboard" title="Back to dashboard" className="grid h-10 w-10 place-items-center rounded-xl text-zinc-400 hover:bg-white/10">
           ⎋
@@ -491,6 +546,14 @@ export function AgentConsole(props: ConsoleProps) {
             </span>
           </div>
           <div className="flex items-center gap-2">
+            {screen === "main" ? (
+              <label className="mr-2 flex cursor-pointer items-center gap-2 text-xs text-zinc-400" title="Open the assist screen in a second window every time you log in">
+                <span>2 screens</span>
+                <button onClick={toggleTwoScreen} className={`relative h-5 w-9 rounded-full transition ${twoScreen ? "bg-emerald-500" : "bg-zinc-700"}`} aria-pressed={twoScreen}>
+                  <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition ${twoScreen ? "left-[18px]" : "left-0.5"}`} />
+                </button>
+              </label>
+            ) : null}
             {!agent ? (
               <button onClick={login} disabled={busy || !campaignId} className="rounded-lg bg-white px-3 py-1.5 font-medium text-zinc-900 disabled:opacity-50">
                 Log in
@@ -750,40 +813,94 @@ export function AgentConsole(props: ConsoleProps) {
             </div>
           </div>
         ) : (
-          <div className="grid gap-4 xl:grid-cols-3">
-            <Panel title="Agent Assist">
-              <div className="space-y-3 text-sm text-zinc-400">
-                <div className="flex items-center gap-3">
+          <div className="grid gap-4 xl:grid-cols-[1fr_1fr_320px]">
+            <div className="space-y-4">
+              <Panel title="Script" right={lead ? <span className="text-xs text-zinc-500">personalised for {leadName}</span> : null}>
+                {script ? (
+                  <div className="max-h-[60vh] space-y-2 overflow-y-auto whitespace-pre-wrap text-sm leading-relaxed text-zinc-200">
+                    {script
+                      .replace(/\{\{\s*first_name\s*\}\}/g, lead?.firstName ?? "there")
+                      .replace(/\{\{\s*last_name\s*\}\}/g, lead?.lastName ?? "")
+                      .replace(/\{\{\s*agent\s*\}\}/g, me.name)
+                      .replace(/\{\{\s*company\s*\}\}/g, me.tenant)
+                      .replace(/\{\{\s*city\s*\}\}/g, lead?.city ?? "your area")
+                      .replace(/\{\{\s*state\s*\}\}/g, lead?.state ?? "")}
+                  </div>
+                ) : (
+                  <div className="text-sm text-zinc-500">No script for this campaign yet. A supervisor adds one on the campaign page.</div>
+                )}
+              </Panel>
+              <Panel title="Agent Assist" defaultOpen={false}>
+                <div className="flex items-center gap-3 text-sm text-zinc-400">
                   <div className="grid h-12 w-12 place-items-center rounded-2xl bg-gradient-to-br from-cyan-400 to-indigo-500 text-2xl">◉</div>
                   <div>
-                    <div className="text-zinc-200">Behavioral cues and smart suggestions</div>
-                    <div className="text-xs">Arrive with live transcription in a later phase.</div>
+                    <div className="text-zinc-200">Behavioral cues, sentiment and smart suggestions</div>
+                    <div className="text-xs">Need the live transcript, which turns on once the jambonz account has a speech vendor.</div>
                   </div>
                 </div>
-                <div className="rounded-lg bg-black/30 p-3">
-                  <div className="mb-1 text-xs uppercase tracking-wide text-zinc-500">Quick knowledge</div>
-                  <input placeholder="Search scripts and answers…" className="w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm placeholder:text-zinc-600" />
-                </div>
-              </div>
-            </Panel>
-            <Panel title="Lead Queue & Tasks">
-              <div className="text-sm text-zinc-400">
+              </Panel>
+            </div>
+
+            <div className="space-y-4">
+              <Panel title="Lead Queue & Tasks" right={<span className="text-xs text-zinc-500">queue {stats?.queueDepth ?? "—"}</span>}>
                 {lead ? (
-                  <div className="mb-2 flex items-center justify-between rounded-lg border border-sky-400/30 bg-sky-400/10 px-3 py-2 text-zinc-100">
-                    <span>{leadName}</span>
-                    <span className="rounded bg-sky-400/20 px-1.5 text-xs text-sky-200">active</span>
+                  <div className="mb-3 rounded-lg border border-sky-400/30 bg-sky-400/10 px-3 py-2 text-sm text-zinc-100">
+                    <div className="flex items-center justify-between">
+                      <span className="font-medium">{leadName}</span>
+                      <span className="rounded bg-sky-400/20 px-1.5 text-xs text-sky-200">{onCall ? "on call" : wrapUp ? "wrap-up" : "active"}</span>
+                    </div>
+                    <div className="text-xs text-zinc-400">
+                      {[lead.city, lead.state].filter(Boolean).join(", ")} · local time {localTime ?? "?"} · {lead.attemptsTotal} attempts
+                    </div>
                   </div>
                 ) : null}
-                <div className="flex justify-between py-1">
-                  <span>Waiting in queue</span>
-                  <span className="text-zinc-200">{stats?.queueDepth ?? "—"}</span>
-                </div>
-                <div className="flex justify-between py-1">
-                  <span>Callbacks due</span>
-                  <span className="text-zinc-200">{stats?.callbacksDue ?? "—"}</span>
-                </div>
-              </div>
-            </Panel>
+                <div className="mb-1 text-xs uppercase tracking-wide text-zinc-500">Upcoming leads</div>
+                <ul className="space-y-1 text-sm">
+                  {upcoming.map((u) => (
+                    <li key={u.id} className="flex items-center justify-between rounded-lg bg-white/5 px-3 py-1.5">
+                      <div className="min-w-0">
+                        <div className="truncate">{u.name}</div>
+                        <div className="truncate text-[11px] text-zinc-500">
+                          {u.location || "—"} · local {u.localTime ?? "?"} · {u.listName} (P{u.priority}) · {u.attempts} tries{u.lastOutcome ? ` · last: ${u.lastOutcome.toLowerCase().replace("_", " ")}` : ""}
+                        </div>
+                      </div>
+                      <span className="ml-2 rounded bg-emerald-500/15 px-1.5 text-[10px] text-emerald-300">{u.attempts === 0 ? "fresh" : "up next"}</span>
+                    </li>
+                  ))}
+                  {upcoming.length === 0 ? <li className="text-xs text-zinc-500">Nothing waiting that may be dialed right now.</li> : null}
+                </ul>
+              </Panel>
+              <Panel title="My callbacks" right={<span className="text-xs text-zinc-500">{callbacks.filter((c) => c.overdue).length} due</span>}>
+                <ul className="space-y-1 text-sm">
+                  {callbacks.map((c) => (
+                    <li key={c.id} className={`rounded-lg px-3 py-1.5 ${c.overdue ? "bg-amber-500/10 text-amber-100" : "bg-white/5"}`}>
+                      <div className="flex items-center justify-between">
+                        <span>{c.name}</span>
+                        <span className="text-xs">{new Date(c.dueAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>
+                      </div>
+                      <div className="text-[11px] text-zinc-500">
+                        {formatPhone(c.phone)} · {c.scope === "AGENT" ? "yours" : "campaign"}
+                        {c.note ? ` · ${c.note}` : ""}
+                      </div>
+                    </li>
+                  ))}
+                  {callbacks.length === 0 ? <li className="text-xs text-zinc-500">No callbacks in the next 8 hours.</li> : null}
+                </ul>
+              </Panel>
+              {lead ? (
+                <Panel title="Text thread" right={<span className="text-xs text-zinc-500">{thread.length}</span>}>
+                  <div className="max-h-56 space-y-1 overflow-y-auto text-sm">
+                    {thread.map((m) => (
+                      <div key={m.id} className={`flex ${m.direction === "OUTBOUND" ? "justify-end" : "justify-start"}`}>
+                        <div className={`max-w-[85%] rounded-xl px-3 py-1.5 ${m.direction === "OUTBOUND" ? "bg-sky-500/20 text-sky-100" : "bg-white/10"}`}>{m.body}</div>
+                      </div>
+                    ))}
+                    {thread.length === 0 ? <div className="text-xs text-zinc-500">No texts yet.</div> : null}
+                  </div>
+                </Panel>
+              ) : null}
+            </div>
+
             <div className="space-y-4">
               <Leaderboard stats={stats} />
               <SprintPanel stats={stats} />

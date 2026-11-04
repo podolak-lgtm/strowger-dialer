@@ -86,6 +86,20 @@ built and why; this says how it is wired and what will trip you.
   `evaluateDialWindow`. Ineligible leads are parked 30 minutes so a scan
   does not keep re-checking the same refusal.
 
+## Two-screen agent console
+
+`/agent` is the main window (softphone lives here). `/agent?screen=assist`
+is the second monitor: campaign script personalised for the lead on
+screen, upcoming leads (read-only view of what the hopper would offer),
+the agent's callbacks for the next 8 hours, the current lead's text
+thread, leaderboard and goals. The assist window follows the main window
+through the agent's own socket events (`agent:state.reservedLeadId`,
+`call:update.leadId`). The "2 screens" toggle (localStorage
+`strowger.twoScreen`) opens the assist window on Log in; the open happens
+inside the click so browsers allow it, under the window name
+`strowger-assist` so there is only ever one. Scripts are versioned
+(`Script`), edited on the campaign page.
+
 ## Voicemail, recordings, DID hygiene (owner, 4 Nov)
 
 - **Voicemail** per campaign: `voicemailAction` HANGUP (retry after

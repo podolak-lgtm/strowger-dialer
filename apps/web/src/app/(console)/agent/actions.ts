@@ -219,3 +219,53 @@ export async function leaveVoicemail(callId: string): Promise<{ ok: true } | { o
   const s = await me();
   return engine(`/calls/${callId}/voicemail`, { method: "POST", body: JSON.stringify({ userId: s.user.id }) });
 }
+
+// ── Assist screen data ─────────────────────────────────────────────────────
+
+export type UpcomingLead = { id: string; name: string; phone: string; location: string; listName: string; priority: number; attempts: number; lastOutcome: string | null; nextDialAt: string | null; localTime: string | null };
+
+/** The next leads the hopper would offer this campaign, read-only. */
+export async function upcomingLeads(campaignId: string | null, limit = 6): Promise<UpcomingLead[]> {
+  const s = await me();
+  if (!campaignId) return [];
+  const campaign = await prisma.campaign.findFirst({ where: { id: campaignId, tenantId: s.tenant.id }, select: { hopperOrder: true } });
+  if (!campaign) return [];
+  const rows = await prisma.lead.findMany({
+    where: { tenantId: s.tenant.id, list: { campaignId, status: "ACTIVE" }, status: { in: ["NEW", "CONTACTED", "CALLBACK"] }, scrubStatus: { notIn: ["DNC", "LITIGATOR"] }, timezone: { not: null }, OR: [{ nextDialAt: null }, { nextDialAt: { lte: new Date() } }], ownerId: null },
+    orderBy: [{ list: { priority: "asc" } }, { postedAt: campaign.hopperOrder === "FIFO" ? "asc" : "desc" }],
+    take: limit,
+    include: { list: { select: { name: true, priority: true } }, calls: { orderBy: { dialedAt: "desc" }, take: 1, select: { outcome: true, disposition: { select: { label: true } } } } },
+  });
+  return rows.map((l) => ({
+    id: l.id,
+    name: [l.firstName, l.lastName].filter(Boolean).join(" ") || "Unknown",
+    phone: l.phone,
+    location: [l.city, l.state].filter(Boolean).join(", "),
+    listName: l.list.name,
+    priority: l.list.priority,
+    attempts: l.attemptsTotal,
+    lastOutcome: l.calls[0]?.disposition?.label ?? l.calls[0]?.outcome ?? null,
+    nextDialAt: l.nextDialAt?.toISOString() ?? null,
+    localTime: l.timezone ? new Intl.DateTimeFormat("en-US", { timeZone: l.timezone, hour: "numeric", minute: "2-digit" }).format(new Date()) : null,
+  }));
+}
+
+export type MyCallback = { id: string; leadId: string; name: string; phone: string; dueAt: string; note: string | null; scope: string; overdue: boolean };
+
+export async function myCallbacks(campaignId: string | null): Promise<MyCallback[]> {
+  const s = await me();
+  const rows = await prisma.callback.findMany({
+    where: { tenantId: s.tenant.id, status: "SCHEDULED", OR: [{ agentId: s.user.id }, { scope: "CAMPAIGN", ...(campaignId ? { campaignId } : {}) }], dueAt: { lte: new Date(Date.now() + 8 * 3600_000) } },
+    orderBy: { dueAt: "asc" },
+    take: 12,
+    include: { lead: { select: { firstName: true, lastName: true, phone: true } } },
+  });
+  return rows.map((c) => ({ id: c.id, leadId: c.leadId, name: [c.lead.firstName, c.lead.lastName].filter(Boolean).join(" ") || "Unknown", phone: c.lead.phone, dueAt: c.dueAt.toISOString(), note: c.note, scope: c.scope, overdue: c.dueAt.getTime() < Date.now() }));
+}
+
+export async function campaignScript(campaignId: string | null): Promise<string | null> {
+  const s = await me();
+  if (!campaignId) return null;
+  const sc = await prisma.script.findFirst({ where: { tenantId: s.tenant.id, campaignId, active: true }, orderBy: { version: "desc" } });
+  return sc?.body ?? null;
+}

@@ -5,6 +5,7 @@ import { requireRole } from "@/lib/auth";
 import { Badge, Button, Card, Field, PageHeader, Table, Td, inputClass } from "@/components/ui";
 import { deleteDialPlan, saveDialPlan, saveDisposition, updateCampaign } from "../actions";
 import { addWebhook, deleteWebhook, testWebhook, toggleWebhook } from "../webhook-actions";
+import { saveScript } from "../script-actions";
 
 function Check({ name, label, checked }: { name: string; label: string; checked: boolean }) {
   return (
@@ -25,6 +26,7 @@ export default async function CampaignPage({ params }: PageProps<"/campaigns/[id
       dialPlans: { orderBy: [{ ageFromDays: "asc" }, { leadType: "asc" }] },
       dispositions: { orderBy: { sortOrder: "asc" } },
       webhooks: { include: { deliveries: { orderBy: { createdAt: "desc" }, take: 1 } }, orderBy: { createdAt: "asc" } },
+      scripts: { orderBy: { version: "desc" }, take: 1 },
       _count: { select: { agents: true } },
     },
   });
@@ -273,6 +275,18 @@ export default async function CampaignPage({ params }: PageProps<"/campaigns/[id
               </Button>
             </form>
           </div>
+        </Card>
+
+        <Card title="Agent script" className="lg:col-span-2">
+          <form action={saveScript} className="space-y-2">
+            <input type="hidden" name="campaignId" value={c.id} />
+            <Field label={`What agents read on the assist screen${c.scripts[0] ? ` (version ${c.scripts[0].version})` : ""}`} hint="Variables: {{first_name}}, {{last_name}}, {{agent}}, {{company}}, {{city}}, {{state}}. Every save keeps the old version.">
+              <textarea name="body" rows={8} defaultValue={c.scripts[0]?.body ?? ""} className={`${inputClass} font-mono text-xs`} placeholder={"Hi {{first_name}}, this is {{agent}} with {{company}}. You asked about…"} />
+            </Field>
+            <Button type="submit" variant="ghost">
+              Save script
+            </Button>
+          </form>
         </Card>
 
         <Card title="CRM push (webhooks)" className="lg:col-span-2">
