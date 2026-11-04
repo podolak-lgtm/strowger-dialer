@@ -40,6 +40,11 @@ export default async function CampaignPage({ params }: PageProps<"/campaigns/[id
             {c.lists.length} lists · {c._count.agents} agents
           </>
         }
+        actions={
+          <Link href={`/campaigns/${c.id}/builder`} className="rounded-md bg-zinc-100 px-3 py-1.5 text-sm font-medium text-zinc-900">
+            Open campaign builder
+          </Link>
+        }
       />
 
       <form action={updateCampaign} className="grid gap-6 lg:grid-cols-2">

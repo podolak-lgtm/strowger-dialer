@@ -18,7 +18,16 @@ export interface DialWindowInput {
   attemptsToday: number;
   /** Extra rules a tenant has layered on (e.g. a verified override). */
   extraRules?: StateRuleDef[];
+  /** Optional campaign day x hour grid (7 x 24 flags, Sunday first). */
+  allowedHours?: ReadonlyArray<ReadonlyArray<number | boolean>> | null;
   now?: Date;
+}
+
+/** Validate a stored grid: 7 rows of 24. Anything else is treated as "no grid". */
+export function parseAllowedHours(raw: unknown): boolean[][] | null {
+  if (!Array.isArray(raw) || raw.length !== 7) return null;
+  const rows = raw.map((r) => (Array.isArray(r) && r.length === 24 ? r.map(Boolean) : null));
+  return rows.every((r): r is boolean[] => r !== null) ? rows : null;
 }
 
 export type DialDecision =
@@ -100,6 +109,10 @@ export function evaluateDialWindow(input: DialWindowInput): DialDecision {
       rule: stateRule ? (stateRule.citation ?? stateRule.state) : "campaign/federal window",
       localHour: local.hour,
     };
+  }
+  const grid = parseAllowedHours(input.allowedHours ?? null);
+  if (grid && !grid[local.weekday]?.[local.hour]) {
+    return { allowed: false, reason: "Outside the campaign's allowed hours for this weekday", rule: "campaign schedule grid", localHour: local.hour };
   }
   if (input.attemptsToday >= attemptsCap) {
     return {

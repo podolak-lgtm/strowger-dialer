@@ -86,6 +86,17 @@ built and why; this says how it is wired and what will trip you.
   `evaluateDialWindow`. Ineligible leads are parked 30 minutes so a scan
   does not keep re-checking the same refusal.
 
+## Campaign builder
+
+`/campaigns/<id>/builder` (`builder.tsx`): drag-to-reorder lists (priority
+becomes the rank; tiers 1 / 2 / 3+ drive weighted round robin), per-list
+cadence pick, a read-only flow of what the selected list's cadence does
+(the "workflow designer"; steps are edited on the cadence profile, not
+drawn), attempt limits, list selection, and the day × hour schedule grid
+(`Campaign.allowedHours`, 7 × 24 flags, lead's local time) which
+`evaluateDialWindow` applies after the window and state rules. Launch sets
+the campaign ACTIVE once it has an active list.
+
 ## Partner portal and reports (Phase 5b)
 
 - `User.affiliateId` links an AFFILIATE-role person to an `Affiliate`

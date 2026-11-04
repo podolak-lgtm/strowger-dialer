@@ -74,3 +74,14 @@ test("federal 8am floor applies when the campaign asks for earlier", () => {
   const d = evaluateDialWindow({ ...base, campaignStartHour: 7, timezone: "America/New_York", state: "OH", now: earlyZ });
   assert.equal(d.allowed, false);
 });
+
+test("campaign schedule grid can close an hour the window allows", () => {
+  const grid = Array.from({ length: 7 }, () => Array.from({ length: 24 }, (_, h) => h >= 9 && h < 20));
+  grid[3]![13] = false; // Wednesday 1pm off
+  const d = evaluateDialWindow({ ...base, allowedHours: grid, timezone: "America/New_York", state: "OH", now: WED_1830Z });
+  assert.equal(d.allowed, false);
+  if (!d.allowed) assert.equal(d.rule, "campaign schedule grid");
+  grid[3]![13] = true;
+  assert.equal(evaluateDialWindow({ ...base, allowedHours: grid, timezone: "America/New_York", state: "OH", now: WED_1830Z }).allowed, true);
+  assert.equal(evaluateDialWindow({ ...base, allowedHours: [[1]], timezone: "America/New_York", state: "OH", now: WED_1830Z }).allowed, true);
+});

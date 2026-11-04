@@ -67,6 +67,7 @@ export async function eligibility(campaign: Campaign, plans: DialPlan[], lead: L
     state: lead.state,
     campaignStartHour: campaign.localWindowStart,
     campaignEndHour: campaign.localWindowEnd,
+    allowedHours: campaign.allowedHours as number[][] | null,
     attemptsAllowedPerDay: cadence?.maxAttemptsPerDay ?? plan?.attemptsPerDay ?? campaign.maxAttemptsPerDay,
     attemptsToday: attempts,
     now,

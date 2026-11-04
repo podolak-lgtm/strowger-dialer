@@ -31,6 +31,7 @@ function textingAllowed(lead: Lead, campaign: Campaign): boolean {
     state: lead.state,
     campaignStartHour: campaign.localWindowStart,
     campaignEndHour: campaign.localWindowEnd,
+    allowedHours: campaign.allowedHours as number[][] | null,
     attemptsAllowedPerDay: 999,
     attemptsToday: 0,
   });

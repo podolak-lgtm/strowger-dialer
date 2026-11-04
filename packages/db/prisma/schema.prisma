@@ -227,6 +227,9 @@ model Campaign {
   /// federal rules still apply on top; the most restrictive wins.
   localWindowStart Int @default(9)
   localWindowEnd   Int @default(20)
+  /// Optional day x hour grid in the lead's local time: 7 arrays (Sun..Sat)
+  /// of 24 flags. Null = the start/end window applies every day.
+  allowedHours     Json?
   /// Campaign default attempts per lead (phone) per day. Dial plans may raise
   /// it, never above the state cap.
   maxAttemptsPerDay Int @default(3)
