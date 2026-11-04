@@ -245,6 +245,7 @@ model Campaign {
   agentSessions AgentSession[]
   messages      Message[]
   webhooks      WebhookEndpoint[]
+  callerIds     CallerIdNumber[]
 
   @@unique([tenantId, name])
   @@index([tenantId, status])
@@ -599,6 +600,15 @@ enum CallerIdStatus {
   RETIRED
 }
 
+/// What a carrier's analytics engine says about one of our numbers.
+enum CarrierVerdict {
+  GOOD
+  FLAGGED
+  SPAM
+  BLOCKED
+  UNKNOWN
+}
+
 model CallerIdNumber {
   id         String         @id @default(cuid())
   tenant     Tenant         @relation(fields: [tenantId], references: [id])
@@ -613,8 +623,41 @@ model CallerIdNumber {
   usedToday  Int            @default(0)
   createdAt  DateTime       @default(now())
 
+  /// Optional: pin a number to one campaign. Null = shared pool.
+  campaign   Campaign?      @relation(fields: [campaignId], references: [id])
+  campaignId String?
+
+  /// Latest reputation reading per carrier (the Big Three), the STIR/SHAKEN
+  /// attestation seen on our outbound calls, and when we last checked.
+  attVerdict    CarrierVerdict @default(UNKNOWN)
+  verizonVerdict CarrierVerdict @default(UNKNOWN)
+  tmobileVerdict CarrierVerdict @default(UNKNOWN)
+  attestation   String?
+  lastScannedAt DateTime?
+  /// Re-check this number on the daily sweep.
+  autoRecheck   Boolean        @default(true)
+
+  scans DidScan[]
+
   @@unique([tenantId, phone])
   @@index([tenantId, areaCode, status])
+  @@index([tenantId, lastScannedAt])
+}
+
+/// One reputation reading of one number, kept so a change can be dated.
+model DidScan {
+  id             String         @id @default(cuid())
+  number         CallerIdNumber @relation(fields: [numberId], references: [id], onDelete: Cascade)
+  numberId       String
+  vendor         String
+  attVerdict     CarrierVerdict @default(UNKNOWN)
+  verizonVerdict CarrierVerdict @default(UNKNOWN)
+  tmobileVerdict CarrierVerdict @default(UNKNOWN)
+  attestation    String?
+  raw            Json?
+  createdAt      DateTime       @default(now())
+
+  @@index([numberId, createdAt])
 }
 
 enum AudioKind {

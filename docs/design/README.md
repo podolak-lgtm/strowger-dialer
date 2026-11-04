@@ -10,3 +10,4 @@ copy, colours and widgets are adapted to what the system actually has.
 | did-manager.jpg | DID reputation grid across AT&T / Verizon / T-Mobile | Phase 2b |
 | supervisor-agent-monitoring.jpg | Supervisor: live agents, listen / whisper / barge / takeover | Phase 4 |
 | supervisor-campaign-monitor.jpg | Supervisor: campaign KPIs and agent performance table | Phase 4 |
+| campaign-builder.jpg | Campaign builder: list priorities and per-list dial rules, workflow designer, schedule grid | Phase 2c lists/rules; Phase 5 workflow |
