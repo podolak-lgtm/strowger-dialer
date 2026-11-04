@@ -3,15 +3,16 @@ import { ROLES } from "@strowger/shared";
 import { notFound } from "next/navigation";
 import { hasRole, requireRole } from "@/lib/auth";
 import { Badge, Button, Card, Field, Notice, PageHeader, inputClass } from "@/components/ui";
-import { resetSipPassword, setCampaignAssignment, updatePerson } from "../actions";
+import { resetSipPassword, setCampaignAssignment, setUserAffiliate, updatePerson } from "../actions";
 
 export default async function PersonPage({ params, searchParams }: PageProps<"/people/[id]">) {
   const s = await requireRole("SUPERVISOR");
   const { id } = await params;
   const { sip } = await searchParams;
-  const [p, campaigns] = await Promise.all([
+  const [p, campaigns, affiliates] = await Promise.all([
     prisma.user.findFirst({ where: { id, tenantId: s.tenant.id }, include: { campaignAgents: true } }),
     prisma.campaign.findMany({ where: { tenantId: s.tenant.id, status: { not: "ARCHIVED" } }, orderBy: { name: "asc" } }),
+    prisma.affiliate.findMany({ where: { tenantId: s.tenant.id }, orderBy: { name: "asc" }, select: { id: true, name: true } }),
   ]);
   if (!p) notFound();
   const shownSip = typeof sip === "string" ? sip : null;
@@ -46,7 +47,7 @@ export default async function PersonPage({ params, searchParams }: PageProps<"/p
             </div>
             <fieldset className="space-y-1 text-sm">
               <legend className="text-zinc-300">Roles</legend>
-              {ROLES.filter((r) => r !== "AFFILIATE").map((r) => (
+              {ROLES.map((r) => (
                 <label key={r} className="flex items-center gap-2 text-zinc-300">
                   <input type="checkbox" name="roles" value={r} defaultChecked={p.roles.includes(r)} disabled={r === "ADMIN" && !hasRole(s)} className="h-4 w-4" />
                   {r.replace("_", " ").toLowerCase()}
@@ -75,6 +76,29 @@ export default async function PersonPage({ params, searchParams }: PageProps<"/p
             </form>
           </div>
         </Card>
+
+        {p.roles.includes("AFFILIATE") ? (
+          <Card title="Partner link" className="lg:col-span-2">
+            <form action={setUserAffiliate} className="flex items-end gap-2">
+              <input type="hidden" name="id" value={p.id} />
+              <div className="w-80">
+                <Field label="This person sees the portal for">
+                  <select name="affiliateId" defaultValue={p.affiliateId ?? ""} className={inputClass}>
+                    <option value="">Not linked</option>
+                    {affiliates.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.name}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              </div>
+              <Button type="submit" variant="ghost">
+                Save
+              </Button>
+            </form>
+          </Card>
+        ) : null}
 
         <Card title="Campaigns" className="lg:col-span-2">
           <div className="grid gap-2 md:grid-cols-2">

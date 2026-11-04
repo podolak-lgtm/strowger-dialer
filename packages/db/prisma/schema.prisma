@@ -75,6 +75,9 @@ model User {
   /// needs it to register. Never shown to anyone else.
   sipUsername String?  @unique
   sipSecret   String?
+  /// For AFFILIATE-role users: the partner whose lists they may see.
+  affiliate   Affiliate? @relation(fields: [affiliateId], references: [id])
+  affiliateId String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -588,6 +591,7 @@ model Affiliate {
   createdAt   DateTime @default(now())
 
   lists List[]
+  users User[]
 
   @@unique([tenantId, name])
 }

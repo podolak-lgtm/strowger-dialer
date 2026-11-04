@@ -75,7 +75,7 @@ export default async function PeoplePage() {
             </div>
             <fieldset className="space-y-1 text-sm">
               <legend className="text-zinc-300">Roles</legend>
-              {ROLES.filter((r) => r !== "AFFILIATE" && (r !== "ADMIN" || hasRole(s))).map((r) => (
+              {ROLES.filter((r) => r !== "ADMIN" || hasRole(s)).map((r) => (
                 <label key={r} className="flex items-center gap-2 text-zinc-300">
                   <input type="checkbox" name="roles" value={r} defaultChecked={r === "AGENT"} className="h-4 w-4" />
                   {ROLE_LABEL[r]}

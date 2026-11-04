@@ -86,6 +86,17 @@ built and why; this says how it is wired and what will trip you.
   `evaluateDialWindow`. Ineligible leads are parked 30 minutes so a scan
   does not keep re-checking the same refusal.
 
+## Partner portal and reports (Phase 5b)
+
+- `User.affiliateId` links an AFFILIATE-role person to an `Affiliate`
+  (People → person → Partner link). `/partner` shows that partner's lists
+  only: accepted / duplicate / rejected / contacted / sales over 24 h, 7 d,
+  30 d and the latest posts. Nothing about other partners or agents.
+- `/reports` (supervisors, room supervisors, team leaders): date range and
+  campaign, KPI tiles, by disposition, by agent, and CSV exports at
+  `/api/reports/{calls,dispositions,agents}.csv` behind the same role
+  check. Queries live in `apps/web/src/lib/reports.ts`.
+
 ## Texting and CRM webhooks (Phase 5a)
 
 - Inbound texts: `apps/web/src/app/api/webhooks/sms/telnyx` (Ed25519 with

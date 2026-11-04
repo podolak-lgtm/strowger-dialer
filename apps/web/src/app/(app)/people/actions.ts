@@ -80,6 +80,18 @@ export async function resetSipPassword(formData: FormData) {
   redirect(`/people/${id}?sip=${encodeURIComponent(password)}`);
 }
 
+export async function setUserAffiliate(formData: FormData) {
+  const s = await requireRole("SUPERVISOR");
+  const id = String(formData.get("id"));
+  const affiliateId = String(formData.get("affiliateId") ?? "") || null;
+  if (affiliateId) {
+    const a = await prisma.affiliate.findFirst({ where: { id: affiliateId, tenantId: s.tenant.id }, select: { id: true } });
+    if (!a) throw new Error("Unknown affiliate");
+  }
+  await prisma.user.updateMany({ where: { id, tenantId: s.tenant.id }, data: { affiliateId } });
+  revalidatePath(`/people/${id}`);
+}
+
 export async function setCampaignAssignment(formData: FormData) {
   const s = await requireRole("SUPERVISOR");
   const userId = String(formData.get("id"));
