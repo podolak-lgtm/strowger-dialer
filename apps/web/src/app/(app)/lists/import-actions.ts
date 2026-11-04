@@ -7,7 +7,7 @@
 import { prisma } from "@strowger/db";
 import { revalidatePath } from "next/cache";
 import { requireRole } from "@/lib/auth";
-import { intakeLead, loadList } from "@/lib/intake";
+import { intakeBatch, loadList } from "@/lib/intake";
 
 export interface BatchCounts {
   accepted: number;
@@ -40,15 +40,7 @@ export async function importBatch(importId: string, rows: Record<string, unknown
   const list = await loadList(s.tenant.id, imp.listId);
   if (!list) throw new Error("Unknown list");
 
-  const counts: BatchCounts = { accepted: 0, duplicate: 0, badPhone: 0, dnc: 0, invalid: 0 };
-  for (const row of rows.slice(0, 500)) {
-    const out = await intakeLead({ tenantId: s.tenant.id, listId: list.id, source: "UPLOAD", requireConsentFields: false, actorId: s.user.id }, list, row);
-    if (out.status === "accepted") counts.accepted++;
-    else if (out.status === "duplicate") counts.duplicate++;
-    else if (out.reason === "bad_phone") counts.badPhone++;
-    else if (out.reason === "dnc") counts.dnc++;
-    else counts.invalid++;
-  }
+  const counts: BatchCounts = await intakeBatch({ tenantId: s.tenant.id, listId: list.id, source: "UPLOAD", requireConsentFields: false, actorId: s.user.id }, list, rows.slice(0, 2000));
   await prisma.listImport.update({
     where: { id: importId },
     data: {

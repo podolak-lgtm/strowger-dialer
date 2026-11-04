@@ -331,8 +331,12 @@ a `DNC` lead so reports and audit show it; it can never enter a hopper.
 **CSV import runs in the browser.** `upload-wizard.tsx` parses with
 papaparse, maps headers (guessed, then remembered per tenant by header set
 in `Tenant.settings.importMappings`), and posts rows to server actions in
-batches of 250. There is no file storage and no size ceiling to hit; a
-`ListImport` row carries the counts.
+batches of 1,000 with three requests in flight. The server side is
+`intakeBatch`: one DNC lookup, one existing-phone lookup, one `createMany`,
+one events insert, one counter update per batch (duplicate UPDATE/ACCEPT
+rows are the only per-row writes). There is no file storage and no size
+ceiling to hit; a `ListImport` row carries the counts. The posting API
+still uses the per-lead `intakeLead`, which fires the cadence trigger.
 
 **Affiliate keys** are shown once and stored as a SHA-256 hash
 (`lib/affiliates.ts`). Each affiliate gets a POST list of its own at

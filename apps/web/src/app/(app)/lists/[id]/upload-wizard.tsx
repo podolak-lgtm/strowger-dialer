@@ -77,16 +77,31 @@ export function UploadWizard({ listId, remembered }: { listId: string; remembere
       const counts: BatchCounts = { accepted: 0, duplicate: 0, badPhone: 0, dnc: 0, invalid: 0 };
       setProgress({ done: 0, total: rows.length, counts });
       try {
-        for (let i = 0; i < rows.length; i += 250) {
-          const batch = rows.slice(i, i + 250).map((r) => {
-            const out: Record<string, unknown> = {};
-            for (const [h, f] of Object.entries(mapping)) out[f || h] = r[h];
-            return out;
-          });
-          const c = await importBatch(importId, batch);
-          for (const k of Object.keys(counts) as (keyof BatchCounts)[]) counts[k] += c[k];
-          setProgress({ done: Math.min(i + 250, rows.length), total: rows.length, counts: { ...counts } });
+        // 1,000 rows a request, three requests in flight.
+        const SIZE = 1000;
+        const CONCURRENCY = 3;
+        const batches: Record<string, unknown>[][] = [];
+        for (let i = 0; i < rows.length; i += SIZE) {
+          batches.push(
+            rows.slice(i, i + SIZE).map((r) => {
+              const out: Record<string, unknown> = {};
+              for (const [h, f] of Object.entries(mapping)) out[f || h] = r[h];
+              return out;
+            }),
+          );
         }
+        let done = 0;
+        let next = 0;
+        const worker = async () => {
+          while (next < batches.length) {
+            const mine = batches[next++]!;
+            const c = await importBatch(importId, mine);
+            for (const k of Object.keys(counts) as (keyof BatchCounts)[]) counts[k] += c[k];
+            done += mine.length;
+            setProgress({ done: Math.min(done, rows.length), total: rows.length, counts: { ...counts } });
+          }
+        };
+        await Promise.all(Array.from({ length: Math.min(CONCURRENCY, batches.length) }, worker));
         await finishImport(importId);
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
