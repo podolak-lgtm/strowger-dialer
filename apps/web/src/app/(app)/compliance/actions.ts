@@ -55,3 +55,19 @@ export async function markStateRuleVerified(formData: FormData) {
   await prisma.auditLog.create({ data: { tenantId: s.tenant.id, actorId: s.user.id, action: "state_rule.verify", target: state, after: { verified } } });
   revalidatePath("/compliance");
 }
+
+export async function runScrubNow() {
+  const s = await requireRole("SUPERVISOR");
+  const { engine } = await import("@/lib/engine");
+  await engine("/scrub/run", { method: "POST", body: JSON.stringify({ tenantId: s.tenant.id }) }).catch(() => undefined);
+  revalidatePath("/compliance");
+}
+
+export async function setScrubRequired(formData: FormData) {
+  const s = await requireRole("ADMIN");
+  const on = formData.get("on") === "true";
+  const settings = (s.tenant.settings ?? {}) as Record<string, unknown>;
+  await prisma.tenant.update({ where: { id: s.tenant.id }, data: { settings: { ...settings, scrubRequired: on } } });
+  await prisma.auditLog.create({ data: { tenantId: s.tenant.id, actorId: s.user.id, action: "scrub.required", after: { on } } });
+  revalidatePath("/compliance");
+}

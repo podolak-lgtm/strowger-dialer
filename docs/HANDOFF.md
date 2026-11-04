@@ -106,6 +106,21 @@ campaign a `listSelection` (strict, or weighted round robin 3:2:1).
   recorded as sent by provider `log`, so cadences can be exercised end to
   end without a number.
 
+## Litigator scrub
+
+`apps/engine/src/scrub/`: every two minutes (scheduler, Redis lock) each
+tenant's PENDING leads go to Crossbar's `POST /api/agent/scrub` in batches
+of 2000 with `Authorization: Bearer CROSSBAR_AGENT_KEY` (**the agent key,
+not the requests or import key**: `agentGate` in Crossbar opens scrub to
+that one only). Litigator → `scrubStatus LITIGATOR`, `status BLOCKED`.
+Complainer → `DNC`, plus a system `DncEntry` with source CROSSBAR so the
+next intake of the number stops free. Unresolved stays PENDING. With no
+Crossbar configured leads are marked CLEAN with reason "No scrub source
+configured", and the Compliance page says so. `Tenant.settings.scrubRequired`
+makes the hopper dial CLEAN leads only; off by default so a new install
+can dial before Crossbar is wired. Compliance page: counts, "Scrub pending
+now", the required toggle.
+
 ## Prisma migrations here
 
 `prisma migrate dev` refuses to run in this non-interactive session when a

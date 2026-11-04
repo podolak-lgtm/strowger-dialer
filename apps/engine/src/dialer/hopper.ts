@@ -129,6 +129,8 @@ export async function reserveNextLead(campaign: Campaign, agentId: string): Prom
     }
   }
 
+  const tenant = await prisma.tenant.findUnique({ where: { id: campaign.tenantId }, select: { settings: true } });
+  const scrubRequired = Boolean((tenant?.settings as { scrubRequired?: boolean } | null)?.scrubRequired);
   const lists = await prisma.list.findMany({ where: { campaignId: campaign.id, status: "ACTIVE" } });
   const ordered = orderLists(campaign, lists, rrTick++);
   const order = campaign.hopperOrder === "FIFO" ? ("asc" as const) : ("desc" as const);
@@ -140,7 +142,7 @@ export async function reserveNextLead(campaign: Campaign, agentId: string): Prom
       where: {
         listId: list.id,
         status: { in: ["NEW", "CONTACTED", "CALLBACK"] },
-        scrubStatus: { notIn: ["DNC", "LITIGATOR"] },
+        scrubStatus: scrubRequired ? "CLEAN" : { notIn: ["DNC", "LITIGATOR"] },
         timezone: { not: null },
         OR: [{ nextDialAt: null }, { nextDialAt: { lte: now } }],
         AND: [{ OR: [{ ownerId: null }, { ownerId: agentId }] }],

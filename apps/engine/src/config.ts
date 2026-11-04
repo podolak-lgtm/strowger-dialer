@@ -34,4 +34,10 @@ export const config = readEnv({
   COMMIO_USERNAME: z.string().optional(),
   COMMIO_TOKEN: z.string().optional(),
   TELNYX_API_KEY: z.string().optional(),
+
+  // Crossbar scrub (optional). Without both, leads are marked CLEAN with the reason "No scrub source configured".
+  CROSSBAR_URL: z.string().optional(),
+  CROSSBAR_AGENT_KEY: z.string().optional(),
+  /** Run the paid SubscriberVerify layer, not only Crossbar's own lists. */
+  SCRUB_PAID: z.coerce.boolean().default(true),
 });

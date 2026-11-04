@@ -2,19 +2,24 @@ import { prisma } from "@strowger/db";
 import { FEDERAL_RULE, formatPhone } from "@strowger/shared";
 import { hasRole, requireRole } from "@/lib/auth";
 import { Badge, Button, Card, Field, PageHeader, Table, Td, inputClass } from "@/components/ui";
-import { addDncNumbers, markStateRuleVerified, removeDncEntry } from "./actions";
+import { addDncNumbers, markStateRuleVerified, removeDncEntry, runScrubNow, setScrubRequired } from "./actions";
+import { engine } from "@/lib/engine";
 
 const DAY = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 export default async function CompliancePage() {
   const s = await requireRole("SUPERVISOR");
-  const [dncCount, dncRecent, campaigns, rules] = await Promise.all([
+  const [dncCount, dncRecent, campaigns, rules, scrubCounts, ping] = await Promise.all([
     prisma.dncEntry.count({ where: { tenantId: s.tenant.id } }),
     prisma.dncEntry.findMany({ where: { tenantId: s.tenant.id }, orderBy: { createdAt: "desc" }, take: 50, include: { campaign: { select: { name: true } } } }),
     prisma.campaign.findMany({ where: { tenantId: s.tenant.id, status: { not: "ARCHIVED" } }, orderBy: { name: "asc" }, select: { id: true, name: true } }),
     prisma.stateRule.findMany({ orderBy: { state: "asc" } }),
+    prisma.lead.groupBy({ by: ["scrubStatus"], where: { tenantId: s.tenant.id }, _count: { _all: true } }),
+    engine<{ scrub: boolean; telephony: boolean }>("/ping").catch(() => ({ scrub: false, telephony: false })),
   ]);
   const isAdmin = hasRole(s);
+  const scrub = Object.fromEntries(scrubCounts.map((c) => [c.scrubStatus, c._count._all])) as Record<string, number>;
+  const scrubRequired = Boolean((s.tenant.settings as { scrubRequired?: boolean } | null)?.scrubRequired);
   const unverified = rules.filter((r) => !r.verifiedAt).length;
 
   return (
@@ -23,6 +28,50 @@ export default async function CompliancePage() {
 
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="space-y-6 lg:col-span-2">
+          <Card
+            title={
+              <>
+                Litigator &amp; complainer scrub · {ping.scrub ? <Badge tone="green">Crossbar connected</Badge> : <Badge tone="amber">no scrub source</Badge>}
+              </>
+            }
+          >
+            <div className="mb-3 grid grid-cols-5 gap-2 text-center text-sm">
+              {(
+                [
+                  ["PENDING", "Pending", "amber"],
+                  ["CLEAN", "Clean", "green"],
+                  ["LITIGATOR", "Litigators", "red"],
+                  ["DNC", "Complainers", "red"],
+                  ["FAILED", "Failed", "zinc"],
+                ] as const
+              ).map(([k, label, tone]) => (
+                <div key={k} className="rounded-md border border-zinc-800 p-2">
+                  <div className="text-xl font-semibold tabular-nums">{(scrub[k] ?? 0).toLocaleString()}</div>
+                  <Badge tone={tone}>{label}</Badge>
+                </div>
+              ))}
+            </div>
+            <div className="flex flex-wrap items-center gap-3 text-sm">
+              <form action={runScrubNow}>
+                <Button type="submit" variant="ghost">
+                  Scrub pending now
+                </Button>
+              </form>
+              {isAdmin ? (
+                <form action={setScrubRequired}>
+                  <input type="hidden" name="on" value={scrubRequired ? "false" : "true"} />
+                  <Button type="submit" variant={scrubRequired ? "primary" : "ghost"}>
+                    {scrubRequired ? "Scrub required before dialing: ON" : "Scrub required before dialing: off"}
+                  </Button>
+                </form>
+              ) : null}
+              <span className="text-xs text-zinc-500">
+                Pending leads are scrubbed every two minutes through Crossbar (own DNC, licensed TCPA Litigator List, cache, then SubscriberVerify). Litigators are blocked;
+                complainers are blocked and added to the system DNC list.
+              </span>
+            </div>
+          </Card>
+
           <Card title={`Do-not-call list · ${dncCount.toLocaleString()} numbers`}>
             {dncRecent.length === 0 ? (
               <p className="text-sm text-zinc-500">Empty. Numbers land here from dispositions, STOP texts, imports and this form.</p>

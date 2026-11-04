@@ -6,6 +6,7 @@ import Fastify, { type FastifyInstance } from "fastify";
 import { config } from "./config";
 import { registerInternalRoutes } from "./internal/routes";
 import { registerJambonzRoutes } from "./jambonz/routes";
+import { startScheduler } from "./jobs/scheduler";
 import { log } from "./log";
 import { attachRealtime } from "./realtime";
 import { redis } from "./redis";
@@ -32,9 +33,11 @@ await registerJambonzRoutes(app);
 await registerInternalRoutes(app);
 
 const io = attachRealtime(app.server);
+const stopScheduler = startScheduler();
 
 const shutdown = async (signal: string) => {
   log.info({ signal }, "shutting down");
+  stopScheduler();
   io.close();
   await app.close();
   await prisma.$disconnect();

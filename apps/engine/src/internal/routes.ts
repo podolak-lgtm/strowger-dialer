@@ -7,13 +7,20 @@ import { z } from "zod";
 import { getAgent, listAgents, patchAgent, removeAgent, setAgent } from "../agents/state";
 import { dialLeadForAgent, dispositionCall, hangupCall } from "../dialer/calls";
 import { onLeadPosted } from "../dialer/cadence";
+import { crossbarConfigured } from "../scrub/crossbar";
+import { scrubPendingForTenant } from "../scrub/job";
 import { releaseLead, reserveNextLead } from "../dialer/hopper";
 import { jambonz, jambonzConfigured } from "../jambonz/client";
 
 const Ids = z.object({ tenantId: z.string(), userId: z.string() });
 
 export async function registerInternalRoutes(app: FastifyInstance): Promise<void> {
-  app.get("/internal/ping", async () => ({ pong: true, telephony: jambonzConfigured }));
+  app.get("/internal/ping", async () => ({ pong: true, telephony: jambonzConfigured, scrub: crossbarConfigured }));
+
+  app.post("/internal/scrub/run", async (req) => {
+    const { tenantId } = z.object({ tenantId: z.string() }).parse(req.body);
+    return scrubPendingForTenant(tenantId);
+  });
 
   // ── Agent session ───────────────────────────────────────────────────────
   app.post("/internal/agents/login", async (req) => {
