@@ -10,6 +10,7 @@ import { registerRecorder } from "./inbound/recorder";
 import { startScheduler } from "./jobs/scheduler";
 import { startPacing } from "./dialer/pacing";
 import { jambonz, jambonzConfigured } from "./jambonz/client";
+import { classifyReply, smsAiConfigured } from "./sms/classify";
 import { log } from "./log";
 import { attachRealtime } from "./realtime";
 import { redis } from "./redis";
@@ -32,8 +33,18 @@ async function jambonzAuthStatus(): Promise<string> {
   return jambonzAuth.value;
 }
 
+// AI reply reading: one real classification, cached an hour, proves the key and the model.
+let smsAi: { at: number; value: string } = { at: 0, value: "unchecked" };
+async function smsAiStatus(): Promise<string> {
+  if (!smsAiConfigured) return "not configured";
+  if (Date.now() - smsAi.at < 3_600_000) return smsAi.value;
+  const r = await classifyReply({ body: "please dont call me again" });
+  smsAi = { at: Date.now(), value: r ? `ok (${r.intent} ${Math.round(r.confidence * 100)}%)` : "error: see engine logs" };
+  return smsAi.value;
+}
+
 app.get("/health", async () => {
-  const [db, cache, auth] = await Promise.allSettled([prisma.$queryRaw`SELECT 1`, redis.ping(), jambonzAuthStatus()]);
+  const [db, cache, auth, ai] = await Promise.allSettled([prisma.$queryRaw`SELECT 1`, redis.ping(), jambonzAuthStatus(), smsAiStatus()]);
   const ok = db.status === "fulfilled" && cache.status === "fulfilled";
   return {
     ok,
@@ -42,6 +53,7 @@ app.get("/health", async () => {
     telephony: Boolean(config.JAMBONZ_API_KEY),
     jambonzAuth: auth.status === "fulfilled" ? auth.value : "error",
     applicationSid: Boolean(config.JAMBONZ_APPLICATION_SID),
+    smsAi: ai.status === "fulfilled" ? ai.value : "error",
     sipRealm: config.JAMBONZ_SIP_REALM ?? null,
     version: process.env.npm_package_version ?? "dev",
   };
