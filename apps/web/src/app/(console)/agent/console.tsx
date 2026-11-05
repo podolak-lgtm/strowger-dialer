@@ -1,13 +1,14 @@
 "use client";
 
 // The agent console. One component, two screens:
-//   ?screen=main   (default) status banner, lead card, call controls,
-//                  dispositions, activity feed
+//   ?screen=main   (default) status banner, lead card, call controls +
+//                  dispositions (one block), activity feed
 //   ?screen=assist upcoming leads, leaderboard, goals, agent assist
 // Open /agent?screen=assist in a second window for a two-monitor desk; on
 // one monitor every column collapses with the chevrons.
 import { createJambonzClient } from "@jambonz/client-sdk-web";
 import { ChatPanel } from "@/components/chat-panel";
+import { isStaleBuildError, NewVersionBanner, useNewVersion } from "@/components/new-version";
 import { myTeams } from "@/lib/chat-actions";
 import { assistSuggest, campaignRebuttals, gamesOverview, type GamesOverview, type Suggestion } from "@/lib/games-actions";
 import { prettyCard } from "@strowger/shared/games";
@@ -38,9 +39,10 @@ import {
   skipLead,
   sprint,
   textThread,
-  updateLeadNotes,
+  updateLead,
   type AgentLive,
   type LeadCard,
+  type LeadEdit,
   type LeadHistory,
   type MyCallback,
   type Sprint,
@@ -68,12 +70,16 @@ export interface ConsoleProps {
     outboundOn: boolean;
     closersMayDial: boolean;
     wrapUpSeconds: number;
+    /** Quick "Callback" is due this many minutes out (60 when 0). */
+    callbackOwnerMinutes: number;
     dispositions: Array<{ id: string; code: string; label: string; hotkey: string | null; isCallback: boolean; isSale: boolean; isDnc: boolean }>;
   }>;
   sip: { server: string; realm: string; username: string; password: string; applicationSid: string } | null;
   engineUrl: string;
   rtToken: string;
   screen: "main" | "assist";
+  /** Build that rendered this page; /api/version is polled against it (lib/version.ts). */
+  version: string;
 }
 
 type PhoneState = "off" | "connecting" | "registered" | "error" | "in-room";
@@ -144,8 +150,199 @@ function Bar({ label, value, max, from, to }: { label: string; value: number; ma
   );
 }
 
+/** Wall clock that re-renders every `everyMs`, for the lead's local time. */
+function useNow(everyMs: number): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), everyMs);
+    return () => clearInterval(t);
+  }, [everyMs]);
+  return now;
+}
+
+function leadLocalTime(lead: LeadCard | null, now: number): string | null {
+  if (!lead?.timezone) return null;
+  try {
+    return new Intl.DateTimeFormat("en-US", { timeZone: lead.timezone, hour: "numeric", minute: "2-digit", timeZoneName: "short" }).format(new Date(now));
+  } catch {
+    return null;
+  }
+}
+
+const SCRUB_BADGE: Record<string, { label: string; className: string }> = {
+  CLEAN: { label: "clean", className: "bg-emerald-500/20 text-emerald-200" },
+  PENDING: { label: "scrub pending", className: "bg-amber-500/20 text-amber-200" },
+  FAILED: { label: "scrub failed", className: "bg-zinc-500/30 text-zinc-200" },
+  DNC: { label: "DNC", className: "bg-red-500/30 text-red-200" },
+  LITIGATOR: { label: "litigator", className: "bg-red-500/30 text-red-200" },
+};
+
+const EDIT_FIELDS: Array<{ key: keyof LeadEdit; label: string; span?: boolean; autoComplete?: string }> = [
+  { key: "firstName", label: "First name" },
+  { key: "lastName", label: "Last name" },
+  { key: "email", label: "Email", span: true },
+  { key: "address", label: "Address", span: true },
+  { key: "city", label: "City" },
+  { key: "state", label: "State" },
+  { key: "zip", label: "ZIP" },
+];
+
+function editable(lead: LeadCard): Required<LeadEdit> {
+  return { firstName: lead.firstName ?? "", lastName: lead.lastName ?? "", email: lead.email ?? "", address: lead.address ?? "", city: lead.city ?? "", state: lead.state ?? "", zip: lead.zip ?? "" };
+}
+
+function Field({ label, children, mono = false }: { label: string; children: React.ReactNode; mono?: boolean }) {
+  return (
+    <div className="min-w-0">
+      <div className="text-[11px] uppercase tracking-wide text-zinc-500">{label}</div>
+      <div className={`truncate text-sm text-zinc-200 ${mono ? "font-mono" : ""}`}>{children}</div>
+    </div>
+  );
+}
+
+/**
+ * The Lead card (owner, 5 Nov): every field the lead carries, the agent
+ * edits name / email / address inline and keeps running notes. Mount it with
+ * `key={lead.id}` so the form resets when another lead comes on screen.
+ */
+function LeadCardEditor({ lead, notes, onNotes, onNotesBlur, onSave, busy, now, right }: { lead: LeadCard; notes: string; onNotes: (v: string) => void; onNotesBlur: () => void; onSave: (fields: LeadEdit) => Promise<void>; busy: boolean; now: number; right?: React.ReactNode }) {
+  const [form, setForm] = useState<Required<LeadEdit>>(() => editable(lead));
+  const saved = editable(lead);
+  const dirty = EDIT_FIELDS.some(({ key }) => form[key].trim() !== saved[key]);
+  const localTime = leadLocalTime(lead, now);
+  const scrub = SCRUB_BADGE[lead.scrubStatus] ?? { label: lead.scrubStatus.toLowerCase(), className: "bg-white/10 text-zinc-300" };
+  const consent = [
+    lead.consentJornayaId ? { k: "Jornaya ID", v: lead.consentJornayaId } : null,
+    lead.consentTrustedFormId ? { k: "TrustedForm", v: lead.consentTrustedFormId } : null,
+    lead.optInAt ? { k: "Opted in", v: `${new Date(lead.optInAt).toLocaleString()}${lead.optInIp ? ` from ${lead.optInIp}` : ""}` } : null,
+  ].filter((x): x is { k: string; v: string } => Boolean(x));
+  const input = "mt-0.5 w-full rounded-lg border border-white/10 bg-black/30 px-2.5 py-1.5 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-sky-400/50 focus:outline-none";
+
+  return (
+    <Panel
+      title="Lead"
+      collapsible={false}
+      right={
+        <div className="flex items-center gap-2">
+          <span className={`rounded px-1.5 py-0.5 text-xs ${scrub.className}`}>{scrub.label}</span>
+          {right}
+        </div>
+      }
+    >
+      <form
+        className="space-y-4"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (dirty) void onSave(form);
+        }}
+      >
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-black/30 p-3">
+          <div>
+            <div className="font-mono text-lg text-zinc-100">{formatPhone(lead.phone)}</div>
+            <div className="text-xs text-zinc-400">{localTime ? `Local time ${localTime}` : "Local time unknown"}{lead.timezone ? ` · ${lead.timezone}` : ""}</div>
+          </div>
+          <div className="flex flex-wrap gap-1">
+            {lead.leadType ? <span className="rounded bg-fuchsia-500/20 px-1.5 py-0.5 text-xs text-fuchsia-200">{lead.leadType}</span> : null}
+            <span className="rounded bg-white/10 px-1.5 py-0.5 text-xs text-zinc-300">{lead.status.toLowerCase().replace("_", " ")}</span>
+            <span className="rounded bg-white/10 px-1.5 py-0.5 text-xs text-zinc-300">{lead.attemptsTotal} attempts</span>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          {EDIT_FIELDS.map((f) => (
+            <label key={f.key} className={`block text-[11px] uppercase tracking-wide text-zinc-500 ${f.span ? "col-span-2" : ""}`}>
+              {f.label}
+              <input value={form[f.key]} onChange={(e) => setForm((prev) => ({ ...prev, [f.key]: e.target.value }))} className={input} />
+            </label>
+          ))}
+        </div>
+
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          <Field label="List">{lead.listName}</Field>
+          <Field label="Affiliate">{lead.affiliateName ?? "—"}</Field>
+          <Field label="Posted">{new Date(lead.postedAt).toLocaleString()}</Field>
+          <Field label="Owner">{lead.ownerName ?? "unassigned"}</Field>
+          <Field label="Last attempt">{lead.lastAttemptAt ? new Date(lead.lastAttemptAt).toLocaleString() : "never"}</Field>
+          <Field label="Last outcome">{lead.lastOutcome ? lead.lastOutcome.toLowerCase().replace(/_/g, " ") : "—"}</Field>
+          <Field label="Scrub">
+            {scrub.label}
+            {lead.scrubReason ? <span className="text-zinc-500"> · {lead.scrubReason}</span> : null}
+          </Field>
+          <Field label="Lead ID" mono>
+            {lead.id}
+          </Field>
+        </div>
+
+        <div className="rounded-lg bg-black/30 p-3 text-xs">
+          <div className="mb-1 text-[11px] uppercase tracking-wide text-zinc-500">Consent</div>
+          {consent.length === 0 && !lead.optInUrl ? <div className="text-zinc-500">No consent details on this lead.</div> : null}
+          {consent.map((c) => (
+            <div key={c.k} className="flex justify-between gap-3">
+              <span className="text-zinc-500">{c.k}</span>
+              <span className="truncate font-mono text-zinc-300">{c.v}</span>
+            </div>
+          ))}
+          {lead.optInUrl ? (
+            <div className="flex justify-between gap-3">
+              <span className="text-zinc-500">Opt-in page</span>
+              <a href={lead.optInUrl} target="_blank" rel="noreferrer" className="truncate text-sky-300 hover:underline">
+                {lead.optInUrl}
+              </a>
+            </div>
+          ) : null}
+        </div>
+
+        {Object.keys(lead.custom ?? {}).length ? (
+          <div className="rounded-lg bg-black/30 p-3 text-xs">
+            <div className="mb-1 text-[11px] uppercase tracking-wide text-zinc-500">Other fields</div>
+            {Object.entries(lead.custom).map(([k, v]) => (
+              <div key={k} className="flex justify-between gap-3">
+                <span className="text-zinc-500">{k}</span>
+                <span className="truncate text-zinc-300">{typeof v === "string" ? v : JSON.stringify(v)}</span>
+              </div>
+            ))}
+          </div>
+        ) : null}
+
+        <label className="block text-[11px] uppercase tracking-wide text-zinc-500">
+          Notes <span className="normal-case text-zinc-600">(saved when you leave the box)</span>
+          <textarea value={notes} onChange={(e) => onNotes(e.target.value)} onBlur={onNotesBlur} placeholder="Notes about this lead…" rows={4} className={`${input} normal-case tracking-normal`} />
+        </label>
+
+        <div className="flex items-center justify-between">
+          <span className="text-xs text-zinc-500">{dirty ? "Unsaved changes" : "Saved"}</span>
+          <div className="flex gap-2">
+            {dirty ? (
+              <button type="button" onClick={() => setForm(saved)} disabled={busy} className="rounded-lg border border-white/15 px-3 py-1.5 text-sm text-zinc-300 hover:bg-white/10 disabled:opacity-40">
+                Revert
+              </button>
+            ) : null}
+            <button type="submit" disabled={busy || !dirty} className="rounded-lg bg-white px-3 py-1.5 text-sm font-medium text-zinc-900 disabled:opacity-40">
+              Save
+            </button>
+          </div>
+        </div>
+      </form>
+    </Panel>
+  );
+}
+
+/** Assist screen: the current-lead row in Lead Queue opens the same editable card. */
+function CollapsibleLeadCard({ summary, children }: { summary: React.ReactNode; children: React.ReactNode }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="mb-3 rounded-lg border border-sky-400/30 bg-sky-400/10 text-sm text-zinc-100">
+      <button type="button" onClick={() => setOpen((o) => !o)} className="flex w-full items-start gap-2 px-3 py-2 text-left" title={open ? "Hide the lead card" : "Open the lead card"}>
+        <span className="pt-0.5 text-xs text-zinc-400">{open ? "▾" : "▸"}</span>
+        <span className="min-w-0 flex-1">{summary}</span>
+      </button>
+      {open ? <div className="border-t border-sky-400/20 p-2">{children}</div> : null}
+    </div>
+  );
+}
+
 export function AgentConsole(props: ConsoleProps) {
-  const { me, campaigns, sip, engineUrl, rtToken, screen, roles, rights, billing } = props;
+  const { me, campaigns, sip, engineUrl, rtToken, screen, roles, rights, billing, version } = props;
   const can = (r: string) => rights.includes(r);
   const [campaignId, setCampaignId] = useState<string>(campaigns[0]?.id ?? "");
   const campaign = campaigns.find((c) => c.id === campaignId) ?? null;
@@ -161,6 +358,8 @@ export function AgentConsole(props: ConsoleProps) {
   const [notice, setNotice] = useState<string | null>(null);
   const [notes, setNotes] = useState("");
   const [callbackAt, setCallbackAt] = useState("");
+  // "Scheduled callback" opens the date/time picker; the disposition is sent on Submit.
+  const [scheduling, setScheduling] = useState(false);
   const [stats, setStats] = useState<Sprint | null>(null);
   const [thread, setThread] = useState<TextMessage[]>([]);
   const [draft, setDraft] = useState("");
@@ -173,19 +372,34 @@ export function AgentConsole(props: ConsoleProps) {
   const [manual, setManual] = useState("");
   const assistWin = useRef<Window | null>(null);
   const [busy, setBusy] = useState(false);
-  const [pauseMenu, setPauseMenu] = useState(false);
+  const [pauseMenu, setPauseMenu] = useState<null | "bar" | "banner">(null);
   const [sock, setSock] = useState<Socket | null>(null);
   const [teams, setTeams] = useState<{ id: string; name: string; members: { id: string; name: string }[] }[]>([]);
   const [liveAgents, setLiveAgents] = useState<Record<string, AgentLive>>({});
   const [dmWith, setDmWith] = useState<string | null>(null);
   const [watching, setWatching] = useState<{ agentId: string; mode: SuperviseMode } | null>(null);
+  // A deploy changes every Server Action id; this page then fails on any click.
+  const { stale: newVersion, markStale } = useNewVersion(version);
   const isLeader = roles.includes("TEAM_LEADER") || roles.includes("SUPERVISOR") || roles.includes("ADMIN");
 
   const clientRef = useRef<JambonzClient | null>(null);
   const roomCallRef = useRef<JambonzCall | null>(null);
+  // One automatic re-register after a failure; after that the "phone error" badge / banner is the retry.
+  const phoneAutoRetriedRef = useRef(false);
   const socketRef = useRef<Socket | null>(null);
+  // Dispositioning a live call hangs it up first; the lead leg's "ended" event
+  // can then land after the disposition cleared the call. Ignore it for that id.
+  const dispositionedRef = useRef<string | null>(null);
 
   const timer = useTicker(callStatus !== "idle" && callStatus !== "ended", callStart);
+  const now = useNow(30_000);
+
+  /** Put a lead on screen: card, its persisted notes, its history. */
+  const showLead = useCallback((l: LeadCard) => {
+    setLead(l);
+    setNotes(l.notes ?? "");
+    void leadHistory(l.id).then(setHistory);
+  }, []);
 
   /** Listen / whisper / barge on a team member, or stop. Needs my own line idle (registered, not in a room). */
   const watch = useCallback(async (agentId: string, mode: SuperviseMode | null) => {
@@ -298,7 +512,7 @@ export function AgentConsole(props: ConsoleProps) {
       setAgent(live.state === "LOGGED_OUT" ? null : live);
       if (screen === "assist") {
         const id = live.reservedLeadId ?? null;
-        if (id) void leadById(id).then((l) => l && setLead(l));
+        if (id) void leadById(id).then((l) => l && showLead(l));
         if (!id && !live.currentCallId) setLead(null);
       }
       if (live.currentCallId && live.currentCallId !== callId) setCallId(live.currentCallId);
@@ -315,17 +529,16 @@ export function AgentConsole(props: ConsoleProps) {
       void refreshStats();
     });
     sock.on("call:update", (u: { callId: string; status: string; leadId?: string; outcome?: string; inbound?: boolean; from?: string | null }) => {
+      if (u.status === "ended" && u.callId === dispositionedRef.current) {
+        void refreshStats();
+        return;
+      }
       setCallId(u.callId);
       setCallStatus(u.status);
       if (u.inbound) setNotice(`Inbound call${u.from ? ` from ${u.from.replace(/(\d{3})(\d{3})(\d{4})/, "($1) $2-$3")}` : ""}: connected to you.`);
       if (u.leadId) {
         // Ratio mode: the lead arrives with the live call.
-        void leadById(u.leadId).then((l) => {
-          if (l) {
-            setLead(l);
-            void leadHistory(l.id).then(setHistory);
-          }
-        });
+        void leadById(u.leadId).then((l) => l && showLead(l));
       }
       if (u.status === "bridged" || u.status === "answered") setCallStart((s) => s ?? Date.now());
       if (u.status === "ended") {
@@ -356,7 +569,10 @@ export function AgentConsole(props: ConsoleProps) {
     setPhoneError(null);
     try {
       const client = createJambonzClient({ server: sip.server, username: sip.username, password: sip.password, realm: sip.realm || undefined, displayName: me.name });
-      client.on("registered", () => setPhone((p) => (p === "in-room" ? p : "registered")));
+      client.on("registered", () => {
+        phoneAutoRetriedRef.current = false;
+        setPhone((p) => (p === "in-room" ? p : "registered"));
+      });
       client.on("registrationFailed", (e: Error) => {
         setPhone("error");
         setPhoneError(`${e.message} (registering ${sip.username}@${sip.realm || "(no realm)"} via ${sip.server})`);
@@ -370,12 +586,22 @@ export function AgentConsole(props: ConsoleProps) {
       });
       await client.connect();
       clientRef.current = client;
+      phoneAutoRetriedRef.current = false;
       setPhone("registered");
     } catch (e) {
       setPhone("error");
       setPhoneError(`${e instanceof Error ? e.message : String(e)} (registering ${sip.username}@${sip.realm || "(no realm)"} via ${sip.server})`);
     }
   }, [sip, me.name]);
+
+  // Tear down whatever client exists (a failed registration may still hold one) and register afresh.
+  const retryPhone = useCallback(() => {
+    if (!sip) return;
+    clientRef.current?.disconnect();
+    clientRef.current = null;
+    setPhoneError(null);
+    void connectPhone();
+  }, [sip, connectPhone]);
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -385,8 +611,17 @@ export function AgentConsole(props: ConsoleProps) {
       clearTimeout(t);
       clientRef.current?.disconnect();
       clientRef.current = null;
+      phoneAutoRetriedRef.current = false;
     };
   }, [sip, connectPhone]);
+
+  // After a registration failure retry once, 10 s later; further retries are the agent's click.
+  useEffect(() => {
+    if (phone !== "error" || phoneAutoRetriedRef.current) return;
+    phoneAutoRetriedRef.current = true;
+    const t = setTimeout(retryPhone, 10_000);
+    return () => clearTimeout(t);
+  }, [phone, retryPhone]);
 
   const raiseLine = useCallback(async () => {
     const client = clientRef.current;
@@ -419,7 +654,10 @@ export function AgentConsole(props: ConsoleProps) {
     try {
       await fn();
     } catch (e) {
-      setNotice(e instanceof Error ? e.message : String(e));
+      const message = e instanceof Error ? e.message : String(e);
+      // Server Action ids from a previous build: the page is stale, not the action.
+      if (isStaleBuildError(message)) markStale();
+      else setNotice(message);
     } finally {
       setBusy(false);
     }
@@ -448,7 +686,7 @@ export function AgentConsole(props: ConsoleProps) {
 
   const pause = (reason: string) =>
     run(async () => {
-      setPauseMenu(false);
+      setPauseMenu(null);
       const r = await agentSetState("PAUSED", reason);
       if (!r.ok) throw new Error(r.error);
     });
@@ -467,9 +705,7 @@ export function AgentConsole(props: ConsoleProps) {
     run(async () => {
       const r = await nextLead();
       if (!r.ok) throw new Error(r.error);
-      setLead(r.lead);
-      setHistory(await leadHistory(r.lead.id));
-      setNotes("");
+      showLead(r.lead);
     });
 
   const skip = () =>
@@ -536,7 +772,7 @@ export function AgentConsole(props: ConsoleProps) {
       const cur = await agentCurrent();
       if (cur?.reservedLeadId) {
         const l = await leadById(cur.reservedLeadId);
-        if (l) setLead(l);
+        if (l) showLead(l);
       }
     });
 
@@ -559,34 +795,91 @@ export function AgentConsole(props: ConsoleProps) {
     c.toggleMute();
   };
 
-  const dispo = (d: ConsoleProps["campaigns"][number]["dispositions"][number]) =>
+  /** Save edits from the Lead card; the card re-renders from what the server returns. */
+  const saveLead = (fields: LeadEdit) =>
+    run(async () => {
+      if (!lead) return;
+      const r = await updateLead(lead.id, { ...fields, notes });
+      if (!r.ok) throw new Error(r.error);
+      setLead(r.lead);
+      setNotes(r.lead.notes ?? "");
+      setHistory(await leadHistory(r.lead.id));
+    });
+
+  /** Notes auto-save when the agent leaves the box; no busy flag so the next click is not lost. */
+  const saveNotes = () => {
+    if (!lead || notes.trim() === (lead.notes ?? "").trim()) return;
+    const id = lead.id;
+    void updateLead(id, { notes })
+      .then((r) => {
+        if (!r.ok) throw new Error(r.error);
+        setLead((cur) => (cur && cur.id === id ? { ...cur, notes: r.lead.notes } : cur));
+        void leadHistory(id).then(setHistory);
+      })
+      .catch((e: unknown) => setNotice(`Notes not saved: ${e instanceof Error ? e.message : String(e)}`));
+  };
+
+  /**
+   * Send the disposition. On a live call the call is hung up first and the
+   * disposition follows, so one click (or hotkey) does both. `dispositionId`
+   * absent = callback via the campaign's callback disposition (engine creates
+   * a default "Callback" when the campaign has none).
+   */
+  const sendDisposition = (dispositionId: string | undefined, callback?: { at?: string; inMinutes?: number }) =>
     run(async () => {
       if (!callId) throw new Error("No call to disposition");
-      if (d.isCallback && !callbackAt) throw new Error("Pick a callback time");
-      const r = await disposition({ callId, dispositionId: d.id, notes: notes || undefined, callbackAt: d.isCallback ? new Date(callbackAt).toISOString() : undefined });
+      if (agent?.state === "ON_CALL") await hangup(callId);
+      const r = await disposition({ callId, dispositionId, notes: notes || undefined, callbackAt: callback?.at, callbackInMinutes: callback?.inMinutes, callbackScope: callback ? "AGENT" : undefined });
       if (!r.ok) throw new Error(r.error);
-      if (lead && notes) await updateLeadNotes(lead.id, { note: notes });
+      dispositionedRef.current = callId;
+      if (lead && notes.trim() !== (lead.notes ?? "").trim()) await updateLead(lead.id, { notes });
       setLead(null);
       setCallId(null);
       setCallStatus("idle");
       setCallStart(null);
+      setHeld(false);
+      setTargets(null);
       setNotes("");
       setCallbackAt("");
+      setScheduling(false);
       void refreshStats();
     });
 
-  // Hotkeys for dispositions during wrap-up.
+  /** The campaign's callback disposition, if it has one; otherwise the engine makes a default "Callback". */
+  const callbackDispositionId = campaign?.dispositions.find((d) => d.isCallback)?.id;
+
+  /** Callback any time: lead back for this agent, due now + the campaign's callbackOwnerMinutes (60 when unset). */
+  const callbackNow = () => sendDisposition(callbackDispositionId, { inMinutes: campaign?.callbackOwnerMinutes || 60 });
+
+  const dispo = (d: ConsoleProps["campaigns"][number]["dispositions"][number]) => (d.isCallback ? callbackNow() : sendDisposition(d.id));
+
+  /** Scheduled callback: Submit from the picker. */
+  const callbackScheduled = () => {
+    if (!callbackAt) {
+      setNotice("Pick a callback date and time");
+      return Promise.resolve();
+    }
+    return sendDisposition(callbackDispositionId, { at: new Date(callbackAt).toISOString() });
+  };
+
+  // Hotkeys for dispositions, on the call and during wrap-up. A campaign callback
+  // disposition's hotkey opens the scheduled-callback picker (submits it when a time is set).
   useEffect(() => {
-    if (!campaign || agent?.state !== "WRAP_UP") return;
+    if (!campaign || !callId || (agent?.state !== "WRAP_UP" && agent?.state !== "ON_CALL")) return;
     const onKey = (e: KeyboardEvent) => {
       if ((e.target as HTMLElement)?.tagName === "TEXTAREA" || (e.target as HTMLElement)?.tagName === "INPUT") return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
       const d = campaign.dispositions.find((x) => x.hotkey === e.key);
-      if (d) void dispo(d);
+      if (!d) return;
+      if (d.isCallback) {
+        if (scheduling && callbackAt) void callbackScheduled();
+        else setScheduling(true);
+      } else void sendDisposition(d.id);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [campaign, agent?.state, callId, notes, callbackAt]);
+  }, [campaign, agent?.state, callId, notes, callbackAt, scheduling]);
 
   const state = agent?.state ?? "LOGGED_OUT";
   const onCall = state === "ON_CALL";
@@ -599,17 +892,53 @@ export function AgentConsole(props: ConsoleProps) {
     state === "LOGGED_OUT"
       ? { label: "OFFLINE", sub: "Pick a campaign and log in", color: "#8b8f9a" }
       : state === "LOGGED_IN"
-        ? { label: "LOGGED IN", sub: phone === "registered" ? "Click Ready to bring your line up" : phone === "connecting" ? "Registering softphone…" : phone === "error" ? `Softphone error: ${phoneError}` : "Softphone offline", color: "#f5c452" }
+        ? { label: "LOGGED IN", sub: phone === "registered" ? "click to go Ready" : phone === "connecting" ? "Registering softphone…" : phone === "error" ? <button type="button" onClick={retryPhone} title="Click to re-register the softphone" className="text-left text-red-300 underline decoration-dotted underline-offset-2 hover:text-red-200">Softphone error: {phoneError} · click to retry</button> : "Softphone offline", color: "#f5c452" }
         : state === "READY"
-          ? { label: "READY", sub: campaign?.dialMode === "PREVIEW" ? "Preview mode · pull the next lead when you are" : "Waiting for Live Call", color: "#3ddc97" }
+          ? { label: "READY", sub: `${campaign?.dialMode === "PREVIEW" ? "Preview mode · pull the next lead when you are" : "Waiting for Live Call"} · click to pause`, color: "#3ddc97" }
           : state === "PAUSED"
-            ? { label: "PAUSED", sub: agent?.pauseReason ?? "On break", color: "#f5c452" }
+            ? { label: "PAUSED", sub: `${agent?.pauseReason ?? "On break"} · click to resume`, color: "#f5c452" }
             : state === "ON_CALL"
               ? { label: "ON CALL", sub: callStatus === "dialing" ? "Dialing…" : callStatus === "answered" ? "Answered · connecting" : "Live", color: "#5ab4ff" }
               : { label: "WRAP-UP", sub: "Disposition the call", color: "#c084fc" };
 
+  // The banner is the primary Ready/Pause control. ON_CALL and WRAP_UP are not clickable,
+  // nor is LOGGED_IN until the softphone has registered (its error text carries its own retry button).
+  const bannerActionLabel =
+    state === "READY"
+      ? "Ready. Click to pause and pick a reason"
+      : state === "PAUSED"
+        ? `Paused (${agent?.pauseReason ?? "On break"}). Click to resume and go Ready`
+        : state === "LOGGED_IN" && phone === "registered"
+          ? "Logged in. Click to go Ready and bring your line up"
+          : null;
+  const bannerClick = () => {
+    if (state === "READY") setPauseMenu((m) => (m === "banner" ? null : "banner"));
+    else if (state === "PAUSED" || state === "LOGGED_IN") goReady();
+  };
+  const bannerClass = "mb-5 flex items-center justify-center gap-6 rounded-2xl border border-white/10 bg-gradient-to-b from-white/[0.06] to-transparent px-6 py-5";
+  const bannerBody = (
+    <>
+      <Waveform colors={["#a855f7", "#ec4899"]} className="hidden md:flex" />
+      <div className="text-center">
+        <div className="text-3xl font-bold tracking-tight">
+          <span style={{ color: banner.color }}>{banner.label}</span>
+          <span className="text-zinc-500"> • </span>
+          <span>{onCall ? timer : state === "LOGGED_OUT" ? "Strowger" : banner.label === "READY" ? "Waiting for Live Call" : stateSince}</span>
+        </div>
+        <div className="mt-1 text-sm text-zinc-400">
+          {campaign ? `${campaign.name} · ` : ""}
+          {banner.sub}
+        </div>
+      </div>
+      <Waveform colors={["#22d3ee", "#3b82f6"]} className="hidden md:flex" />
+    </>
+  );
+
   const leadName = lead ? [lead.firstName, lead.lastName].filter(Boolean).join(" ") || "Unknown name" : "";
-  const localTime = lead?.timezone ? new Intl.DateTimeFormat("en-US", { timeZone: lead.timezone, hour: "numeric", minute: "2-digit" }).format(new Date()) : null;
+  const localTime = leadLocalTime(lead, now);
+  const leadCard = lead ? (
+    <LeadCardEditor key={lead.id} lead={lead} notes={notes} onNotes={setNotes} onNotesBlur={saveNotes} onSave={saveLead} busy={busy} now={now} right={<span className="text-xs text-zinc-500">{onCall ? "on call" : wrapUp ? "wrap-up" : "on screen"}</span>} />
+  ) : null;
 
   return (
     <div className="flex min-h-screen">
@@ -649,9 +978,15 @@ export function AgentConsole(props: ConsoleProps) {
                 </option>
               ))}
             </select>
-            <span className={`rounded-full px-2 py-0.5 text-xs ${phone === "in-room" ? "bg-emerald-500/20 text-emerald-300" : phone === "registered" ? "bg-sky-500/20 text-sky-300" : phone === "error" ? "bg-red-500/20 text-red-300" : "bg-white/10 text-zinc-400"}`}>
-              {sip ? (phone === "in-room" ? "line up" : phone === "registered" ? "phone registered" : phone === "connecting" ? "registering…" : phone === "error" ? "phone error" : "phone offline") : "no softphone line issued"}
-            </span>
+            {sip && phone === "error" ? (
+              <button type="button" onClick={retryPhone} title={`${phoneError ?? "Softphone error"} — click to retry`} className="rounded-full bg-red-500/20 px-2 py-0.5 text-xs text-red-300 hover:bg-red-500/30">
+                phone error · retry
+              </button>
+            ) : (
+              <span className={`rounded-full px-2 py-0.5 text-xs ${phone === "in-room" ? "bg-emerald-500/20 text-emerald-300" : phone === "registered" ? "bg-sky-500/20 text-sky-300" : "bg-white/10 text-zinc-400"}`}>
+                {sip ? (phone === "in-room" ? "line up" : phone === "registered" ? "phone registered" : phone === "connecting" ? "registering…" : "phone offline") : "no softphone line issued"}
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-2">
             {billing && !billing.isPlatform && (billing.suspended || billing.critical || billing.low) ? (
@@ -675,15 +1010,15 @@ export function AgentConsole(props: ConsoleProps) {
               <>
                 {!ready && !onCall && !wrapUp ? (
                   <button onClick={goReady} disabled={busy || phone === "off" || phone === "error"} className="rounded-lg bg-emerald-400 px-3 py-1.5 font-semibold text-emerald-950 disabled:opacity-50">
-                    Ready
+                    Go Ready
                   </button>
                 ) : null}
                 {ready ? (
                   <div className="relative">
-                    <button onClick={() => setPauseMenu((m) => !m)} disabled={busy} className="rounded-lg border border-white/15 px-3 py-1.5 text-zinc-200 hover:bg-white/10">
-                      Pause ▾
+                    <button onClick={() => setPauseMenu((m) => (m === "bar" ? null : "bar"))} disabled={busy} className="rounded-lg border border-white/15 px-3 py-1.5 text-zinc-200 hover:bg-white/10">
+                      Pause…
                     </button>
-                    {pauseMenu ? (
+                    {pauseMenu === "bar" ? (
                       <div className="absolute right-0 z-10 mt-1 w-40 overflow-hidden rounded-lg border border-white/10 bg-zinc-900 shadow-xl">
                         {PAUSE_REASONS.map((r) => (
                           <button key={r} onClick={() => pause(r)} className="block w-full px-3 py-2 text-left text-sm hover:bg-white/10">
@@ -703,28 +1038,41 @@ export function AgentConsole(props: ConsoleProps) {
           </div>
         </div>
 
+        <NewVersionBanner show={newVersion} onCall={onCall || wrapUp} />
         {notice ? <div className="mb-4 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">{notice}</div> : null}
 
-        {/* Status banner */}
-        <div className="mb-5 flex items-center justify-center gap-6 rounded-2xl border border-white/10 bg-gradient-to-b from-white/[0.06] to-transparent px-6 py-5">
-          <Waveform colors={["#a855f7", "#ec4899"]} className="hidden md:flex" />
-          <div className="text-center">
-            <div className="text-3xl font-bold tracking-tight">
-              <span style={{ color: banner.color }}>{banner.label}</span>
-              <span className="text-zinc-500"> • </span>
-              <span>{onCall ? timer : state === "LOGGED_OUT" ? "Strowger" : banner.label === "READY" ? "Waiting for Live Call" : stateSince}</span>
-            </div>
-            <div className="mt-1 text-sm text-zinc-400">
-              {campaign ? `${campaign.name} · ` : ""}
-              {banner.sub}
-            </div>
+        {/* Status banner: the primary Ready / Pause control */}
+        {bannerActionLabel ? (
+          <div className="relative">
+            <button
+              type="button"
+              onClick={bannerClick}
+              disabled={busy}
+              aria-label={bannerActionLabel}
+              aria-expanded={state === "READY" ? pauseMenu === "banner" : undefined}
+              title={bannerActionLabel}
+              className={`${bannerClass} w-full cursor-pointer transition hover:border-white/25 hover:from-white/[0.1] focus:outline-none focus-visible:ring-2 focus-visible:ring-white/60 disabled:cursor-default disabled:opacity-60`}
+            >
+              {bannerBody}
+            </button>
+            {pauseMenu === "banner" ? (
+              <div className="absolute left-1/2 top-full z-10 -mt-3 w-44 -translate-x-1/2 overflow-hidden rounded-lg border border-white/10 bg-zinc-900 shadow-xl">
+                <div className="px-3 py-1.5 text-[11px] uppercase tracking-wide text-zinc-500">Pause reason</div>
+                {PAUSE_REASONS.map((r) => (
+                  <button key={r} type="button" onClick={() => pause(r)} className="block w-full px-3 py-2 text-left text-sm hover:bg-white/10">
+                    {r}
+                  </button>
+                ))}
+              </div>
+            ) : null}
           </div>
-          <Waveform colors={["#22d3ee", "#3b82f6"]} className="hidden md:flex" />
-        </div>
+        ) : (
+          <div className={bannerClass}>{bannerBody}</div>
+        )}
 
         {screen === "main" ? (
           <div className="grid gap-4 xl:grid-cols-[320px_1fr_300px]">
-            {/* Lead profile + dispositions */}
+            {/* Lead profile */}
             <div className="space-y-4">
               <Panel title="Lead Profile" right={lead ? <span className="text-xs text-zinc-500">{lead.attemptsTotal} attempts</span> : null}>
                 {!lead ? (
@@ -749,33 +1097,13 @@ export function AgentConsole(props: ConsoleProps) {
                   <div className="space-y-3 text-sm">
                     <div className="flex items-center gap-3">
                       <div className="grid h-11 w-11 place-items-center rounded-full bg-gradient-to-br from-sky-500 to-indigo-500 text-base font-bold">{leadName.slice(0, 1).toUpperCase()}</div>
-                      <div>
-                        <div className="text-base font-semibold">{leadName}</div>
+                      <div className="min-w-0">
+                        <div className="truncate text-base font-semibold">{leadName}</div>
+                        <div className="font-mono text-zinc-300">{formatPhone(lead.phone)}</div>
                         <div className="text-xs text-zinc-400">{localTime ? `Local time ${localTime}` : "Local time unknown"}</div>
                       </div>
                     </div>
-                    <div className="space-y-1 text-zinc-300">
-                      <div className="font-mono">{formatPhone(lead.phone)}</div>
-                      {lead.email ? <div>{lead.email}</div> : null}
-                      <div className="text-zinc-400">
-                        {[lead.address, lead.city, lead.state, lead.zip].filter(Boolean).join(", ")}
-                      </div>
-                      <div className="flex flex-wrap gap-1 pt-1">
-                        {lead.leadType ? <span className="rounded bg-fuchsia-500/20 px-1.5 py-0.5 text-xs text-fuchsia-200">{lead.leadType}</span> : null}
-                        <span className="rounded bg-white/10 px-1.5 py-0.5 text-xs text-zinc-300">posted {new Date(lead.postedAt).toLocaleDateString()}</span>
-                      </div>
-                    </div>
-                    {Object.keys(lead.custom ?? {}).length ? (
-                      <div className="rounded-lg bg-black/30 p-2 text-xs text-zinc-400">
-                        {Object.entries(lead.custom).slice(0, 8).map(([k, v]) => (
-                          <div key={k} className="flex justify-between gap-2">
-                            <span className="text-zinc-500">{k}</span>
-                            <span className="truncate">{String(v)}</span>
-                          </div>
-                        ))}
-                      </div>
-                    ) : null}
-                    <textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Quick notes…" rows={3} className="w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm placeholder:text-zinc-600" />
+                    <p className="text-xs text-zinc-500">Every field and your notes are on the Lead card in the middle.</p>
                     {ready && !callId && campaign?.dialMode === "PREVIEW" ? (
                       <div className="flex gap-2">
                         <button onClick={dial} disabled={busy || !canDialOut} className="flex-1 rounded-lg bg-emerald-400 px-3 py-2 font-semibold text-emerald-950 disabled:opacity-50">
@@ -790,39 +1118,12 @@ export function AgentConsole(props: ConsoleProps) {
                 )}
               </Panel>
 
-              <Panel title="Call Dispositions" right={wrapUp ? <span className="rounded bg-fuchsia-500/20 px-1.5 text-xs text-fuchsia-200">wrap-up</span> : null}>
-                {!campaign ? null : (
-                  <div className="space-y-2">
-                    <div className="grid grid-cols-2 gap-2">
-                      {campaign.dispositions.map((d) => (
-                        <button
-                          key={d.id}
-                          onClick={() => dispo(d)}
-                          disabled={busy || !callId || (!wrapUp && !onCall)}
-                          className={`rounded-lg border px-2 py-2 text-left text-xs disabled:opacity-40 ${d.isSale ? "border-emerald-400/40 bg-emerald-400/10 text-emerald-200" : d.isDnc ? "border-red-400/40 bg-red-400/10 text-red-200" : d.isCallback ? "border-sky-400/40 bg-sky-400/10 text-sky-200" : "border-white/10 bg-white/5 text-zinc-200"} hover:bg-white/10`}
-                        >
-                          <div className="font-semibold">
-                            {d.label}
-                            {d.hotkey ? <span className="ml-1 rounded bg-black/30 px-1 font-mono text-[10px] text-zinc-400">{d.hotkey}</span> : null}
-                          </div>
-                          <div className="font-mono text-[10px] text-zinc-500">{d.code}</div>
-                        </button>
-                      ))}
-                    </div>
-                    {campaign.dispositions.some((d) => d.isCallback) ? (
-                      <label className="block text-xs text-zinc-400">
-                        Callback time
-                        <input type="datetime-local" value={callbackAt} onChange={(e) => setCallbackAt(e.target.value)} className="mt-1 w-full rounded-lg border border-white/10 bg-black/30 px-2 py-1.5 text-sm text-zinc-100" />
-                      </label>
-                    ) : null}
-                  </div>
-                )}
-              </Panel>
             </div>
 
             {/* Call in progress / waiting feed */}
             <div className="space-y-4">
               {onCall || wrapUp ? (
+                <>
                 <Panel title={onCall ? `Call in Progress • ${timer}` : "Call ended"} collapsible={false}>
                   <div className="mb-4 flex items-center justify-center gap-4">
                     <Waveform colors={["#22d3ee", "#a855f7"]} />
@@ -872,6 +1173,61 @@ export function AgentConsole(props: ConsoleProps) {
                     </div>
                   ) : null}
                 </Panel>
+
+                {/* Dispositions sit directly under the call controls: one block. On a live call a disposition hangs up first. */}
+                <Panel title="Call Dispositions" collapsible={false} right={wrapUp ? <span className="rounded bg-fuchsia-500/20 px-1.5 text-xs text-fuchsia-200">wrap-up</span> : onCall ? <span className="text-xs text-zinc-500">ends the call</span> : null}>
+                  {!campaign ? null : (
+                    <div className="space-y-2">
+                      <div className="grid grid-cols-2 gap-2 md:grid-cols-3">
+                        {campaign.dispositions
+                          .filter((d) => !d.isCallback)
+                          .map((d) => (
+                            <button
+                              key={d.id}
+                              onClick={() => dispo(d)}
+                              disabled={busy || !callId}
+                              className={`rounded-lg border px-2 py-2 text-left text-xs disabled:opacity-40 ${d.isSale ? "border-emerald-400/40 bg-emerald-400/10 text-emerald-200" : d.isDnc ? "border-red-400/40 bg-red-400/10 text-red-200" : "border-white/10 bg-white/5 text-zinc-200"} hover:bg-white/10`}
+                            >
+                              <div className="font-semibold">
+                                {d.label}
+                                {d.hotkey ? <span className="ml-1 rounded bg-black/30 px-1 font-mono text-[10px] text-zinc-400">{d.hotkey}</span> : null}
+                              </div>
+                              <div className="font-mono text-[10px] text-zinc-500">{d.code}</div>
+                            </button>
+                          ))}
+                        <button onClick={callbackNow} disabled={busy || !callId} title={`Back to you, due in ${campaign.callbackOwnerMinutes || 60} min`} className="rounded-lg border border-sky-400/40 bg-sky-400/10 px-2 py-2 text-left text-xs text-sky-200 hover:bg-white/10 disabled:opacity-40">
+                          <div className="font-semibold">Callback</div>
+                          <div className="font-mono text-[10px] text-zinc-500">any time · {campaign.callbackOwnerMinutes || 60} min</div>
+                        </button>
+                        <button onClick={() => setScheduling((v) => !v)} disabled={busy || !callId} className={`rounded-lg border px-2 py-2 text-left text-xs hover:bg-white/10 disabled:opacity-40 ${scheduling ? "border-sky-300 bg-sky-400/25 text-sky-100" : "border-sky-400/40 bg-sky-400/10 text-sky-200"}`}>
+                          <div className="font-semibold">
+                            Scheduled callback
+                            {campaign.dispositions.find((d) => d.isCallback)?.hotkey ? <span className="ml-1 rounded bg-black/30 px-1 font-mono text-[10px] text-zinc-400">{campaign.dispositions.find((d) => d.isCallback)?.hotkey}</span> : null}
+                          </div>
+                          <div className="font-mono text-[10px] text-zinc-500">pick a date & time</div>
+                        </button>
+                      </div>
+                      {scheduling ? (
+                        <div className="flex flex-wrap items-end gap-2 rounded-xl border border-sky-400/20 bg-black/30 p-3">
+                          <label className="flex-1 text-xs text-zinc-400">
+                            Callback time
+                            <input type="datetime-local" value={callbackAt} onChange={(e) => setCallbackAt(e.target.value)} onKeyDown={(e) => e.key === "Enter" && void callbackScheduled()} className="mt-1 w-full rounded-lg border border-white/10 bg-black/30 px-2 py-1.5 text-sm text-zinc-100" />
+                          </label>
+                          <button onClick={callbackScheduled} disabled={busy || !callId || !callbackAt} className="rounded-lg bg-sky-400 px-3 py-2 text-sm font-semibold text-sky-950 disabled:opacity-40">
+                            Submit
+                          </button>
+                          <button onClick={() => { setScheduling(false); setCallbackAt(""); }} disabled={busy} className="rounded-lg border border-white/15 px-3 py-2 text-sm text-zinc-300 hover:bg-white/10">
+                            Cancel
+                          </button>
+                        </div>
+                      ) : null}
+                    </div>
+                  )}
+                </Panel>
+                </>
+              ) : null}
+              {lead ? (
+                leadCard
               ) : (
                 <Panel title="System & Queue Activity" collapsible={false}>
                   <div className="mb-4 rounded-xl bg-gradient-to-b from-cyan-500/10 to-transparent p-6 text-center">
@@ -947,6 +1303,12 @@ export function AgentConsole(props: ConsoleProps) {
                     {history.map((h, i) => (
                       <li key={i}>
                         <span className="text-zinc-500">{new Date(h.at).toLocaleString()}</span> · {h.kind.toLowerCase()} {h.actor ? `· ${h.actor}` : ""} {h.data.code ? `· ${String(h.data.code)}` : ""} {h.data.note ? `· ${String(h.data.note)}` : ""}
+                        {h.data.changes && typeof h.data.changes === "object"
+                          ? Object.entries(h.data.changes as Record<string, { from: string | null; to: string | null }>)
+                              .filter(([k]) => k !== "notes")
+                              .map(([k, c]) => ` · ${k}: ${c.from ?? "—"} → ${c.to ?? "—"}`)
+                              .join("")
+                          : ""}
                       </li>
                     ))}
                   </ul>
@@ -990,15 +1352,21 @@ export function AgentConsole(props: ConsoleProps) {
             <div className="space-y-4">
               <Panel title="Lead Queue & Tasks" right={<span className="text-xs text-zinc-500">queue {stats?.queueDepth ?? "—"}</span>}>
                 {lead ? (
-                  <div className="mb-3 rounded-lg border border-sky-400/30 bg-sky-400/10 px-3 py-2 text-sm text-zinc-100">
-                    <div className="flex items-center justify-between">
-                      <span className="font-medium">{leadName}</span>
-                      <span className="rounded bg-sky-400/20 px-1.5 text-xs text-sky-200">{onCall ? "on call" : wrapUp ? "wrap-up" : "active"}</span>
-                    </div>
-                    <div className="text-xs text-zinc-400">
-                      {[lead.city, lead.state].filter(Boolean).join(", ")} · local time {localTime ?? "?"} · {lead.attemptsTotal} attempts
-                    </div>
-                  </div>
+                  <CollapsibleLeadCard
+                    summary={
+                      <>
+                        <div className="flex items-center justify-between">
+                          <span className="font-medium">{leadName}</span>
+                          <span className="rounded bg-sky-400/20 px-1.5 text-xs text-sky-200">{onCall ? "on call" : wrapUp ? "wrap-up" : "active"}</span>
+                        </div>
+                        <div className="text-xs text-zinc-400">
+                          {[lead.city, lead.state].filter(Boolean).join(", ")} · local time {localTime ?? "?"} · {lead.attemptsTotal} attempts
+                        </div>
+                      </>
+                    }
+                  >
+                    {leadCard}
+                  </CollapsibleLeadCard>
                 ) : null}
                 <div className="mb-1 text-xs uppercase tracking-wide text-zinc-500">Upcoming leads</div>
                 <ul className="space-y-1 text-sm">

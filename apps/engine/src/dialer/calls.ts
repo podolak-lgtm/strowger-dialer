@@ -205,17 +205,32 @@ export async function leadCallBridged(callId: string): Promise<void> {
 
 export interface DispositionInput {
   callId: string;
-  dispositionId: string;
+  /**
+   * Omit for a callback: the campaign's `isCallback` disposition is used, and
+   * a default "Callback" (code CB) is created on the campaign if it has none.
+   */
+  dispositionId?: string | null;
   notes?: string | null;
   callbackAt?: string | null;
   callbackScope?: "AGENT" | "CAMPAIGN";
   actorId: string;
 }
 
+/** The campaign's callback disposition, created as "Callback" (CB) when the campaign has none. */
+async function callbackDisposition(campaignId: string, tenantId: string) {
+  const existing = await prisma.disposition.findFirst({ where: { campaignId, isCallback: true, active: true }, orderBy: { sortOrder: "asc" } });
+  if (existing) return existing;
+  return prisma.disposition.upsert({
+    where: { campaignId_code: { campaignId, code: "CB" } },
+    update: { isCallback: true, active: true },
+    create: { tenantId, campaignId, code: "CB", label: "Callback", isContact: true, isCallback: true, sortOrder: 999 },
+  });
+}
+
 export async function dispositionCall(input: DispositionInput): Promise<{ ok: true } | { ok: false; error: string }> {
   const call = await prisma.call.findUnique({ where: { id: input.callId }, include: { lead: true, campaign: true } });
   if (!call || !call.campaign) return { ok: false, error: "Unknown call" };
-  const disp = await prisma.disposition.findFirst({ where: { id: input.dispositionId, campaignId: call.campaign.id } });
+  const disp = input.dispositionId ? await prisma.disposition.findFirst({ where: { id: input.dispositionId, campaignId: call.campaign.id } }) : await callbackDisposition(call.campaign.id, call.tenantId);
   if (!disp) return { ok: false, error: "Unknown disposition" };
 
   const now = new Date();

@@ -166,6 +166,16 @@ export async function registerJambonzRoutes(app: FastifyInstance): Promise<void>
       log.info({ userId }, "agent softphone called in without a session");
       return [{ verb: "hangup" }];
     }
+    // One line per agent. A second tab or device calling in replaces the
+    // first; two legs in the same room play each other's microphone back
+    // (5 Nov: "I'm hearing myself" while Paused, two registrations a second apart).
+    if (live.agentCallSid && live.agentCallSid !== b.call_sid) {
+      log.info({ userId, oldSid: live.agentCallSid, newSid: b.call_sid }, "agent line replaced; hanging up the older leg");
+      await redis.del(`agentsid:${live.agentCallSid}`);
+      await jambonz.calls.update(live.agentCallSid, { call_status: "completed" }).catch((e) => log.warn({ err: e, userId }, "older agent leg hangup failed"));
+      // Let the old room end before the new leg starts a fresh one.
+      await new Promise((r) => setTimeout(r, 500));
+    }
     await patchAgent(userId, { agentCallSid: b.call_sid, state: live.state === "PAUSED" ? "PAUSED" : "READY" });
     await redis.set(`agentsid:${b.call_sid}`, userId, "EX", 24 * 3600);
     return [
@@ -246,13 +256,15 @@ export async function registerJambonzRoutes(app: FastifyInstance): Promise<void>
       // is never handed to them: hold until the AMD hook decides.
       const agent = await getAgent(call.agentId);
       if (!agent?.agentCallSid) return [...screener, ...(await abandonVerbs(call, campaign))];
-      if (campaign.amdEnabled) return [...screener, { verb: "pause", length: 8 }, { verb: "hangup" }];
+      // Joined at once, AMD on or off. AMD keeps running on the leg; a machine
+      // verdict reaches /jambonz/amd, which pulls the call out of the room to
+      // the voicemail handling. (A 4 s hold for the verdict was tried on 5 Nov:
+      // the verdict never came, and the hold was four seconds of dead air on
+      // every answered call.)
       return [...screener, ...(await joinVerbs(call, campaign, call.agentId))];
     }
 
-    // Ratio: with AMD on, hold the line until the AMD hook decides (it replies
-    // with the bridge or the hangup). Without AMD, bridge now.
-    if (campaign.amdEnabled) return [...screener, { verb: "pause", length: 8 }, { verb: "hangup" }];
+    // Ratio: bridge now; a later machine verdict pulls the call back out.
     return [...screener, ...(await bridgeToReadyAgent(call, campaign))];
   }
 
@@ -349,16 +361,24 @@ export async function registerJambonzRoutes(app: FastifyInstance): Promise<void>
   // ── Conference status (join/leave) ──────────────────────────────────────
   app.post("/jambonz/conf", async (req, reply) => {
     const q = req.query as { callId?: string; agentId?: string; tenantId?: string };
-    const b = req.body as { event?: string; members?: number };
+    const b = req.body as { event?: string; members?: number; conference_sid?: string; call_sid?: string; call_status?: string };
+    log.info({ query: q, event: b.event, members: b.members, callSid: b.call_sid, callStatus: b.call_status }, "conference event");
     if (q.callId && b.event === "join") await leadCallBridged(q.callId);
     if (q.agentId && b.event === "end") {
       const live = await getAgent(q.agentId);
-      if (live) await patchAgent(q.agentId, { agentCallSid: null, state: live.currentCallId ? "WRAP_UP" : "LOGGED_IN" });
+      // A room ending for a leg that was already replaced says nothing about the current line.
+      const stale = Boolean(live?.agentCallSid && b.call_sid && b.call_sid !== live.agentCallSid);
+      if (live && !stale) await patchAgent(q.agentId, { agentCallSid: null, state: live.currentCallId ? "WRAP_UP" : "LOGGED_IN" });
     }
     return reply.send({});
   });
 
-  app.post("/jambonz/conf-exit", async (_req, reply) => reply.send([{ verb: "hangup" }]));
+  app.post("/jambonz/conf-exit", async (req, reply) => {
+    const q = req.query as { callId?: string };
+    const b = req.body as { call_sid?: string; call_status?: string; reason?: string; conference_sid?: string };
+    log.info({ query: q, callSid: b.call_sid, callStatus: b.call_status, reason: b.reason }, "conference exit for a lead leg");
+    return reply.send([{ verb: "hangup" }]);
+  });
 
   // ── Inbound center hooks ────────────────────────────────────────────────
   app.post("/jambonz/ivr", async (req, reply) => {
@@ -415,6 +435,7 @@ export async function registerJambonzRoutes(app: FastifyInstance): Promise<void>
     const tag = (b.customerData ?? {}) as { kind?: string; callId?: string };
     const callId = tag.kind === "lead" ? tag.callId : await callIdForSid(b.call_sid);
     const status = b.call_status ?? "";
+    log.info({ callId, kind: tag.kind, callSid: b.call_sid, status, sipStatus: b.sip_status, duration: b.duration, direction: b.direction }, "call status");
     if (callId) {
       if (status === "ringing" || status === "early-media") {
         await prisma.call.updateMany({ where: { id: callId, ringingAt: null }, data: { ringingAt: new Date() } });

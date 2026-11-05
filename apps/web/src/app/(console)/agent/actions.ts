@@ -65,17 +65,86 @@ export type LeadCard = {
   attemptsTotal: number;
   custom: Record<string, unknown>;
   listId: string;
+  // Everything else the Lead card shows (owner, 5 Nov: the agent works from the card, so it carries every field).
+  listName: string;
+  affiliateName: string | null;
+  status: string;
+  scrubStatus: string;
+  scrubReason: string | null;
+  consentJornayaId: string | null;
+  consentTrustedFormId: string | null;
+  optInUrl: string | null;
+  optInAt: string | null;
+  optInIp: string | null;
+  lastAttemptAt: string | null;
+  lastOutcome: string | null;
+  ownerName: string | null;
+  notes: string | null;
 };
+
+/** The fields an agent may change from the Lead card. */
+export type LeadEdit = { firstName?: string; lastName?: string; email?: string; address?: string; city?: string; state?: string; zip?: string };
+const LEAD_EDIT_FIELDS = ["firstName", "lastName", "email", "address", "city", "state", "zip"] as const;
+
+const leadCardSelect = {
+  id: true,
+  phone: true,
+  firstName: true,
+  lastName: true,
+  address: true,
+  city: true,
+  state: true,
+  zip: true,
+  email: true,
+  timezone: true,
+  leadType: true,
+  postedAt: true,
+  attemptsTotal: true,
+  custom: true,
+  listId: true,
+  status: true,
+  scrubStatus: true,
+  scrubReason: true,
+  consentJornayaId: true,
+  consentTrustedFormId: true,
+  optInUrl: true,
+  optInAt: true,
+  optInIp: true,
+  lastAttemptAt: true,
+  notes: true,
+  list: { select: { name: true, affiliate: { select: { name: true } } } },
+  owner: { select: { firstName: true, lastName: true, email: true } },
+  calls: { orderBy: { dialedAt: "desc" as const }, take: 1, select: { outcome: true, disposition: { select: { label: true } } } },
+} as const;
+
+async function loadLeadCard(tenantId: string, leadId: string): Promise<LeadCard | null> {
+  const l = await prisma.lead.findFirst({ where: { id: leadId, tenantId }, select: leadCardSelect });
+  if (!l) return null;
+  const { list, owner, calls, ...rest } = l;
+  return {
+    ...rest,
+    postedAt: l.postedAt.toISOString(),
+    optInAt: l.optInAt?.toISOString() ?? null,
+    lastAttemptAt: l.lastAttemptAt?.toISOString() ?? null,
+    custom: (l.custom ?? {}) as Record<string, unknown>,
+    listName: list.name,
+    affiliateName: list.affiliate?.name ?? null,
+    lastOutcome: calls[0]?.disposition?.label ?? calls[0]?.outcome ?? null,
+    ownerName: owner ? [owner.firstName, owner.lastName].filter(Boolean).join(" ") || owner.email : null,
+  };
+}
 
 export async function nextLead(): Promise<Ok<{ lead: LeadCard }> | Err> {
   const s = await me();
-  return engine("/leads/next", { method: "POST", body: JSON.stringify({ tenantId: s.tenant.id, userId: s.user.id }) });
+  const r = await engine<Ok<{ lead: { id: string } }> | Err>("/leads/next", { method: "POST", body: JSON.stringify({ tenantId: s.tenant.id, userId: s.user.id }) });
+  if (!r.ok) return r;
+  const lead = await loadLeadCard(s.tenant.id, r.lead.id);
+  return lead ? { ok: true, lead } : { ok: false, error: "Lead not found" };
 }
 
 export async function leadById(leadId: string): Promise<LeadCard | null> {
   const s = await me();
-  const l = await prisma.lead.findFirst({ where: { id: leadId, tenantId: s.tenant.id } });
-  return l ? ({ ...l, postedAt: l.postedAt.toISOString(), custom: (l.custom ?? {}) as Record<string, unknown> } as unknown as LeadCard) : null;
+  return loadLeadCard(s.tenant.id, leadId);
 }
 
 export async function skipLead(leadId: string): Promise<{ ok: boolean }> {
@@ -95,21 +164,49 @@ export async function hangup(callId: string): Promise<{ ok: boolean }> {
   return engine(`/calls/${callId}/hangup`, { method: "POST", body: "{}" });
 }
 
-export async function disposition(input: { callId: string; dispositionId: string; notes?: string; callbackAt?: string; callbackScope?: "AGENT" | "CAMPAIGN" }): Promise<Ok<object> | Err> {
+/** Without `dispositionId` the call is a callback: the engine uses the campaign's callback disposition, creating "Callback" (CB) if the campaign has none. */
+export async function disposition(input: { callId: string; dispositionId?: string; notes?: string; callbackAt?: string; /** Quick callback: due this many minutes from now (computed here, the console render stays pure). */ callbackInMinutes?: number; callbackScope?: "AGENT" | "CAMPAIGN" }): Promise<Ok<object> | Err> {
   const s = await me();
   const own = await prisma.call.findFirst({ where: { id: input.callId, tenantId: s.tenant.id, agentId: s.user.id }, select: { id: true } });
   if (!own) return { ok: false, error: "Not your call" };
-  return engine(`/calls/${input.callId}/disposition`, { method: "POST", body: JSON.stringify({ ...input, userId: s.user.id }) });
+  const { callbackInMinutes, ...rest } = input;
+  const callbackAt = rest.callbackAt ?? (callbackInMinutes ? new Date(Date.now() + callbackInMinutes * 60_000).toISOString() : undefined);
+  return engine(`/calls/${input.callId}/disposition`, { method: "POST", body: JSON.stringify({ ...rest, callbackAt, userId: s.user.id }) });
 }
 
-export async function updateLeadNotes(leadId: string, data: { firstName?: string; lastName?: string; email?: string; note?: string }): Promise<{ ok: boolean }> {
+/**
+ * Save edits from the Lead card. Changed fields are written to the lead and a
+ * NOTE event records what changed (`changes: {field: {from, to}}`) alongside
+ * the note text, so the history shows who corrected what. `notes` replaces
+ * the lead's running notes; the event carries the new text.
+ */
+export async function updateLead(leadId: string, data: LeadEdit & { notes?: string }): Promise<Ok<{ lead: LeadCard }> | Err> {
   const s = await me();
   const lead = await prisma.lead.findFirst({ where: { id: leadId, tenantId: s.tenant.id } });
-  if (!lead) return { ok: false };
-  const { note, ...fields } = data;
-  await prisma.lead.update({ where: { id: leadId }, data: Object.fromEntries(Object.entries(fields).filter(([, v]) => v !== undefined)) });
-  if (note?.trim()) await prisma.leadEvent.create({ data: { tenantId: s.tenant.id, leadId, kind: "NOTE", actorId: s.user.id, data: { note: note.trim() } } });
-  return { ok: true };
+  if (!lead) return { ok: false, error: "Lead not found" };
+  const changes: Record<string, { from: string | null; to: string | null }> = {};
+  const patch: Record<string, string | null> = {};
+  for (const f of LEAD_EDIT_FIELDS) {
+    const v = data[f];
+    if (v === undefined) continue;
+    const to = v.trim() || null;
+    if (to === lead[f]) continue;
+    changes[f] = { from: lead[f], to };
+    patch[f] = to;
+  }
+  if (data.notes !== undefined) {
+    const to = data.notes.trim() || null;
+    if (to !== lead.notes) {
+      changes.notes = { from: lead.notes, to };
+      patch.notes = to;
+    }
+  }
+  if (Object.keys(patch).length) {
+    await prisma.lead.update({ where: { id: leadId }, data: patch });
+    await prisma.leadEvent.create({ data: { tenantId: s.tenant.id, leadId, kind: "NOTE", actorId: s.user.id, data: { ...(patch.notes ? { note: patch.notes } : {}), changes } } });
+  }
+  const card = await loadLeadCard(s.tenant.id, leadId);
+  return card ? { ok: true, lead: card } : { ok: false, error: "Lead not found" };
 }
 
 export type LeadHistory = { kind: string; at: string; data: Record<string, unknown>; actor: string | null }[];

@@ -602,6 +602,8 @@ model Lead {
   ownerId       String?
   /// The last agent who spoke to, texted or left a message for this lead: a call back goes to them first (owner, 5 Nov).
   lastAgentId   String?
+  /// Running free-text notes from the agent console's Lead card; each save also writes a NOTE event.
+  notes         String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

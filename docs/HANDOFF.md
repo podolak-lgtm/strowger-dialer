@@ -419,7 +419,67 @@ through the agent's own socket events (`agent:state.reservedLeadId`,
 `strowger.twoScreen`) opens the assist window on Log in; the open happens
 inside the click so browsers allow it, under the window name
 `strowger-assist` so there is only ever one. Scripts are versioned
-(`Script`), edited on the campaign page.
+(`Script`), edited on the campaign page. When the softphone fails to
+register, the "phone error" badge and the "Softphone error: …" banner text
+are buttons: a click drops the existing JsSIP client and calls
+`connectPhone()` again (badge reads "registering…" meanwhile); the console
+also retries once by itself 10 s after a failure, then leaves it to the
+click. The error text keeps the user, realm and server. The big status
+banner is the primary Ready/Pause control (owner, 5 Nov): it is a
+`<button>` with an `aria-label` when READY (opens the pause-reason menu
+under the banner), PAUSED ("… · click to resume" → `goReady`) or LOGGED IN
+with the softphone registered ("click to go Ready" → `goReady`); ON CALL
+and WRAP-UP are plain. The top-bar "Go Ready" / "Pause…" buttons stay as
+secondary controls; `pauseMenu` records which anchor opened the menu.
+
+**Dispositions under the call controls (owner, 5 Nov, first-day
+feedback).** The Call Dispositions panel is no longer in the left column:
+it renders directly under the "Call in Progress / Call ended" panel (Mute /
+Hold / Leave VM & next / End Call), so controls and dispositions are one
+block, and only while on a call or in wrap-up. Choosing a disposition on a
+live call hangs up first (`hangup(callId)`, awaited) and then dispositions;
+End Call + disposition is no longer two steps. The console remembers the
+dispositioned call id (`dispositionedRef`) and ignores the lead leg's
+later `call:update ended` for it, since that event can land after the
+disposition already cleared the call. Two callback buttons are always
+present, whatever the campaign's disposition list: **Callback** puts the
+lead back for this agent (status CALLBACK, owner = agent) due now +
+`campaign.callbackOwnerMinutes` (60 when 0; the minutes go to the server
+action as `callbackInMinutes`, which computes the time, because the React
+Compiler lint forbids `Date.now()` in render-created handlers), and
+**Scheduled callback** opens the date/time picker inline with Submit /
+Cancel; the disposition is sent only on Submit, with `callbackAt`. Both use
+the campaign's `isCallback` disposition; when the campaign has none the
+console sends no `dispositionId` and the engine (`dispositionCall`,
+`callbackDisposition()`) finds-or-creates a default "Callback" disposition,
+code `CB`, on the campaign. Campaign callback dispositions are filtered out
+of the grid (the two buttons replace them); their hotkey opens the
+scheduled picker and submits it once a time is set. Other hotkeys work on
+the call and in wrap-up, never while typing in an input. Wrap-up is
+unchanged: the engine moves the agent to READY after the disposition.
+
+**Lead card (owner, 5 Nov: the old "Lead Profile" box was too small to
+work from).** Whenever a lead is on screen (`lead` state: preview pull,
+ratio connect, manual dial, inbound, or wrap-up of any of those) the centre
+column swaps "System & Queue Activity" for `LeadCardEditor`: every field
+the lead carries (phone with local time from the lead's zone, list,
+affiliate, posted, consent `consentJornayaId` / `consentTrustedFormId` /
+`optInUrl` / `optInAt` / `optInIp`, attempts, last attempt and outcome,
+owner, status, scrub badge, `custom`), with first/last name, email,
+address, city, state, ZIP editable and a Notes box. The call panel still
+sits above it during a call. Notes persist on the new `Lead.notes` column
+(migration `20261105190000_lead_notes`) and auto-save on blur; Save writes
+the fields through `updateLead` (`actions.ts`), which diffs against the
+row and appends one `LeadEvent` NOTE with `changes: {field: {from, to}}`
+plus the note text, so the history panel shows who corrected what.
+`LeadCard` is built by `loadLeadCard` (one select, joins list → affiliate,
+owner, last call); `nextLead` re-reads through it after the engine
+reserves, so both paths return the same shape. The editor is mounted with
+`key={lead.id}` so its form resets per lead instead of syncing state in an
+effect (React Compiler rule). The left panel is now a compact summary
+(name, phone, local time, Dial/Skip); Call Dispositions now lives under
+the call controls (above). On the assist screen the current-lead row in
+Lead Queue expands (`CollapsibleLeadCard`) to the same editor.
 
 ## Voicemail, recordings, DID hygiene (owner, 4 Nov)
 
@@ -427,8 +487,10 @@ inside the click so browsers allow it, under the window name
   `voicemailRetryMinutes`) or DROP; `voicemailMode` FILE (audio asset) or
   TTS (`voicemailScript` with {{first_name}}, {{last_name}}, {{company}},
   {{callback_number}}, {{agent}}; needs a speech vendor on the jambonz
-  account). With AMD on, **preview calls are parked on a pause too**, so a
-  machine never reaches the agent; the AMD hook joins humans. Agent button
+  account). **Preview calls join the agent on answer, AMD on or off**
+  (5 Nov: a 4 s hold for the AMD verdict was four seconds of dead air on
+  every answered call, and jambonz sent no verdict at all); a later machine
+  verdict pulls the call out of the room to the voicemail action. Agent button
   "Leave VM & next" → `/internal/calls/:id/voicemail` → jambonz redirect to
   `/jambonz/vm-drop` (pause 1 s, message, hangup), auto-disposition with the
   campaign's VM code, agent back to READY.
@@ -550,13 +612,22 @@ room, supervisors and admins everything (`floorStats`).
   `abandonWarnPct` to 1:1 at `abandonCapPct`. The 30-day rate comes from
   `AbandonLedger` (`answered` = human answers, `abandoned` = answers with
   no agent free), cached 30 s in Redis.
-- A pacer call has `agentId null`. On answer `/jambonz/call` parks it on
-  `pause 8` while AMD runs; the AMD hook's reply **replaces** the pause:
-  human / no speech / decision timeout → `bridgeToReadyAgent` (longest-idle
-  READY agent claims the call atomically, `patchAgent ON_CALL`, conference
-  join), or safe-harbor `play` + hangup and an `abandoned` ledger row.
-  Machine → the campaign's voicemail action. With AMD off the bridge
-  happens on answer.
+- A pacer call has `agentId null`. On answer `/jambonz/call` bridges at
+  once with `bridgeToReadyAgent` (longest-idle READY agent claims the call
+  atomically, `patchAgent ON_CALL`, conference join), or safe-harbor `play`
+  + hangup and an `abandoned` ledger row. AMD keeps running on the leg; the
+  AMD hook's reply **replaces** the current verb, so a machine verdict →
+  the campaign's voicemail action even after the join. (Until 5 Nov the
+  call was parked on a pause for the verdict; see the voicemail note above.)
+- **One line per agent.** When a softphone calls in for a user whose
+  `agentCallSid` is another live leg, `agentLegVerbs` hangs the older leg
+  up first (a second tab or device in the same room plays the shared
+  microphone back: "hearing myself" while Paused, 5 Nov). The room-`end`
+  event for a replaced leg is ignored when its `call_sid` is not the
+  current line.
+- The conference, conference-exit and call-status hooks log their bodies
+  (`"conference event"`, `"conference exit for a lead leg"`, `"call
+  status"`): the first place to read when a call has no audio.
 - Screener detection is on only when `SCREENER_STT_VENDOR` is set (the
   jambonz account must have that STT vendor): a `config.transcribe` runs
   on the first 12 s; a phrase match (`shared/compliance/screener.ts`)
@@ -687,6 +758,21 @@ Dockerfile (`apps/web`, `apps/engine`), plus Railway Postgres and Redis.
 The engine container runs `prisma migrate deploy` on start. Set the
 variables from `.env.example` on both; the web service also needs
 `NEXT_PUBLIC_*` values at build time (they are Dockerfile build args).
+
+## Deploys and open consoles (5 Nov)
+
+A deploy changes every Server Action id, so an agent console or floor page
+opened before it fails with "Server Action … was not found on the server"
+on the next click (seen on the first test day). `lib/version.ts` exports
+`BUILD_ID` (`RAILWAY_GIT_COMMIT_SHA`, else `.next/BUILD_ID`, else a
+per-process id); `/api/version` returns it, and the agent and floor pages
+pass it in as the `version` prop. `components/new-version.tsx` polls the
+route every 60 s (and on tab focus) and shows a non-blocking "A new version
+is ready — reload when you're between calls" banner with a Reload button;
+the console's `run()` and the floor's `refresh`/`act` also turn the
+"was not found on the server" error into that banner. The page never
+reloads by itself: a reload drops the softphone line, so it must not happen
+while the agent is ON_CALL or WRAP_UP, and the agent decides.
 
 ## Tests
 
