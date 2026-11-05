@@ -1,8 +1,11 @@
 import { prisma } from "@strowger/db";
+import { redirect } from "next/navigation";
 import { requireSession } from "@/lib/auth";
 
 export default async function Dashboard() {
   const session = await requireSession();
+  // Agents (and team leaders) go straight to their screen; the dashboard is for people who run the floor.
+  if (!session.roles.some((r) => r === "ADMIN" || r === "SUPERVISOR" || r === "ROOM_SUPERVISOR" || r === "AFFILIATE")) redirect("/agent");
   const t = session.tenant.id;
   const [campaigns, lists, leads, users] = await Promise.all([
     prisma.campaign.count({ where: { tenantId: t } }),

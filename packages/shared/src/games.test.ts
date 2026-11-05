@@ -44,8 +44,9 @@ test("periods and levels", () => {
   assert.equal(periodKeyFor("MOST_CALLS_TODAY", new Date("2026-11-05T12:00:00Z")), "2026-11-05");
   assert.equal(periodKeyFor("NEXT_SALE"), null);
   assert.ok(rightsForLevel(1).has("voicemail_drop"));
-  assert.ok(!rightsForLevel(1).has("manual_dial"));
-  assert.ok(rightsForLevel(6).has("manual_dial"));
+  assert.ok(rightsForLevel(1).has("manual_dial"));
+  assert.ok(!rightsForLevel(1).has("transfer"));
+  assert.ok(rightsForLevel(5).has("transfer"));
   assert.ok(rightsForLevel(1, { "1": ["manual_dial"] }).has("manual_dial"));
   assert.ok(!rightsForLevel(1, { "1": ["manual_dial"] }).has("voicemail_drop"));
 });

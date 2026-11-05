@@ -138,15 +138,16 @@ export type AgentRight = keyof typeof AGENT_RIGHTS;
 export const LEVELS = [1, 2, 3, 4, 5, 6, 7, 8] as const;
 
 /** Defaults: level 1 gets the basics, rights widen with level. Tenant settings `levelRights` override per level. */
+/** Owner, 5 Nov: every agent may dial by hand; the rest widens with level. */
 export const DEFAULT_LEVEL_RIGHTS: Record<number, AgentRight[]> = {
-  1: ["see_leaderboard", "voicemail_drop"],
-  2: ["see_leaderboard", "voicemail_drop", "games", "chat_everyone"],
-  3: ["see_leaderboard", "voicemail_drop", "games", "chat_everyone", "send_text", "skip_lead"],
-  4: ["see_leaderboard", "voicemail_drop", "games", "chat_everyone", "send_text", "skip_lead", "assist_screen"],
-  5: ["see_leaderboard", "voicemail_drop", "games", "chat_everyone", "send_text", "skip_lead", "assist_screen", "transfer"],
-  6: ["see_leaderboard", "voicemail_drop", "games", "chat_everyone", "send_text", "skip_lead", "assist_screen", "transfer", "manual_dial"],
-  7: ["see_leaderboard", "voicemail_drop", "games", "chat_everyone", "send_text", "skip_lead", "assist_screen", "transfer", "manual_dial"],
-  8: ["see_leaderboard", "voicemail_drop", "games", "chat_everyone", "send_text", "skip_lead", "assist_screen", "transfer", "manual_dial"],
+  1: ["see_leaderboard", "voicemail_drop", "manual_dial"],
+  2: ["see_leaderboard", "voicemail_drop", "manual_dial", "games", "chat_everyone"],
+  3: ["see_leaderboard", "voicemail_drop", "manual_dial", "games", "chat_everyone", "send_text", "skip_lead"],
+  4: ["see_leaderboard", "voicemail_drop", "manual_dial", "games", "chat_everyone", "send_text", "skip_lead", "assist_screen"],
+  5: ["see_leaderboard", "voicemail_drop", "manual_dial", "games", "chat_everyone", "send_text", "skip_lead", "assist_screen", "transfer"],
+  6: ["see_leaderboard", "voicemail_drop", "manual_dial", "games", "chat_everyone", "send_text", "skip_lead", "assist_screen", "transfer"],
+  7: ["see_leaderboard", "voicemail_drop", "manual_dial", "games", "chat_everyone", "send_text", "skip_lead", "assist_screen", "transfer"],
+  8: ["see_leaderboard", "voicemail_drop", "manual_dial", "games", "chat_everyone", "send_text", "skip_lead", "assist_screen", "transfer"],
 };
 
 export function rightsForLevel(level: number, overrides?: Record<string, string[]> | null): Set<AgentRight> {
