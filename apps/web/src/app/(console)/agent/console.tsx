@@ -1,8 +1,8 @@
 "use client";
 
 // The agent console. One component, two screens:
-//   ?screen=main   (default) status banner, lead card, call controls,
-//                  dispositions, activity feed
+//   ?screen=main   (default) status banner, lead card, call controls +
+//                  dispositions (one block), activity feed
 //   ?screen=assist upcoming leads, leaderboard, goals, agent assist
 // Open /agent?screen=assist in a second window for a two-monitor desk; on
 // one monitor every column collapses with the chevrons.
@@ -68,6 +68,8 @@ export interface ConsoleProps {
     outboundOn: boolean;
     closersMayDial: boolean;
     wrapUpSeconds: number;
+    /** Quick "Callback" is due this many minutes out (60 when 0). */
+    callbackOwnerMinutes: number;
     dispositions: Array<{ id: string; code: string; label: string; hotkey: string | null; isCallback: boolean; isSale: boolean; isDnc: boolean }>;
   }>;
   sip: { server: string; realm: string; username: string; password: string; applicationSid: string } | null;
@@ -161,6 +163,8 @@ export function AgentConsole(props: ConsoleProps) {
   const [notice, setNotice] = useState<string | null>(null);
   const [notes, setNotes] = useState("");
   const [callbackAt, setCallbackAt] = useState("");
+  // "Scheduled callback" opens the date/time picker; the disposition is sent on Submit.
+  const [scheduling, setScheduling] = useState(false);
   const [stats, setStats] = useState<Sprint | null>(null);
   const [thread, setThread] = useState<TextMessage[]>([]);
   const [draft, setDraft] = useState("");
@@ -186,6 +190,9 @@ export function AgentConsole(props: ConsoleProps) {
   // One automatic re-register after a failure; after that the "phone error" badge / banner is the retry.
   const phoneAutoRetriedRef = useRef(false);
   const socketRef = useRef<Socket | null>(null);
+  // Dispositioning a live call hangs it up first; the lead leg's "ended" event
+  // can then land after the disposition cleared the call. Ignore it for that id.
+  const dispositionedRef = useRef<string | null>(null);
 
   const timer = useTicker(callStatus !== "idle" && callStatus !== "ended", callStart);
 
@@ -317,6 +324,10 @@ export function AgentConsole(props: ConsoleProps) {
       void refreshStats();
     });
     sock.on("call:update", (u: { callId: string; status: string; leadId?: string; outcome?: string; inbound?: boolean; from?: string | null }) => {
+      if (u.status === "ended" && u.callId === dispositionedRef.current) {
+        void refreshStats();
+        return;
+      }
       setCallId(u.callId);
       setCallStatus(u.status);
       if (u.inbound) setNotice(`Inbound call${u.from ? ` from ${u.from.replace(/(\d{3})(\d{3})(\d{4})/, "($1) $2-$3")}` : ""}: connected to you.`);
@@ -583,34 +594,67 @@ export function AgentConsole(props: ConsoleProps) {
     c.toggleMute();
   };
 
-  const dispo = (d: ConsoleProps["campaigns"][number]["dispositions"][number]) =>
+  /**
+   * Send the disposition. On a live call the call is hung up first and the
+   * disposition follows, so one click (or hotkey) does both. `dispositionId`
+   * absent = callback via the campaign's callback disposition (engine creates
+   * a default "Callback" when the campaign has none).
+   */
+  const sendDisposition = (dispositionId: string | undefined, callback?: { at?: string; inMinutes?: number }) =>
     run(async () => {
       if (!callId) throw new Error("No call to disposition");
-      if (d.isCallback && !callbackAt) throw new Error("Pick a callback time");
-      const r = await disposition({ callId, dispositionId: d.id, notes: notes || undefined, callbackAt: d.isCallback ? new Date(callbackAt).toISOString() : undefined });
+      if (agent?.state === "ON_CALL") await hangup(callId);
+      const r = await disposition({ callId, dispositionId, notes: notes || undefined, callbackAt: callback?.at, callbackInMinutes: callback?.inMinutes, callbackScope: callback ? "AGENT" : undefined });
       if (!r.ok) throw new Error(r.error);
+      dispositionedRef.current = callId;
       if (lead && notes) await updateLeadNotes(lead.id, { note: notes });
       setLead(null);
       setCallId(null);
       setCallStatus("idle");
       setCallStart(null);
+      setHeld(false);
+      setTargets(null);
       setNotes("");
       setCallbackAt("");
+      setScheduling(false);
       void refreshStats();
     });
 
-  // Hotkeys for dispositions during wrap-up.
+  /** The campaign's callback disposition, if it has one; otherwise the engine makes a default "Callback". */
+  const callbackDispositionId = campaign?.dispositions.find((d) => d.isCallback)?.id;
+
+  /** Callback any time: lead back for this agent, due now + the campaign's callbackOwnerMinutes (60 when unset). */
+  const callbackNow = () => sendDisposition(callbackDispositionId, { inMinutes: campaign?.callbackOwnerMinutes || 60 });
+
+  const dispo = (d: ConsoleProps["campaigns"][number]["dispositions"][number]) => (d.isCallback ? callbackNow() : sendDisposition(d.id));
+
+  /** Scheduled callback: Submit from the picker. */
+  const callbackScheduled = () => {
+    if (!callbackAt) {
+      setNotice("Pick a callback date and time");
+      return Promise.resolve();
+    }
+    return sendDisposition(callbackDispositionId, { at: new Date(callbackAt).toISOString() });
+  };
+
+  // Hotkeys for dispositions, on the call and during wrap-up. A campaign callback
+  // disposition's hotkey opens the scheduled-callback picker (submits it when a time is set).
   useEffect(() => {
-    if (!campaign || agent?.state !== "WRAP_UP") return;
+    if (!campaign || !callId || (agent?.state !== "WRAP_UP" && agent?.state !== "ON_CALL")) return;
     const onKey = (e: KeyboardEvent) => {
       if ((e.target as HTMLElement)?.tagName === "TEXTAREA" || (e.target as HTMLElement)?.tagName === "INPUT") return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
       const d = campaign.dispositions.find((x) => x.hotkey === e.key);
-      if (d) void dispo(d);
+      if (!d) return;
+      if (d.isCallback) {
+        if (scheduling && callbackAt) void callbackScheduled();
+        else setScheduling(true);
+      } else void sendDisposition(d.id);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [campaign, agent?.state, callId, notes, callbackAt]);
+  }, [campaign, agent?.state, callId, notes, callbackAt, scheduling]);
 
   const state = agent?.state ?? "LOGGED_OUT";
   const onCall = state === "ON_CALL";
@@ -754,7 +798,7 @@ export function AgentConsole(props: ConsoleProps) {
 
         {screen === "main" ? (
           <div className="grid gap-4 xl:grid-cols-[320px_1fr_300px]">
-            {/* Lead profile + dispositions */}
+            {/* Lead profile */}
             <div className="space-y-4">
               <Panel title="Lead Profile" right={lead ? <span className="text-xs text-zinc-500">{lead.attemptsTotal} attempts</span> : null}>
                 {!lead ? (
@@ -820,39 +864,12 @@ export function AgentConsole(props: ConsoleProps) {
                 )}
               </Panel>
 
-              <Panel title="Call Dispositions" right={wrapUp ? <span className="rounded bg-fuchsia-500/20 px-1.5 text-xs text-fuchsia-200">wrap-up</span> : null}>
-                {!campaign ? null : (
-                  <div className="space-y-2">
-                    <div className="grid grid-cols-2 gap-2">
-                      {campaign.dispositions.map((d) => (
-                        <button
-                          key={d.id}
-                          onClick={() => dispo(d)}
-                          disabled={busy || !callId || (!wrapUp && !onCall)}
-                          className={`rounded-lg border px-2 py-2 text-left text-xs disabled:opacity-40 ${d.isSale ? "border-emerald-400/40 bg-emerald-400/10 text-emerald-200" : d.isDnc ? "border-red-400/40 bg-red-400/10 text-red-200" : d.isCallback ? "border-sky-400/40 bg-sky-400/10 text-sky-200" : "border-white/10 bg-white/5 text-zinc-200"} hover:bg-white/10`}
-                        >
-                          <div className="font-semibold">
-                            {d.label}
-                            {d.hotkey ? <span className="ml-1 rounded bg-black/30 px-1 font-mono text-[10px] text-zinc-400">{d.hotkey}</span> : null}
-                          </div>
-                          <div className="font-mono text-[10px] text-zinc-500">{d.code}</div>
-                        </button>
-                      ))}
-                    </div>
-                    {campaign.dispositions.some((d) => d.isCallback) ? (
-                      <label className="block text-xs text-zinc-400">
-                        Callback time
-                        <input type="datetime-local" value={callbackAt} onChange={(e) => setCallbackAt(e.target.value)} className="mt-1 w-full rounded-lg border border-white/10 bg-black/30 px-2 py-1.5 text-sm text-zinc-100" />
-                      </label>
-                    ) : null}
-                  </div>
-                )}
-              </Panel>
             </div>
 
             {/* Call in progress / waiting feed */}
             <div className="space-y-4">
               {onCall || wrapUp ? (
+                <>
                 <Panel title={onCall ? `Call in Progress • ${timer}` : "Call ended"} collapsible={false}>
                   <div className="mb-4 flex items-center justify-center gap-4">
                     <Waveform colors={["#22d3ee", "#a855f7"]} />
@@ -902,6 +919,58 @@ export function AgentConsole(props: ConsoleProps) {
                     </div>
                   ) : null}
                 </Panel>
+
+                {/* Dispositions sit directly under the call controls: one block. On a live call a disposition hangs up first. */}
+                <Panel title="Call Dispositions" collapsible={false} right={wrapUp ? <span className="rounded bg-fuchsia-500/20 px-1.5 text-xs text-fuchsia-200">wrap-up</span> : onCall ? <span className="text-xs text-zinc-500">ends the call</span> : null}>
+                  {!campaign ? null : (
+                    <div className="space-y-2">
+                      <div className="grid grid-cols-2 gap-2 md:grid-cols-3">
+                        {campaign.dispositions
+                          .filter((d) => !d.isCallback)
+                          .map((d) => (
+                            <button
+                              key={d.id}
+                              onClick={() => dispo(d)}
+                              disabled={busy || !callId}
+                              className={`rounded-lg border px-2 py-2 text-left text-xs disabled:opacity-40 ${d.isSale ? "border-emerald-400/40 bg-emerald-400/10 text-emerald-200" : d.isDnc ? "border-red-400/40 bg-red-400/10 text-red-200" : "border-white/10 bg-white/5 text-zinc-200"} hover:bg-white/10`}
+                            >
+                              <div className="font-semibold">
+                                {d.label}
+                                {d.hotkey ? <span className="ml-1 rounded bg-black/30 px-1 font-mono text-[10px] text-zinc-400">{d.hotkey}</span> : null}
+                              </div>
+                              <div className="font-mono text-[10px] text-zinc-500">{d.code}</div>
+                            </button>
+                          ))}
+                        <button onClick={callbackNow} disabled={busy || !callId} title={`Back to you, due in ${campaign.callbackOwnerMinutes || 60} min`} className="rounded-lg border border-sky-400/40 bg-sky-400/10 px-2 py-2 text-left text-xs text-sky-200 hover:bg-white/10 disabled:opacity-40">
+                          <div className="font-semibold">Callback</div>
+                          <div className="font-mono text-[10px] text-zinc-500">any time · {campaign.callbackOwnerMinutes || 60} min</div>
+                        </button>
+                        <button onClick={() => setScheduling((v) => !v)} disabled={busy || !callId} className={`rounded-lg border px-2 py-2 text-left text-xs hover:bg-white/10 disabled:opacity-40 ${scheduling ? "border-sky-300 bg-sky-400/25 text-sky-100" : "border-sky-400/40 bg-sky-400/10 text-sky-200"}`}>
+                          <div className="font-semibold">
+                            Scheduled callback
+                            {campaign.dispositions.find((d) => d.isCallback)?.hotkey ? <span className="ml-1 rounded bg-black/30 px-1 font-mono text-[10px] text-zinc-400">{campaign.dispositions.find((d) => d.isCallback)?.hotkey}</span> : null}
+                          </div>
+                          <div className="font-mono text-[10px] text-zinc-500">pick a date & time</div>
+                        </button>
+                      </div>
+                      {scheduling ? (
+                        <div className="flex flex-wrap items-end gap-2 rounded-xl border border-sky-400/20 bg-black/30 p-3">
+                          <label className="flex-1 text-xs text-zinc-400">
+                            Callback time
+                            <input type="datetime-local" value={callbackAt} onChange={(e) => setCallbackAt(e.target.value)} onKeyDown={(e) => e.key === "Enter" && void callbackScheduled()} className="mt-1 w-full rounded-lg border border-white/10 bg-black/30 px-2 py-1.5 text-sm text-zinc-100" />
+                          </label>
+                          <button onClick={callbackScheduled} disabled={busy || !callId || !callbackAt} className="rounded-lg bg-sky-400 px-3 py-2 text-sm font-semibold text-sky-950 disabled:opacity-40">
+                            Submit
+                          </button>
+                          <button onClick={() => { setScheduling(false); setCallbackAt(""); }} disabled={busy} className="rounded-lg border border-white/15 px-3 py-2 text-sm text-zinc-300 hover:bg-white/10">
+                            Cancel
+                          </button>
+                        </div>
+                      ) : null}
+                    </div>
+                  )}
+                </Panel>
+                </>
               ) : (
                 <Panel title="System & Queue Activity" collapsible={false}>
                   <div className="mb-4 rounded-xl bg-gradient-to-b from-cyan-500/10 to-transparent p-6 text-center">

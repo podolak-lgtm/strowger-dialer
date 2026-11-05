@@ -413,6 +413,32 @@ are buttons: a click drops the existing JsSIP client and calls
 also retries once by itself 10 s after a failure, then leaves it to the
 click. The error text keeps the user, realm and server.
 
+**Dispositions under the call controls (owner, 5 Nov, first-day
+feedback).** The Call Dispositions panel is no longer in the left column:
+it renders directly under the "Call in Progress / Call ended" panel (Mute /
+Hold / Leave VM & next / End Call), so controls and dispositions are one
+block, and only while on a call or in wrap-up. Choosing a disposition on a
+live call hangs up first (`hangup(callId)`, awaited) and then dispositions;
+End Call + disposition is no longer two steps. The console remembers the
+dispositioned call id (`dispositionedRef`) and ignores the lead leg's
+later `call:update ended` for it, since that event can land after the
+disposition already cleared the call. Two callback buttons are always
+present, whatever the campaign's disposition list: **Callback** puts the
+lead back for this agent (status CALLBACK, owner = agent) due now +
+`campaign.callbackOwnerMinutes` (60 when 0; the minutes go to the server
+action as `callbackInMinutes`, which computes the time, because the React
+Compiler lint forbids `Date.now()` in render-created handlers), and
+**Scheduled callback** opens the date/time picker inline with Submit /
+Cancel; the disposition is sent only on Submit, with `callbackAt`. Both use
+the campaign's `isCallback` disposition; when the campaign has none the
+console sends no `dispositionId` and the engine (`dispositionCall`,
+`callbackDisposition()`) finds-or-creates a default "Callback" disposition,
+code `CB`, on the campaign. Campaign callback dispositions are filtered out
+of the grid (the two buttons replace them); their hotkey opens the
+scheduled picker and submits it once a time is set. Other hotkeys work on
+the call and in wrap-up, never while typing in an input. Wrap-up is
+unchanged: the engine moves the agent to READY after the disposition.
+
 ## Voicemail, recordings, DID hygiene (owner, 4 Nov)
 
 - **Voicemail** per campaign: `voicemailAction` HANGUP (retry after

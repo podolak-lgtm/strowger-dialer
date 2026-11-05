@@ -241,9 +241,10 @@ export async function registerInternalRoutes(app: FastifyInstance): Promise<void
   app.post("/internal/calls/:callId/disposition", async (req) => {
     const { callId } = req.params as { callId: string };
     const body = z
-      .object({ userId: z.string(), dispositionId: z.string(), notes: z.string().nullable().optional(), callbackAt: z.string().nullable().optional(), callbackScope: z.enum(["AGENT", "CAMPAIGN"]).optional() })
+      .object({ userId: z.string(), dispositionId: z.string().optional(), notes: z.string().nullable().optional(), callbackAt: z.string().nullable().optional(), callbackScope: z.enum(["AGENT", "CAMPAIGN"]).optional() })
       .parse(req.body);
-    return dispositionCall({ callId, actorId: body.userId, dispositionId: body.dispositionId, notes: body.notes ?? null, callbackAt: body.callbackAt ?? null, callbackScope: body.callbackScope });
+    // No dispositionId = a callback: the campaign's callback disposition, created if missing.
+    return dispositionCall({ callId, actorId: body.userId, dispositionId: body.dispositionId ?? null, notes: body.notes ?? null, callbackAt: body.callbackAt ?? null, callbackScope: body.callbackScope });
   });
 
   // ---- Provisioning (numbers at Telnyx + jambonz, 10DLC). Errors come back as 400 with the carrier's message.

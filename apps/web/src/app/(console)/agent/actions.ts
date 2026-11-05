@@ -95,11 +95,14 @@ export async function hangup(callId: string): Promise<{ ok: boolean }> {
   return engine(`/calls/${callId}/hangup`, { method: "POST", body: "{}" });
 }
 
-export async function disposition(input: { callId: string; dispositionId: string; notes?: string; callbackAt?: string; callbackScope?: "AGENT" | "CAMPAIGN" }): Promise<Ok<object> | Err> {
+/** Without `dispositionId` the call is a callback: the engine uses the campaign's callback disposition, creating "Callback" (CB) if the campaign has none. */
+export async function disposition(input: { callId: string; dispositionId?: string; notes?: string; callbackAt?: string; /** Quick callback: due this many minutes from now (computed here, the console render stays pure). */ callbackInMinutes?: number; callbackScope?: "AGENT" | "CAMPAIGN" }): Promise<Ok<object> | Err> {
   const s = await me();
   const own = await prisma.call.findFirst({ where: { id: input.callId, tenantId: s.tenant.id, agentId: s.user.id }, select: { id: true } });
   if (!own) return { ok: false, error: "Not your call" };
-  return engine(`/calls/${input.callId}/disposition`, { method: "POST", body: JSON.stringify({ ...input, userId: s.user.id }) });
+  const { callbackInMinutes, ...rest } = input;
+  const callbackAt = rest.callbackAt ?? (callbackInMinutes ? new Date(Date.now() + callbackInMinutes * 60_000).toISOString() : undefined);
+  return engine(`/calls/${input.callId}/disposition`, { method: "POST", body: JSON.stringify({ ...rest, callbackAt, userId: s.user.id }) });
 }
 
 export async function updateLeadNotes(leadId: string, data: { firstName?: string; lastName?: string; email?: string; note?: string }): Promise<{ ok: boolean }> {

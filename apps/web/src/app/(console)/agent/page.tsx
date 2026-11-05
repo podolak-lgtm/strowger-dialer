@@ -20,8 +20,8 @@ export default async function AgentPage({ searchParams }: PageProps<"/agent">) {
       : [];
 
   const campaigns: ConsoleProps["campaigns"] = [
-    ...assigned.map((a) => ({ id: a.campaign.id, name: a.campaign.name, dialMode: a.campaign.dialMode, agentMode: a.agentMode, outboundOn: a.outboundOn, closersMayDial: a.campaign.closersMayDial, wrapUpSeconds: a.campaign.wrapUpSeconds, dispositions: a.campaign.dispositions.map((d) => ({ id: d.id, code: d.code, label: d.label, hotkey: d.hotkey, isCallback: d.isCallback, isSale: d.isSale, isDnc: d.isDnc })) })),
-    ...extra.map((c) => ({ id: c.id, name: c.name, dialMode: c.dialMode, agentMode: "BOTH" as const, outboundOn: true, closersMayDial: c.closersMayDial, wrapUpSeconds: c.wrapUpSeconds, dispositions: c.dispositions.map((d) => ({ id: d.id, code: d.code, label: d.label, hotkey: d.hotkey, isCallback: d.isCallback, isSale: d.isSale, isDnc: d.isDnc })) })),
+    ...assigned.map((a) => ({ id: a.campaign.id, name: a.campaign.name, dialMode: a.campaign.dialMode, agentMode: a.agentMode, outboundOn: a.outboundOn, closersMayDial: a.campaign.closersMayDial, wrapUpSeconds: a.campaign.wrapUpSeconds, callbackOwnerMinutes: a.campaign.callbackOwnerMinutes, dispositions: a.campaign.dispositions.map((d) => ({ id: d.id, code: d.code, label: d.label, hotkey: d.hotkey, isCallback: d.isCallback, isSale: d.isSale, isDnc: d.isDnc })) })),
+    ...extra.map((c) => ({ id: c.id, name: c.name, dialMode: c.dialMode, agentMode: "BOTH" as const, outboundOn: true, closersMayDial: c.closersMayDial, wrapUpSeconds: c.wrapUpSeconds, callbackOwnerMinutes: c.callbackOwnerMinutes, dispositions: c.dispositions.map((d) => ({ id: d.id, code: d.code, label: d.label, hotkey: d.hotkey, isCallback: d.isCallback, isSale: d.isSale, isDnc: d.isDnc })) })),
   ];
 
   const billing = await billingStatus();
