@@ -7,6 +7,9 @@
 // Open /agent?screen=assist in a second window for a two-monitor desk; on
 // one monitor every column collapses with the chevrons.
 import { createJambonzClient } from "@jambonz/client-sdk-web";
+import { ChatPanel } from "@/components/chat-panel";
+import { myTeams } from "@/lib/chat-actions";
+import { superviseStart, superviseStop, type SuperviseMode } from "../floor/actions";
 import { formatPhone } from "@strowger/shared/phone";
 import { io, type Socket } from "socket.io-client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -49,6 +52,8 @@ type JambonzCall = ReturnType<JambonzClient["call"]>;
 
 export interface ConsoleProps {
   me: { id: string; name: string; tenant: string };
+  /** TEAM_LEADER gets the My Team panel: members live, listen/whisper/barge, a word in chat. */
+  roles: string[];
   campaigns: Array<{
     id: string;
     name: string;
@@ -134,7 +139,7 @@ function Bar({ label, value, max, from, to }: { label: string; value: number; ma
 }
 
 export function AgentConsole(props: ConsoleProps) {
-  const { me, campaigns, sip, engineUrl, rtToken, screen } = props;
+  const { me, campaigns, sip, engineUrl, rtToken, screen, roles } = props;
   const [campaignId, setCampaignId] = useState<string>(campaigns[0]?.id ?? "");
   const campaign = campaigns.find((c) => c.id === campaignId) ?? null;
   const [agent, setAgent] = useState<AgentLive | null>(null);
@@ -162,12 +167,30 @@ export function AgentConsole(props: ConsoleProps) {
   const assistWin = useRef<Window | null>(null);
   const [busy, setBusy] = useState(false);
   const [pauseMenu, setPauseMenu] = useState(false);
+  const [sock, setSock] = useState<Socket | null>(null);
+  const [teams, setTeams] = useState<{ id: string; name: string; members: { id: string; name: string }[] }[]>([]);
+  const [liveAgents, setLiveAgents] = useState<Record<string, AgentLive>>({});
+  const [dmWith, setDmWith] = useState<string | null>(null);
+  const [watching, setWatching] = useState<{ agentId: string; mode: SuperviseMode } | null>(null);
+  const isLeader = roles.includes("TEAM_LEADER") || roles.includes("SUPERVISOR") || roles.includes("ADMIN");
 
   const clientRef = useRef<JambonzClient | null>(null);
   const roomCallRef = useRef<JambonzCall | null>(null);
   const socketRef = useRef<Socket | null>(null);
 
   const timer = useTicker(callStatus !== "idle" && callStatus !== "ended", callStart);
+
+  /** Listen / whisper / barge on a team member, or stop. Needs my own line idle (registered, not in a room). */
+  const watch = useCallback(async (agentId: string, mode: SuperviseMode | null) => {
+    if (!mode) {
+      await superviseStop();
+      setWatching(null);
+      return;
+    }
+    const r = await superviseStart(agentId, mode);
+    if (r.ok) setWatching({ agentId, mode });
+    else setNotice(r.error);
+  }, []);
   const stateSince = useTicker(Boolean(agent), agent?.since ?? null);
 
   const refreshStats = useCallback(async () => {
@@ -252,6 +275,17 @@ export function AgentConsole(props: ConsoleProps) {
   useEffect(() => {
     const sock = io(engineUrl, { path: "/rt", auth: { token: rtToken }, transports: ["websocket"] });
     socketRef.current = sock;
+    const announce = setTimeout(() => setSock(sock), 0);
+    sock.on("floor:agent", (live: AgentLive & { state: string }) => {
+      setLiveAgents((prev) => {
+        if (live.state === "LOGGED_OUT") {
+          const next = { ...prev };
+          delete next[live.userId];
+          return next;
+        }
+        return { ...prev, [live.userId]: live };
+      });
+    });
     sock.on("agent:state", (live: AgentLive) => {
       if (live.userId !== me.id) return;
       setAgent(live.state === "LOGGED_OUT" ? null : live);
@@ -294,10 +328,19 @@ export function AgentConsole(props: ConsoleProps) {
       }
     });
     return () => {
+      clearTimeout(announce);
       sock.disconnect();
+      setSock(null);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [engineUrl, rtToken, me.id]);
+
+  // Team leaders: who is on my team; floor:agent events keep their live state fresh.
+  useEffect(() => {
+    if (!isLeader) return;
+    const t = setTimeout(() => void myTeams().then(setTeams), 0);
+    return () => clearTimeout(t);
+  }, [isLeader]);
 
   // Softphone: register once; the nailed-up leg is raised when the agent goes Ready.
   const connectPhone = useCallback(async () => {
@@ -313,6 +356,11 @@ export function AgentConsole(props: ConsoleProps) {
       });
       client.on("disconnected", () => setPhone("off"));
       client.on("error", (e: Error) => setPhoneError(e.message));
+      // The only thing that rings an agent's softphone is a supervision leg the engine placed for them (a team leader listening in): answer it unless the line is already up in a room.
+      client.on("incoming", (call: { answer: () => void; hangup?: () => void }) => {
+        if (roomCallRef.current) call.hangup?.();
+        else call.answer();
+      });
       await client.connect();
       clientRef.current = client;
       setPhone("registered");
@@ -893,8 +941,12 @@ export function AgentConsole(props: ConsoleProps) {
               ) : null}
             </div>
 
-            {/* Sprint + leaderboard */}
+            {/* My team (leaders), chat, sprint, leaderboard */}
             <div className="space-y-4">
+              {isLeader && teams.length ? <TeamPanel teams={teams} live={liveAgents} me={me.id} phoneIdle={phone === "registered"} watching={watching} onWatch={watch} onMessage={(id) => setDmWith(id)} /> : null}
+              <Panel title="Chat">
+                <ChatPanel socket={sock} meId={me.id} openDirectWith={dmWith} height="h-56" />
+              </Panel>
               <SprintPanel stats={stats} />
               <Leaderboard stats={stats} />
             </div>
@@ -956,6 +1008,10 @@ export function AgentConsole(props: ConsoleProps) {
                   ))}
                   {upcoming.length === 0 ? <li className="text-xs text-zinc-500">Nothing waiting that may be dialed right now.</li> : null}
                 </ul>
+              </Panel>
+              {isLeader && teams.length ? <TeamPanel teams={teams} live={liveAgents} me={me.id} phoneIdle={phone === "registered"} watching={watching} onWatch={watch} onMessage={(id) => setDmWith(id)} /> : null}
+              <Panel title="Chat">
+                <ChatPanel socket={sock} meId={me.id} openDirectWith={dmWith} height="h-64" />
               </Panel>
               <Panel title="My callbacks" right={<span className="text-xs text-zinc-500">{callbacks.filter((c) => c.overdue).length} due</span>}>
                 <ul className="space-y-1 text-sm">
@@ -1035,6 +1091,76 @@ function Leaderboard({ stats }: { stats: Sprint | null }) {
         ))}
         {stats && stats.leaderboard.length === 0 ? <li className="text-zinc-500">No calls yet today.</li> : null}
       </ol>
+    </Panel>
+  );
+}
+
+function TeamPanel({ teams, live, me, phoneIdle, watching, onWatch, onMessage }: { teams: { id: string; name: string; members: { id: string; name: string }[] }[]; live: Record<string, AgentLive>; me: string; phoneIdle: boolean; watching: { agentId: string; mode: SuperviseMode } | null; onWatch: (agentId: string, mode: SuperviseMode | null) => void; onMessage: (userId: string) => void }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 10_000);
+    return () => clearInterval(t);
+  }, []);
+  const tone = (st: string | undefined) => (st === "ON_CALL" ? "bg-sky-500/20 text-sky-200" : st === "READY" ? "bg-emerald-500/20 text-emerald-200" : st === "WRAP_UP" ? "bg-fuchsia-500/20 text-fuchsia-200" : st === "PAUSED" ? "bg-amber-500/20 text-amber-200" : "bg-white/5 text-zinc-500");
+  const ago = (since: number | undefined) => {
+    if (!since) return "";
+    const m = Math.round((now - since) / 60_000);
+    return m < 1 ? "<1m" : m < 60 ? `${m}m` : `${Math.round(m / 60)}h`;
+  };
+  const onlineCount = teams.reduce((n, t) => n + t.members.filter((m) => live[m.id] && m.id !== me).length, 0);
+  const modes: SuperviseMode[] = ["LISTEN", "WHISPER", "BARGE"];
+  return (
+    <Panel title="My Team" right={<span className="text-xs text-zinc-500">{onlineCount} online</span>}>
+      {teams.map((t) => (
+        <div key={t.id} className="mb-2">
+          {teams.length > 1 ? <div className="mb-1 text-[10px] uppercase tracking-wider text-zinc-500">{t.name}</div> : null}
+          <ul className="space-y-1 text-sm">
+            {t.members
+              .filter((m) => m.id !== me)
+              .map((m) => {
+                const l = live[m.id];
+                const st = l?.state;
+                const mine = watching?.agentId === m.id;
+                return (
+                  <li key={m.id} className="rounded-lg bg-white/5 px-2 py-1.5">
+                    <div className="flex items-center gap-2">
+                      <span className="grid h-6 w-6 place-items-center rounded-full bg-gradient-to-br from-fuchsia-500 to-cyan-400 text-[10px] font-bold text-white">{m.name.slice(0, 1).toUpperCase()}</span>
+                      <span className="flex-1 truncate">{m.name}</span>
+                      <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${tone(st)}`}>{st ? `${st.replace("_", " ")} ${ago(l?.since)}` : "offline"}</span>
+                    </div>
+                    <div className="mt-1 flex flex-wrap gap-1">
+                      <button onClick={() => onMessage(m.id)} className="rounded border border-white/10 px-1.5 py-0.5 text-[10px] text-zinc-300 hover:bg-white/10">
+                        Message
+                      </button>
+                      {st === "ON_CALL" && mine ? (
+                        <>
+                          <span className="rounded bg-sky-500/20 px-1.5 py-0.5 text-[10px] text-sky-200">{watching?.mode.toLowerCase()}</span>
+                          {modes
+                            .filter((x) => x !== watching?.mode)
+                            .map((x) => (
+                              <button key={x} onClick={() => onWatch(m.id, x)} className="rounded border border-white/10 px-1.5 py-0.5 text-[10px] text-zinc-300 hover:bg-white/10">
+                                {x.toLowerCase()}
+                              </button>
+                            ))}
+                          <button onClick={() => onWatch(m.id, null)} className="rounded border border-red-500/40 px-1.5 py-0.5 text-[10px] text-red-200 hover:bg-red-500/10">
+                            stop
+                          </button>
+                        </>
+                      ) : st === "ON_CALL" ? (
+                        modes.map((x) => (
+                          <button key={x} onClick={() => onWatch(m.id, x)} disabled={!phoneIdle} title={phoneIdle ? "" : "Pause your own line first: listening uses your softphone"} className="rounded border border-white/10 px-1.5 py-0.5 text-[10px] text-zinc-300 hover:bg-white/10 disabled:opacity-40">
+                          {x.toLowerCase()}
+                        </button>
+                        ))
+                      ) : null}
+                    </div>
+                  </li>
+                );
+              })}
+            {t.members.filter((m) => m.id !== me).length === 0 ? <li className="text-xs text-zinc-500">No members yet. Add them on Teams &amp; rooms.</li> : null}
+          </ul>
+        </div>
+      ))}
     </Panel>
   );
 }

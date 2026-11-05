@@ -49,6 +49,7 @@ model Tenant {
   dncEntries     DncEntry[]
   callerIds      CallerIdNumber[]
   numberOrders   NumberOrder[]
+  chatMessages   ChatMessage[]
   audioAssets    AudioAsset[]
   calls          Call[]
   messages       Message[]
@@ -111,6 +112,7 @@ model User {
   rooms           UserRoom[]
   teams           UserTeam[]
   ledTeams        Team[]          @relation("TeamLeader")
+  chatSent        ChatMessage[]   @relation("ChatSender")
   supervisedRooms Room[]          @relation("RoomSupervisor")
   campaignAgents  CampaignAgent[]
   agentSessions   AgentSession[]
@@ -805,6 +807,33 @@ model NumberOrder {
   numbers       CallerIdNumber[]
 
   @@index([tenantId, createdAt])
+}
+
+/// Floor chat. A channel is EVERYONE, MANAGERS (supervisors, room supervisors,
+/// team leaders, admins), a TEAM (its members and leader), a CAMPAIGN (its
+/// agents and every manager) or a DIRECT message (the two users, key = both
+/// ids sorted and joined with ":"). Delivery is by socket to each recipient.
+model ChatMessage {
+  id        String   @id @default(cuid())
+  tenant    Tenant   @relation(fields: [tenantId], references: [id])
+  tenantId  String
+  channel   ChatChannel
+  /// teamId, campaignId, or "a:b" for DIRECT; null for EVERYONE and MANAGERS.
+  channelId String?
+  sender    User     @relation("ChatSender", fields: [senderId], references: [id])
+  senderId  String
+  body      String
+  createdAt DateTime @default(now())
+
+  @@index([tenantId, channel, channelId, createdAt])
+}
+
+enum ChatChannel {
+  EVERYONE
+  MANAGERS
+  TEAM
+  CAMPAIGN
+  DIRECT
 }
 
 model DidScan {

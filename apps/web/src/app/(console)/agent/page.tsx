@@ -28,6 +28,7 @@ export default async function AgentPage({ searchParams }: PageProps<"/agent">) {
   return (
     <AgentConsole
       me={{ id: s.user.id, name: s.user.firstName ?? s.user.email.split("@")[0]!, tenant: s.tenant.name }}
+      roles={s.roles}
       campaigns={campaigns}
       sip={
         s.user.sipUsername && sipPassword

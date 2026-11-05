@@ -5,7 +5,8 @@
 //                   barge / takeover, action history, team performance
 //   ?view=campaign  campaign performance: KPI strip, call volume, agent table
 import { createJambonzClient } from "@jambonz/client-sdk-web";
-import { io } from "socket.io-client";
+import { io, type Socket } from "socket.io-client";
+import { ChatPanel } from "@/components/chat-panel";
 import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { floorStats, superviseCurrent, superviseMode, superviseStart, superviseStop, superviseTakeover, type FloorAgent, type FloorStats, type Supervision, type SuperviseMode } from "./actions";
 
@@ -77,6 +78,7 @@ export function FloorConsole({ me, view, initialCampaignId, engineUrl, rtToken, 
   const [now, setNow] = useState(() => Date.now());
   const [pending, start] = useTransition();
   const clientRef = useRef<JambonzClient | null>(null);
+  const [sock, setSock] = useState<Socket | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -101,6 +103,7 @@ export function FloorConsole({ me, view, initialCampaignId, engineUrl, rtToken, 
 
   useEffect(() => {
     const sock = io(engineUrl, { path: "/rt", auth: { token: rtToken }, transports: ["websocket"] });
+    const announce = setTimeout(() => setSock(sock), 0);
     const bump = () => void refresh();
     sock.on("floor:agent", bump);
     sock.on("floor:call", bump);
@@ -108,7 +111,9 @@ export function FloorConsole({ me, view, initialCampaignId, engineUrl, rtToken, 
       if (s.supervisorId === me.id) setSup(s.ended ? null : s);
     });
     return () => {
+      clearTimeout(announce);
       sock.disconnect();
+      setSock(null);
     };
   }, [engineUrl, rtToken, me.id, refresh]);
 
@@ -336,6 +341,9 @@ export function FloorConsole({ me, view, initialCampaignId, engineUrl, rtToken, 
                   </tbody>
                 </table>
               </Panel>
+              <Panel title="Chat">
+                <ChatPanel socket={sock} meId={me.id} height="h-64" />
+              </Panel>
             </div>
           </div>
         ) : (
@@ -415,6 +423,9 @@ export function FloorConsole({ me, view, initialCampaignId, engineUrl, rtToken, 
                 </table>
                 {stats && stats.agents.length === 0 ? <div className="p-6 text-center text-sm text-zinc-500">Nobody is logged in.</div> : null}
               </div>
+            </Panel>
+            <Panel title="Chat">
+              <ChatPanel socket={sock} meId={me.id} height="h-56" />
             </Panel>
           </div>
         )}

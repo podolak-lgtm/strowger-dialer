@@ -119,6 +119,35 @@ built and why; this says how it is wired and what will trip you.
 Admin: `/inbound` (routing, IVRs, queues, boxes), `/skills` (skills,
 ratings, extensions), `/voicemails` (agents see their own; supervisors all).
 
+## Team leaders on the console, and chat (5 Nov)
+
+- **Team leader = an agent with a team.** `TEAM_LEADER` (and supervisors
+  or admins who log into the console) gets a **My Team** panel in the
+  right column of the main screen and on the assist screen: the members
+  of the teams they lead (`Team.leaderId`, Teams & rooms), each with live
+  state and time in state from the `floor:agent` socket events the
+  engine already broadcasts, a **Message** button that opens a direct
+  chat, and **listen / whisper / barge / stop** on a member who is on a
+  call. Monitoring uses the leader's own softphone (the same supervision
+  legs as the floor, `floor/actions.ts`), so it is enabled only while the
+  leader's line is registered and idle (not Ready in a room); the console
+  softphone now auto-answers an incoming call when idle and declines it
+  when the line is in a room (only supervision legs ever ring an agent).
+- **Chat** (`apps/engine/src/chat`, `lib/chat-actions.ts`,
+  `components/chat-panel.tsx`): `ChatMessage` rows with channels
+  EVERYONE, MANAGERS (admin, supervisor, room supervisor, team leader),
+  TEAM (members + leader; managers may read), CAMPAIGN (its agents +
+  all managers), DIRECT (`a:b`, ids sorted). The engine checks
+  membership on send and read, stores, and emits `chat:message` to each
+  recipient's `agent:<id>` room (EVERYONE goes to the tenant room). The
+  panel is on the console (both screens) and the floor (both views),
+  with unread counts per channel and a people list for direct messages.
+  No history pruning yet.
+- **No desk phone is needed**: the agent's phone is the browser softphone
+  (WebRTC to jambonz over `JAMBONZ_WSS_URL`) with a USB headset. A desk
+  VoIP phone could register with the agent's SIP credentials instead,
+  but nothing requires it.
+
 ## Carrier: Telnyx
 
 Chosen 4 Nov over Commio. Voice: a jambonz carrier named `Telnyx`

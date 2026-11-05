@@ -21,6 +21,7 @@ import { jambonz, jambonzConfigured } from "../jambonz/client";
 import { assignNumbersToCampaign, createBrand, createTenDlcCampaign, orderNumbers, provisionStatus, releaseNumber, searchNumbers, setupCarrier, syncNumbers, tenDlcStatus, usecaseFees } from "../provision";
 import type { BrandInput, CampaignInput } from "../provision/telnyx";
 import { registerAtFcr } from "../provision/fcr";
+import { chatHistory, sendChat } from "../chat";
 
 const Ids = z.object({ tenantId: z.string(), userId: z.string() });
 
@@ -244,6 +245,21 @@ export async function registerInternalRoutes(app: FastifyInstance): Promise<void
       return reply.code(400).send({ error: message });
     }
   };
+  // ---- Chat
+  const Chan = z.object({ tenantId: z.string(), userId: z.string(), channel: z.enum(["EVERYONE", "MANAGERS", "TEAM", "CAMPAIGN", "DIRECT"]), channelId: z.string().nullable() });
+  app.post("/internal/chat/send", async (req, reply) => {
+    const b = Chan.extend({ body: z.string() }).parse(req.body);
+    try {
+      return { ok: true, message: await sendChat(b.tenantId, b.userId, b.channel, b.channelId, b.body) };
+    } catch (e) {
+      return reply.code(400).send({ ok: false, error: e instanceof Error ? e.message : String(e) });
+    }
+  });
+  app.post("/internal/chat/history", async (req) => {
+    const b = Chan.parse(req.body);
+    return { messages: await chatHistory(b.tenantId, b.userId, b.channel, b.channelId) };
+  });
+
   app.get("/internal/provision/status", async (req) => provisionStatus(z.object({ tenantId: z.string() }).parse(req.query).tenantId));
   app.post("/internal/provision/setup", async (req, reply) => wrap(() => setupCarrier(z.object({ tenantId: z.string() }).parse(req.body).tenantId), reply));
   app.post("/internal/provision/search", async (req, reply) =>
