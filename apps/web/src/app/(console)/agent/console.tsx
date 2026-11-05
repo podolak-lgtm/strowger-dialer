@@ -582,6 +582,8 @@ export function AgentConsole(props: ConsoleProps) {
       setNotice(b.betsEnabled ? `Bets are on for ${b.campaign}: ${b.weeklyPoints.toLocaleString()} points every Monday` : `Bets are off for ${b.campaign}`);
     });
     sock.on("games:won", (w: { name: string; prize: string | null; hand: string }) => setNotice(`You won the poker run '${w.name}' with ${w.hand}${w.prize ? `: ${w.prize}` : ""}`));
+    // A card earned on a disposition is announced, not only added to the panel (owner, 5 Nov: "I don't see it").
+    sock.on("games:card", (c: { card: string; run: string }) => setNotice(`You got a card in '${c.run}': ${prettyCard(c.card)}. Open Games to see your hand.`));
     sock.on("call:update", (u: { callId: string; status: string; leadId?: string; outcome?: string; inbound?: boolean; from?: string | null; screener?: boolean; screenerPhrase?: string | null; human?: boolean; transfer?: LiveTransferView }) => {
       if (u.status === "transfer" && u.transfer) {
         const t = u.transfer;
