@@ -176,7 +176,20 @@ before the campaign dials, from one screen. `apps/engine/src/provision/`:
   itself calls from the numbers. `/api/reports/fcr` (`?all=1` for every
   active number) downloads the one-number-per-line .txt their bulk upload
   takes; the DIDs page walks through the form and then "Mark all as
-  registered". Telnyx Number Reputation ($100/mo per enterprise + per
+  registered". **Automatic run** (5 Nov, owner: "we have an inbox in
+  Crossbar"): `apps/engine/src/provision/fcr.ts` drives the form with
+  Playwright (Chromium installed in the engine image, Dockerfile):
+  contact email = an address at crossbar.digital saved in Settings →
+  Free Caller Registry profile (`Tenant.settings.fcr`); the registry's
+  "captcha" field is the five-character code it emails; the engine polls
+  Crossbar `GET /api/agent/inbox?to=&since=` (lead-marketplace branch
+  `claude/agent-inbox`, agent key) for up to four minutes, enters it,
+  fills business details (the form validates the address with AWS
+  Location, so it must be real), uploads the numbers file, ticks the
+  certification, submits, and records the feedback id on the profile and
+  `registeredAt` on the numbers. Route `/internal/provision/fcr` (several
+  minutes; the web action waits). Failures come back with the step they
+  stopped at; nothing is marked registered then. Telnyx Number Reputation ($100/mo per enterprise + per
   query, LOA required) is the candidate feed for the carrier grid; not
   wired (owner asked 5 Nov whether it is free: it is not).
 - Errors from either API come back to the page verbatim (`?msg=`); every

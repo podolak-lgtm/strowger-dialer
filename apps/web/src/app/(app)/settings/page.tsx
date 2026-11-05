@@ -2,7 +2,7 @@ import { prisma } from "@strowger/db";
 import { formatPhone } from "@strowger/shared";
 import { requireRole } from "@/lib/auth";
 import { Badge, Button, Card, Field, PageHeader, Table, Td, inputClass } from "@/components/ui";
-import { addAudioAsset, addCallerIds, deleteAudioAsset, saveGoals, setCallerIdStatus, setCampaignAudio, uploadAudio } from "./actions";
+import { addAudioAsset, addCallerIds, deleteAudioAsset, saveFcrProfile, saveGoals, setCallerIdStatus, setCampaignAudio, uploadAudio } from "./actions";
 import { storageConfigured } from "@/lib/storage";
 import { runRecordingExportNow, saveRecordingPolicy } from "./recording-actions";
 
@@ -253,6 +253,92 @@ export default async function SettingsPage() {
               </form>
             ))}
           </div>
+        </Card>
+
+        <Card title="Free Caller Registry profile" className="lg:col-span-2">
+          {(() => {
+            const f = ((s.tenant.settings ?? {}) as { fcr?: Record<string, string | { feedbackId?: string; at?: string; count?: number }> }).fcr ?? {};
+            const v = (k: string) => (typeof f[k] === "string" ? (f[k] as string) : "");
+            const last = f.lastSubmission as { feedbackId?: string; at?: string; count?: number } | undefined;
+            return (
+              <form action={saveFcrProfile} className="space-y-3">
+                <p className="text-xs text-zinc-500">
+                  What the registry form (freecallerregistry.com: First Orion, Hiya and TNS) is filled with when you press &quot;Register now&quot; on the DIDs page. The contact email must be an address at
+                  crossbar.digital: the registry emails a verification code there and Strowger reads it from Crossbar&apos;s inbox. By saving this you certify that this business makes the calls from
+                  the numbers it registers.
+                  {last?.feedbackId ? (
+                    <>
+                      {" "}
+                      Last submission: feedback id <b>{last.feedbackId}</b>, {last.count} numbers, {last.at ? new Date(last.at).toLocaleString() : ""}.
+                    </>
+                  ) : null}
+                </p>
+                <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+                  <Field label="Contact email (at crossbar.digital)">
+                    <input name="contactEmail" type="email" defaultValue={v("contactEmail") || "numbers@crossbar.digital"} className={inputClass} required />
+                  </Field>
+                  <Field label="Business name">
+                    <input name="companyName" defaultValue={v("companyName") || s.tenant.name} className={inputClass} required />
+                  </Field>
+                  <Field label="Website">
+                    <input name="website" defaultValue={v("website")} className={inputClass} placeholder="https://" required />
+                  </Field>
+                  <Field label="Street address">
+                    <input name="address1" defaultValue={v("address1")} className={inputClass} required />
+                  </Field>
+                  <Field label="Suite / line 2">
+                    <input name="address2" defaultValue={v("address2")} className={inputClass} />
+                  </Field>
+                  <Field label="City">
+                    <input name="city" defaultValue={v("city")} className={inputClass} required />
+                  </Field>
+                  <Field label="State (2 letters)">
+                    <input name="state" defaultValue={v("state")} maxLength={2} className={inputClass} required />
+                  </Field>
+                  <Field label="ZIP">
+                    <input name="zip" defaultValue={v("zip")} className={inputClass} required />
+                  </Field>
+                  <Field label="Contact name">
+                    <input name="contactName" defaultValue={v("contactName") || `${s.user.firstName ?? ""}`.trim()} className={inputClass} required />
+                  </Field>
+                  <Field label="Contact phone">
+                    <input name="contactPhone" defaultValue={v("contactPhone")} className={inputClass} placeholder="3055550100" required />
+                  </Field>
+                  <Field label="Call purpose">
+                    <select name="category" defaultValue={v("category") || "telemarketing"} className={inputClass}>
+                      <option value="attorney_legal">Attorney / Law</option>
+                      <option value="financial_service">Financial Services</option>
+                      <option value="health">Health / Hospital</option>
+                      <option value="informational">Informational</option>
+                      <option value="real_estate">Real Estate</option>
+                      <option value="survey">Survey / Research</option>
+                      <option value="telemarketing">Telemarketing</option>
+                      <option value="political">Political / Campaign</option>
+                      <option value="school_college">School / College</option>
+                      <option value="government">Government</option>
+                    </select>
+                  </Field>
+                  <Field label="Outbound calls per month">
+                    <select name="callCount" defaultValue={v("callCount") || "10001"} className={inputClass}>
+                      <option value="1">1 - 100</option>
+                      <option value="101">101 - 500</option>
+                      <option value="501">501 - 1,000</option>
+                      <option value="1001">1,001 - 5,000</option>
+                      <option value="5001">5,001 - 10,000</option>
+                      <option value="10001">10,001 - 50,000</option>
+                      <option value="50001">More than 50,000</option>
+                    </select>
+                  </Field>
+                </div>
+                <Field label="Feedback from customers about how your calls are labelled (optional)">
+                  <input name="explanation" defaultValue={v("explanation")} className={inputClass} />
+                </Field>
+                <Button type="submit" variant="ghost">
+                  Save profile
+                </Button>
+              </form>
+            );
+          })()}
         </Card>
       </div>
     </div>

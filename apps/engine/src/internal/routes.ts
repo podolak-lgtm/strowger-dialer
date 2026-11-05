@@ -20,6 +20,7 @@ import { releaseLead, reserveNextLead } from "../dialer/hopper";
 import { jambonz, jambonzConfigured } from "../jambonz/client";
 import { assignNumbersToCampaign, createBrand, createTenDlcCampaign, orderNumbers, provisionStatus, releaseNumber, searchNumbers, setupCarrier, syncNumbers, tenDlcStatus, usecaseFees } from "../provision";
 import type { BrandInput, CampaignInput } from "../provision/telnyx";
+import { registerAtFcr } from "../provision/fcr";
 
 const Ids = z.object({ tenantId: z.string(), userId: z.string() });
 
@@ -258,6 +259,11 @@ export async function registerInternalRoutes(app: FastifyInstance): Promise<void
       await releaseNumber(b.tenantId, b.id);
       return { ok: true };
     }, reply);
+  });
+  // Free Caller Registry: drives their web form; several minutes. The reply carries ok/error rather than a status code.
+  app.post("/internal/provision/fcr", async (req) => {
+    const b = z.object({ tenantId: z.string(), ids: z.array(z.string()).optional() }).parse(req.body);
+    return registerAtFcr(b.tenantId, b.ids);
   });
   app.get("/internal/provision/tendlc", async (req) => tenDlcStatus(z.object({ tenantId: z.string() }).parse(req.query).tenantId));
   app.post("/internal/provision/tendlc/brand", async (req, reply) => {

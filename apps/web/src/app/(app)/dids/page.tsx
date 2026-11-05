@@ -2,10 +2,10 @@ import { prisma, type CarrierVerdict } from "@strowger/db";
 import { formatPhone } from "@strowger/shared";
 import Link from "next/link";
 import { requireRole } from "@/lib/auth";
-import { Badge, Button, Card, Field, PageHeader, inputClass } from "@/components/ui";
+import { Badge, Button, Card, Field, Notice, PageHeader, inputClass } from "@/components/ui";
 import { discrepant, provider, worst } from "@/lib/did-reputation";
 import { assignNumberCampaign, bulkCheck, resolveNumber, setAutoRecheck, testNumber } from "./actions";
-import { markRegistered, setDailyCap, setRest } from "./hygiene-actions";
+import { markRegistered, registerAtRegistry, setDailyCap, setRest } from "./hygiene-actions";
 import { capForNumber, numbersNeeded, warmupStage } from "@strowger/shared/did-hygiene";
 
 function VerdictCell({ v }: { v: CarrierVerdict }) {
@@ -37,7 +37,7 @@ function ago(d: Date | null): string {
 
 export default async function DidsPage({ searchParams }: PageProps<"/dids">) {
   const s = await requireRole("SUPERVISOR");
-  const { filter, page } = await searchParams;
+  const { filter, page, msg, kind } = await searchParams;
   const f = typeof filter === "string" ? filter : "all";
   const pageN = Math.max(1, Number(page) || 1);
   const PAGE = 25;
@@ -54,7 +54,9 @@ export default async function DidsPage({ searchParams }: PageProps<"/dids">) {
   const filtered = all.filter((n) => (f === "blocked" ? bad(n) : f === "discrepant" ? disc(n) : f === "good" ? good(n) : f === "unknown" ? unknown(n) : true));
   const rows = filtered.slice((pageN - 1) * PAGE, pageN * PAGE);
   const lastSync = all.reduce<Date | null>((m, n) => (n.lastScannedAt && (!m || n.lastScannedAt > m) ? n.lastScannedAt : m), null);
-  const settings = (s.tenant.settings ?? {}) as { didDailyRecheck?: boolean };
+  const settings = (s.tenant.settings ?? {}) as { didDailyRecheck?: boolean; fcr?: { contactEmail?: string; companyName?: string; address1?: string; city?: string; state?: string; zip?: string; website?: string; contactName?: string; contactPhone?: string; category?: string } };
+  const fcr = settings.fcr ?? {};
+  const fcrReady = Boolean(fcr.contactEmail && fcr.companyName && fcr.address1 && fcr.city && fcr.state && fcr.zip && fcr.website && fcr.contactName && fcr.contactPhone && fcr.category);
   const recheck = settings.didDailyRecheck ?? true;
   const vendor = provider().name;
   const unregistered = all.filter((n) => !n.registeredAt).length;
@@ -94,6 +96,7 @@ export default async function DidsPage({ searchParams }: PageProps<"/dids">) {
           </>
         }
       />
+      {typeof msg === "string" && msg ? <Notice kind={kind === "error" ? "error" : "ok"}>{msg}</Notice> : null}
 
       <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-4">
         {stat("Total DIDs", all.length, "zinc")}
@@ -123,7 +126,29 @@ export default async function DidsPage({ searchParams }: PageProps<"/dids">) {
         </p>
         {unregistered ? (
           <div className="mt-3 rounded-md border border-amber-900/60 bg-amber-950/30 p-3">
-            <div className="mb-2 text-sm font-medium text-amber-200">Register {unregistered} new number{unregistered === 1 ? "" : "s"} at the Free Caller Registry (free, about two minutes)</div>
+            <div className="mb-2 text-sm font-medium text-amber-200">Register {unregistered} new number{unregistered === 1 ? "" : "s"} at the Free Caller Registry (free)</div>
+            <form action={registerAtRegistry} className="mb-3 flex flex-wrap items-center gap-3">
+              <Button type="submit" disabled={!fcrReady} className="bg-emerald-400 text-emerald-950 hover:bg-emerald-300">
+                Register now, automatically
+              </Button>
+              <span className="text-xs text-zinc-400">
+                {fcrReady ? (
+                  <>
+                    Fills their form with the profile in Settings, reads the verification code they email to {fcr.contactEmail} from Crossbar&apos;s inbox, uploads the numbers and submits. Takes two
+                    to five minutes; leave this page open.
+                  </>
+                ) : (
+                  <>
+                    Save the{" "}
+                    <Link href="/settings" className="text-sky-300 underline">
+                      Free Caller Registry profile in Settings
+                    </Link>{" "}
+                    first (business details and a crossbar.digital contact address).
+                  </>
+                )}
+              </span>
+            </form>
+            <div className="mb-1 text-xs text-zinc-500">Or by hand:</div>
             <ol className="mb-3 list-decimal space-y-1 pl-5 text-xs text-zinc-300">
               <li>
                 <a href="/api/reports/fcr" download className="text-sky-300 underline">
@@ -148,7 +173,7 @@ export default async function DidsPage({ searchParams }: PageProps<"/dids">) {
               <Button type="submit" variant="ghost">
                 Mark all {unregistered} as registered
               </Button>
-              <span className="text-xs text-zinc-500">There is no API for the registry; the form needs your verified email and your certification, so this step stays yours.</span>
+              <span className="text-xs text-zinc-500">For numbers you registered by hand.</span>
             </form>
           </div>
         ) : null}

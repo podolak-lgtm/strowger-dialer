@@ -84,3 +84,31 @@ export async function uploadAudio(formData: FormData) {
   await prisma.audioAsset.create({ data: { tenantId: s.tenant.id, name, kind, storageUrl: mediaUrl(key) } });
   revalidatePath("/settings");
 }
+
+/** The business profile the Free Caller Registry form is filled with (the owner's certification; see engine provision/fcr.ts). */
+export async function saveFcrProfile(formData: FormData) {
+  const s = await requireRole("SUPERVISOR");
+  const f = (k: string) => String(formData.get(k) ?? "").trim();
+  const settings = (s.tenant.settings ?? {}) as Record<string, unknown>;
+  const prev = (settings.fcr ?? {}) as Record<string, unknown>;
+  const fcr = {
+    ...prev,
+    contactEmail: f("contactEmail").toLowerCase(),
+    companyName: f("companyName"),
+    address1: f("address1"),
+    address2: f("address2"),
+    city: f("city"),
+    state: f("state").toUpperCase().slice(0, 2),
+    zip: f("zip"),
+    website: f("website"),
+    contactName: f("contactName"),
+    contactPhone: f("contactPhone"),
+    category: f("category"),
+    callCount: f("callCount"),
+    explanation: f("explanation"),
+  };
+  await prisma.tenant.update({ where: { id: s.tenant.id }, data: { settings: { ...settings, fcr } } });
+  await prisma.auditLog.create({ data: { tenantId: s.tenant.id, actorId: s.user.id, action: "settings.fcr", after: { companyName: fcr.companyName, contactEmail: fcr.contactEmail } } });
+  revalidatePath("/settings");
+  revalidatePath("/dids");
+}

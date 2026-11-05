@@ -2,7 +2,9 @@
 
 import { prisma } from "@strowger/db";
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { requireRole } from "@/lib/auth";
+import { engine } from "@/lib/engine";
 
 /** Mark numbers as registered at the Free Caller Registry (required before the first dial). */
 export async function markRegistered(formData: FormData) {
@@ -34,4 +36,26 @@ export async function setRest(formData: FormData) {
   });
   await prisma.auditLog.create({ data: { tenantId: s.tenant.id, actorId: s.user.id, action: days > 0 ? "did.rest" : "did.restore", target: id, after: { days } } });
   revalidatePath("/dids");
+}
+
+/** Drive the Free Caller Registry form from the engine (several minutes). */
+export async function registerAtRegistry() {
+  const s = await requireRole("SUPERVISOR");
+  let msg: string;
+  let kind = "ok";
+  try {
+    const r = await engine<{ ok: boolean; feedbackId?: string; count: number; error?: string; step?: string }>("/provision/fcr", { method: "POST", body: JSON.stringify({ tenantId: s.tenant.id }) });
+    if (r.ok) {
+      msg = `Registered ${r.count} number${r.count === 1 ? "" : "s"} at the Free Caller Registry (feedback id ${r.feedbackId}). First Orion, Hiya and TNS email confirmations to the contact address.`;
+      await prisma.auditLog.create({ data: { tenantId: s.tenant.id, actorId: s.user.id, action: "did.registered", after: { count: r.count, feedbackId: r.feedbackId, via: "fcr-auto" } } });
+    } else {
+      kind = "error";
+      msg = `Registry run stopped at "${r.step}": ${r.error}`;
+    }
+  } catch (e) {
+    kind = "error";
+    msg = e instanceof Error ? e.message : String(e);
+  }
+  revalidatePath("/dids");
+  redirect(`/dids?msg=${encodeURIComponent(msg)}&kind=${kind}`);
 }
