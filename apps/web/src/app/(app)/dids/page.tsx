@@ -122,17 +122,35 @@ export default async function DidsPage({ searchParams }: PageProps<"/dids">) {
           area codes are matched first. Short calls (hangups, voicemail drops, abandons) are what carriers punish most; keep the abandon rate low.
         </p>
         {unregistered ? (
-          <form action={markRegistered} className="mt-2 flex items-center gap-2">
-            {all.filter((n) => !n.registeredAt).map((n) => (
-              <input key={n.id} type="hidden" name="ids" value={n.id} />
-            ))}
-            <Button type="submit" variant="ghost">
-              Mark all {unregistered} as registered at freecallerregistry.com
-            </Button>
-            <a href="https://www.freecallerregistry.com/" target="_blank" rel="noreferrer" className="text-xs text-sky-300 underline">
-              Register them first ↗
-            </a>
-          </form>
+          <div className="mt-3 rounded-md border border-amber-900/60 bg-amber-950/30 p-3">
+            <div className="mb-2 text-sm font-medium text-amber-200">Register {unregistered} new number{unregistered === 1 ? "" : "s"} at the Free Caller Registry (free, about two minutes)</div>
+            <ol className="mb-3 list-decimal space-y-1 pl-5 text-xs text-zinc-300">
+              <li>
+                <a href="/api/reports/fcr" download className="text-sky-300 underline">
+                  Download the upload file
+                </a>{" "}
+                (one number per line, the format their bulk upload takes).
+              </li>
+              <li>
+                Open{" "}
+                <a href="https://www.freecallerregistry.com/fcr/" target="_blank" rel="noreferrer" className="text-sky-300 underline">
+                  freecallerregistry.com ↗
+                </a>
+                , verify your business email with the code they send, fill in the business details (call purpose: the campaign&apos;s business, e.g. insurance quotes requested online), then on the numbers step choose
+                &quot;Upload file&quot; and pick the download. Accept the terms: you certify the business itself makes calls from these numbers.
+              </li>
+              <li>First Orion, Hiya and TNS each email a confirmation. Then come back and press the button below so the dialer may use them.</li>
+            </ol>
+            <form action={markRegistered} className="flex items-center gap-2">
+              {all.filter((n) => !n.registeredAt).map((n) => (
+                <input key={n.id} type="hidden" name="ids" value={n.id} />
+              ))}
+              <Button type="submit" variant="ghost">
+                Mark all {unregistered} as registered
+              </Button>
+              <span className="text-xs text-zinc-500">There is no API for the registry; the form needs your verified email and your certification, so this step stays yours.</span>
+            </form>
+          </div>
         ) : null}
       </div>
 

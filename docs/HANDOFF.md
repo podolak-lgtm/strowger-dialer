@@ -171,6 +171,14 @@ before the campaign dials, from one screen. `apps/engine/src/provision/`:
   "Assign all numbers" calls `phoneNumberAssignmentByProfile` once the
   campaign status is accepted/provisioned. Opt-out/help keyword lists sent
   to TCR match `shared/sms.ts`.
+- **Free Caller Registry** (First Orion / Hiya / TNS) has no API: a web
+  form with email-code verification and a certification that the business
+  itself calls from the numbers. `/api/reports/fcr` (`?all=1` for every
+  active number) downloads the one-number-per-line .txt their bulk upload
+  takes; the DIDs page walks through the form and then "Mark all as
+  registered". Telnyx Number Reputation ($100/mo per enterprise + per
+  query, LOA required) is the candidate feed for the carrier grid; not
+  wired (owner asked 5 Nov whether it is free: it is not).
 - Errors from either API come back to the page verbatim (`?msg=`); every
   action is audit-logged (`provision.*`). The engine's internal routes are
   under `/internal/provision/*`.
