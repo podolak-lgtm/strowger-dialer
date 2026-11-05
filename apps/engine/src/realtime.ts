@@ -11,7 +11,7 @@ let io: Server | null = null;
 
 export function attachRealtime(server: HttpServer): Server {
   io = new Server(server, {
-    cors: { origin: [config.WEB_ORIGIN], credentials: true },
+    cors: { origin: config.WEB_ORIGIN.split(",").map((o) => o.trim()).filter(Boolean), credentials: true },
     path: "/rt",
   });
 

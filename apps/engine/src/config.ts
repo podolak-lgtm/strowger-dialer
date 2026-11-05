@@ -8,6 +8,7 @@ export const config = readEnv({
   ENGINE_PUBLIC_URL: z.string().default("http://localhost:4000"),
   /** Shared secret between web and engine for server-to-server calls. */
   ENGINE_INTERNAL_KEY: z.string().min(32),
+  /** Browser origin(s) allowed on the internal socket and API; comma-separated (the custom domain and the Railway one). */
   WEB_ORIGIN: z.string().default("http://localhost:3000"),
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
 

@@ -17,7 +17,7 @@ import { redis } from "./redis";
 
 const app = Fastify({ loggerInstance: log }) as unknown as FastifyInstance;
 
-await app.register(cors, { origin: [config.WEB_ORIGIN], credentials: true });
+await app.register(cors, { origin: config.WEB_ORIGIN.split(",").map((o) => o.trim()).filter(Boolean), credentials: true });
 
 // jambonz credential check, cached a minute so health polling costs one API read per minute.
 let jambonzAuth: { at: number; value: string } = { at: 0, value: "unchecked" };
