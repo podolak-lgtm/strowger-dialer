@@ -221,6 +221,25 @@ function LeadCardEditor({ lead, notes, onNotes, onNotesBlur, onSave, busy, now, 
   const [form, setForm] = useState<Required<LeadEdit>>(() => editable(lead));
   const saved = editable(lead);
   const dirty = EDIT_FIELDS.some(({ key }) => form[key].trim() !== saved[key]);
+  // Autosave (owner, 5 Nov: "they may forget to hit save"): a second after typing stops, and at once on leaving a field.
+  // The parent re-renders every second for the clock, so the save callback is read through a ref, not a dependency.
+  const saveRef = useRef(onSave);
+  const lastSent = useRef("");
+  useEffect(() => {
+    saveRef.current = onSave;
+  });
+  const flush = (f: Required<LeadEdit>) => {
+    const k = JSON.stringify(f);
+    if (k === lastSent.current) return;
+    lastSent.current = k;
+    void saveRef.current(f);
+  };
+  const formKey = JSON.stringify(form);
+  useEffect(() => {
+    if (!dirty) return;
+    const t = setTimeout(() => flush(JSON.parse(formKey) as Required<LeadEdit>), 1000);
+    return () => clearTimeout(t);
+  }, [formKey, dirty]);
   const localTime = leadLocalTime(lead, now);
   const scrub = SCRUB_BADGE[lead.scrubStatus] ?? { label: lead.scrubStatus.toLowerCase(), className: "bg-white/10 text-zinc-300" };
   const consent = [
@@ -264,7 +283,7 @@ function LeadCardEditor({ lead, notes, onNotes, onNotesBlur, onSave, busy, now, 
           {EDIT_FIELDS.map((f) => (
             <label key={f.key} className={`block text-[11px] uppercase tracking-wide text-zinc-500 ${f.span ? "col-span-2" : ""}`}>
               {f.label}
-              <input value={form[f.key]} onChange={(e) => setForm((prev) => ({ ...prev, [f.key]: e.target.value }))} className={input} />
+              <input value={form[f.key]} onChange={(e) => setForm((prev) => ({ ...prev, [f.key]: e.target.value }))} onBlur={() => dirty && flush(form)} className={input} />
             </label>
           ))}
         </div>
@@ -317,12 +336,12 @@ function LeadCardEditor({ lead, notes, onNotes, onNotesBlur, onSave, busy, now, 
         ) : null}
 
         <label className="block text-[11px] uppercase tracking-wide text-zinc-500">
-          Notes <span className="normal-case text-zinc-600">(saved when you leave the box)</span>
+          Notes <span className="normal-case text-zinc-600">(saved as you type)</span>
           <textarea value={notes} onChange={(e) => onNotes(e.target.value)} onBlur={onNotesBlur} placeholder="Notes about this lead…" rows={4} className={`${input} normal-case tracking-normal`} />
         </label>
 
         <div className="flex items-center justify-between">
-          <span className="text-xs text-zinc-500">{dirty ? "Unsaved changes" : "Saved"}</span>
+          <span className="text-xs text-zinc-500">{dirty ? "Saving…" : "All changes saved"}</span>
           <div className="flex gap-2">
             {dirty ? (
               <button type="button" onClick={() => setForm(saved)} disabled={busy} className="rounded-lg border border-white/15 px-3 py-1.5 text-sm text-zinc-300 hover:bg-white/10 disabled:opacity-40">
@@ -906,16 +925,23 @@ export function AgentConsole(props: ConsoleProps) {
     c.toggleMute();
   };
 
-  /** Save edits from the Lead card; the card re-renders from what the server returns. */
-  const saveLead = (fields: LeadEdit) =>
-    run(async () => {
-      if (!lead) return;
-      const r = await updateLead(lead.id, { ...fields, notes });
+  /**
+   * Save edits from the Lead card. Autosave calls this, so it takes no busy
+   * flag (the agent's next click is never blocked) and leaves the notes box
+   * alone (it saves itself); a failure shows as a notice.
+   */
+  const saveLead = async (fields: LeadEdit) => {
+    if (!lead) return;
+    const id = lead.id;
+    try {
+      const r = await updateLead(id, fields);
       if (!r.ok) throw new Error(r.error);
-      setLead(r.lead);
-      setNotes(r.lead.notes ?? "");
-      setHistory(await leadHistory(r.lead.id));
-    });
+      setLead((cur) => (cur && cur.id === id ? { ...r.lead, notes: cur.notes } : cur));
+      void leadHistory(id).then(setHistory);
+    } catch (e) {
+      setNotice(`Lead not saved: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
 
   /** Notes auto-save when the agent leaves the box; no busy flag so the next click is not lost. */
   const saveNotes = () => {
@@ -929,6 +955,15 @@ export function AgentConsole(props: ConsoleProps) {
       })
       .catch((e: unknown) => setNotice(`Notes not saved: ${e instanceof Error ? e.message : String(e)}`));
   };
+  // Notes also save a second after typing stops, not only on leaving the box (read through a ref: the clock re-renders every second).
+  const saveNotesRef = useRef(saveNotes);
+  useEffect(() => {
+    saveNotesRef.current = saveNotes;
+  });
+  useEffect(() => {
+    const t = setTimeout(() => saveNotesRef.current(), 1000);
+    return () => clearTimeout(t);
+  }, [notes]);
 
   /**
    * Send the disposition. On a live call the call is hung up first and the

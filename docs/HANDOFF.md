@@ -651,8 +651,13 @@ affiliate, posted, consent `consentJornayaId` / `consentTrustedFormId` /
 owner, status, scrub badge, `custom`), with first/last name, email,
 address, city, state, ZIP editable and a Notes box. The call panel still
 sits above it during a call. Notes persist on the new `Lead.notes` column
-(migration `20261105190000_lead_notes`) and auto-save on blur; Save writes
-the fields through `updateLead` (`actions.ts`), which diffs against the
+(migration `20261105190000_lead_notes`). **Everything autosaves** (owner,
+5 Nov: "they may forget to hit save"): fields and notes save one second
+after typing stops and at once when the agent leaves the box (a disposition
+click leaves it first); Save stays as a manual flush. Saves go through
+`updateLead` (`actions.ts`) with no busy flag, failures show as a notice;
+the save callbacks are read through refs because the console re-renders
+every second for the clock. `updateLead` diffs against the
 row and appends one `LeadEvent` NOTE with `changes: {field: {from, to}}`
 plus the note text, so the history panel shows who corrected what.
 `LeadCard` is built by `loadLeadCard` (one select, joins list → affiliate,
