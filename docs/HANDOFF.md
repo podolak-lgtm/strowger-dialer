@@ -445,6 +445,29 @@ scheduled picker and submits it once a time is set. Other hotkeys work on
 the call and in wrap-up, never while typing in an input. Wrap-up is
 unchanged: the engine moves the agent to READY after the disposition.
 
+**Lead card (owner, 5 Nov: the old "Lead Profile" box was too small to
+work from).** Whenever a lead is on screen (`lead` state: preview pull,
+ratio connect, manual dial, inbound, or wrap-up of any of those) the centre
+column swaps "System & Queue Activity" for `LeadCardEditor`: every field
+the lead carries (phone with local time from the lead's zone, list,
+affiliate, posted, consent `consentJornayaId` / `consentTrustedFormId` /
+`optInUrl` / `optInAt` / `optInIp`, attempts, last attempt and outcome,
+owner, status, scrub badge, `custom`), with first/last name, email,
+address, city, state, ZIP editable and a Notes box. The call panel still
+sits above it during a call. Notes persist on the new `Lead.notes` column
+(migration `20261105190000_lead_notes`) and auto-save on blur; Save writes
+the fields through `updateLead` (`actions.ts`), which diffs against the
+row and appends one `LeadEvent` NOTE with `changes: {field: {from, to}}`
+plus the note text, so the history panel shows who corrected what.
+`LeadCard` is built by `loadLeadCard` (one select, joins list → affiliate,
+owner, last call); `nextLead` re-reads through it after the engine
+reserves, so both paths return the same shape. The editor is mounted with
+`key={lead.id}` so its form resets per lead instead of syncing state in an
+effect (React Compiler rule). The left panel is now a compact summary
+(name, phone, local time, Dial/Skip); Call Dispositions now lives under
+the call controls (above). On the assist screen the current-lead row in
+Lead Queue expands (`CollapsibleLeadCard`) to the same editor.
+
 ## Voicemail, recordings, DID hygiene (owner, 4 Nov)
 
 - **Voicemail** per campaign: `voicemailAction` HANGUP (retry after
