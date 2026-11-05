@@ -93,7 +93,9 @@ export async function manualDial(tenantId: string, agentId: string, raw: string)
   const phone = normalizePhone(raw);
   if (!phone) return { ok: false, error: "That is not a dialable US number" };
   const live = await getAgent(agentId);
-  if (!live?.campaignId || live.state !== "READY") return { ok: false, error: "Be logged in and Ready first" };
+  // Ready or Paused, with the line up (owner, 5 Nov: paused is the natural time to dial by hand, since the dialer leaves you alone).
+  if (!live?.campaignId || !(live.state === "READY" || live.state === "PAUSED")) return { ok: false, error: "Log in and bring your line up first (Ready, or Paused)" };
+  if (!live.agentCallSid) return { ok: false, error: "Your line is not up: press Ready once so the softphone joins your room, then pause if you like" };
   const campaign = (await prisma.campaign.findFirst({ where: { id: live.campaignId, tenantId } })) as Campaign | null;
   if (!campaign) return { ok: false, error: "Campaign not found" };
   const dnc = await prisma.dncEntry.findFirst({ where: { tenantId, phone, OR: [{ scope: "SYSTEM" }, { scope: "CAMPAIGN", campaignId: campaign.id }] } });

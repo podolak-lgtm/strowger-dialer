@@ -592,6 +592,7 @@ export function AgentConsole(props: ConsoleProps) {
   const onCall = state === "ON_CALL";
   const wrapUp = state === "WRAP_UP";
   const ready = state === "READY";
+  const lineUpIdle = (state === "READY" || state === "PAUSED") && Boolean(agent?.agentCallSid);
   const canDialOut = campaign ? campaign.agentMode !== "CLOSER" || (campaign.closersMayDial && campaign.outboundOn) : false;
 
   const banner =
@@ -735,7 +736,7 @@ export function AgentConsole(props: ConsoleProps) {
                       </button>
                     ) : null}
                     {campaign && !canDialOut ? <p className="text-xs">You are a closer on this campaign: you receive transfers and callbacks.</p> : null}
-                    {ready && canDialOut ? (
+                    {lineUpIdle && canDialOut ? (
                       <div className="flex gap-2">
                         <input value={manual} onChange={(e) => setManual(e.target.value)} onKeyDown={(e) => e.key === "Enter" && dialManual()} placeholder="Dial a number…" className="flex-1 rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm placeholder:text-zinc-600" />
                         <button onClick={dialManual} disabled={busy || !manual.trim()} className="rounded-lg border border-white/15 px-3 py-2 text-sm text-zinc-200 hover:bg-white/10 disabled:opacity-40">
