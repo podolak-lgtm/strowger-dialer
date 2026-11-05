@@ -23,7 +23,7 @@ import { assignNumbersToCampaign, createBrand, createTenDlcCampaign, orderNumber
 import type { BrandInput, CampaignInput } from "../provision/telnyx";
 import { fcrProgress, startFcrRun } from "../provision/fcr";
 import { chatHistory, sendChat } from "../chat";
-import { acceptWager, endPokerRun, gamesOverview, proposeWager, setCampaignBets, startPokerRun, withdrawWager } from "../games";
+import { acceptWager, declineWager, endPokerRun, gamesOverview, proposeWager, setCampaignBets, startPokerRun, withdrawWager } from "../games";
 import { suggest } from "../assist";
 import { billingOverview, billingStatus, chargeSeatIfNew, outboundAllowed, platformOverview, rates, recordPayment } from "../billing";
 import { log } from "../log";
@@ -344,10 +344,14 @@ export async function registerInternalRoutes(app: FastifyInstance): Promise<void
     return gamesOverview(q.tenantId, q.userId, q.scope ?? "mine", q.campaignId || null);
   });
   app.post("/internal/games/wager", async (req, reply) => {
-    const b = Ids.extend({ action: z.enum(["propose", "accept", "withdraw"]), wagerId: z.string().optional(), campaignId: z.string().optional(), accepterId: z.string().nullable().optional(), kind: z.string().optional(), stake: z.number().int().optional(), note: z.string().optional() }).parse(req.body);
+    const b = Ids.extend({ action: z.enum(["propose", "accept", "decline", "withdraw"]), wagerId: z.string().optional(), campaignId: z.string().optional(), accepterId: z.string().nullable().optional(), kind: z.string().optional(), stake: z.number().int().optional(), note: z.string().optional() }).parse(req.body);
     try {
       if (b.action === "propose") return { ok: true, wager: await proposeWager(b.tenantId, b.userId, b.campaignId ?? "", b.accepterId ?? null, b.kind as WagerKind, b.stake ?? 0, b.note) };
       if (b.action === "accept") return { ok: true, wager: await acceptWager(b.tenantId, b.userId, b.wagerId ?? "") };
+      if (b.action === "decline") {
+        await declineWager(b.tenantId, b.userId, b.wagerId ?? "");
+        return { ok: true };
+      }
       await withdrawWager(b.tenantId, b.userId, b.wagerId ?? "");
       return { ok: true };
     } catch (e) {

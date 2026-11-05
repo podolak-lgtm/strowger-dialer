@@ -17,7 +17,8 @@ export type RunSummary = {
   status: "ACTIVE" | "ENDED";
   qualifies: string;
   codes: string[];
-  rows: { userId: string; name: string; cards: string[]; hand: { name: string; cards: string[] } | null }[];
+  /** Ranked by the engine with compareHands; `place` shared on an exact tie. `label` is "Two pair, kings and sevens"; `makers` the cards that make it. */
+  rows: { userId: string; name: string; cards: string[]; place: number; hand: { name: string; label: string; cards: string[]; makers: string[] } | null }[];
   winner: { userId: string; name: string; hand: string; cards: string[] } | null;
   endedAt: string | null;
 };
@@ -29,14 +30,21 @@ export type GamesOverview = {
   campaign: GamesCampaign | null;
   dispositions: { code: string; label: string; isSale: boolean; isContact: boolean }[];
   points: number;
-  kinds: { kind: string; label: string; instant: boolean }[];
+  kinds: { kind: string; label: string; short: string; instant: boolean }[];
+  /** Active agents on the selected campaign, for the Challenge form. */
+  players: { id: string; name: string }[];
   wagers: WagerRow[];
   settled: WagerRow[];
   run: RunSummary | null;
   pastRuns: RunSummary[];
-  ledger: { delta: number; reason: string; at: string }[];
+  /** Newest first. `kind` from shared `ledgerKind`. */
+  ledger: { id: string; delta: number; reason: string; kind: "topup" | "stake" | "won" | "lost" | "refund" | "other"; at: string }[];
 };
-export type WagerRow = { id: string; campaignId: string | null; kind: string; label: string; stake: number; status: string; proposerId: string; proposer: string; accepterId: string | null; accepter: string; winnerId: string | null; note: string | null; period: string | null; createdAt: string };
+export type WagerRow = { id: string; campaignId: string | null; kind: string; label: string; short: string; stake: number; status: string; proposerId: string; proposer: string; accepterId: string | null; accepter: string; winnerId: string | null; note: string | null; period: string | null; createdAt: string; settledAt: string | null; actions: ("accept" | "decline" | "withdraw")[] };
+/** Socket.IO `games:wager` (engine `wagerEvent`). */
+export type WagerEvent = { id: string; campaignId: string | null; status: "OPEN" | "ACCEPTED" | "SETTLED" | "DECLINED" | "VOID"; kind: string; label: string; short: string; stake: number; note: string | null; proposerId: string; proposer: string; accepterId: string | null; accepter: string; winnerId: string | null; withdrawn?: boolean; declined?: boolean };
+/** Socket.IO `games:card`, to the agent the card was dealt to. */
+export type CardEvent = { card: string; runId: string; run: string; campaignId: string; hand: string | null };
 
 type Result = { ok: true } | { ok: false; error: string };
 const fail = (e: unknown): { ok: false; error: string } => {
@@ -52,7 +60,7 @@ export async function gamesOverview(campaignId?: string | null): Promise<GamesOv
   return engine<GamesOverview>(`/games?tenantId=${s.tenant.id}&userId=${s.user.id}&scope=${scope}${campaignId ? `&campaignId=${encodeURIComponent(campaignId)}` : ""}`);
 }
 
-export async function wager(input: { action: "propose" | "accept" | "withdraw"; campaignId?: string; wagerId?: string; accepterId?: string | null; kind?: string; stake?: number; note?: string }): Promise<Result> {
+export async function wager(input: { action: "propose" | "accept" | "decline" | "withdraw"; campaignId?: string; wagerId?: string; accepterId?: string | null; kind?: string; stake?: number; note?: string }): Promise<Result> {
   const s = await requireSession();
   try {
     requireRight(s, "games");

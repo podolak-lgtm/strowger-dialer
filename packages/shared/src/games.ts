@@ -12,6 +12,18 @@ export const WAGER_KINDS = {
   MOST_SALES_WEEK: "Most sales this week",
 } as const;
 export type WagerKind = keyof typeof WAGER_KINDS;
+/** Short names for toasts and the bet board ("Maria won 500 pts from you on Next sale"). */
+export const WAGER_SHORT: Record<WagerKind, string> = {
+  NEXT_SALE: "Next sale",
+  NEXT_CONTACT: "Next contact",
+  NEXT_CALL: "Next call",
+  MOST_CALLS_TODAY: "Most calls today",
+  MOST_CONTACTS_TODAY: "Most contacts today",
+  MOST_SALES_TODAY: "Most sales today",
+  MOST_SALES_WEEK: "Most sales this week",
+};
+/** The longest trash-talk note on a bet. */
+export const WAGER_NOTE_MAX = 80;
 export const INSTANT_KINDS: WagerKind[] = ["NEXT_SALE", "NEXT_CONTACT", "NEXT_CALL"];
 
 /** YYYY-MM-DD in UTC. */
@@ -175,6 +187,165 @@ export function prettyCard(c: string): string {
   const suit = { C: "♣", D: "♦", H: "♥", S: "♠" }[c[1]!] ?? c[1];
   const rank = c[0] === "T" ? "10" : c[0];
   return `${rank}${suit}`;
+}
+
+// ---- What the agent sees (owner, 5 Nov: "The agent should actually see their cards")
+
+const RANK_WORDS: Record<string, [string, string]> = {
+  "2": ["two", "twos"], "3": ["three", "threes"], "4": ["four", "fours"], "5": ["five", "fives"], "6": ["six", "sixes"],
+  "7": ["seven", "sevens"], "8": ["eight", "eights"], "9": ["nine", "nines"], T: ["ten", "tens"], J: ["jack", "jacks"],
+  Q: ["queen", "queens"], K: ["king", "kings"], A: ["ace", "aces"],
+};
+const SUIT_WORDS: Record<string, string> = { C: "clubs", D: "diamonds", H: "hearts", S: "spades" };
+const cap = (w: string) => w.charAt(0).toUpperCase() + w.slice(1);
+const wordOf = (value: number, plural = false) => RANK_WORDS[RANKS[value - 2]!]![plural ? 1 : 0];
+
+/** "Seven of hearts": the accessible name of a card. */
+export function cardLabel(c: string): string {
+  const r = RANK_WORDS[c[0]!];
+  const s = SUIT_WORDS[c[1]!];
+  return r && s ? `${cap(r[0])} of ${s}` : c;
+}
+/** Hearts and diamonds print red. */
+export function isRed(c: string): boolean {
+  return c[1] === "H" || c[1] === "D";
+}
+/** The rank as printed in a card's corner ("10", "K"). */
+export function rankGlyph(c: string): string {
+  return c[0] === "T" ? "10" : (c[0] ?? "");
+}
+
+/** The hand in words: "Two pair, kings and sevens", "Full house, aces over kings", "Ace high". */
+export function describeHand(h: HandRank): string {
+  const [a = 0, b = 0] = h.kickers;
+  switch (h.category) {
+    case 8:
+      return a === 14 ? "Royal flush" : `Straight flush, ${wordOf(a)} high`;
+    case 7:
+      return `Four ${wordOf(a, true)}`;
+    case 6:
+      return `Full house, ${wordOf(a, true)} over ${wordOf(b, true)}`;
+    case 5:
+      return `Flush, ${wordOf(a)} high`;
+    case 4:
+      return `Straight, ${wordOf(a)} high`;
+    case 3:
+      return `Three ${wordOf(a, true)}`;
+    case 2:
+      return `Two pair, ${wordOf(a, true)} and ${wordOf(b, true)}`;
+    case 1:
+      return `Pair of ${wordOf(a, true)}`;
+    default:
+      return `${cap(wordOf(a))} high`;
+  }
+}
+
+/** The cards that make the hand (lifted on screen): the pairs/trips/quads, all five of a straight,
+ *  flush or full house, or the top card of a high-card hand. */
+export function handMakers(h: HandRank): string[] {
+  if (h.category === 4 || h.category === 5 || h.category === 6 || h.category === 8) return [...h.cards];
+  if (h.category === 0) {
+    const top = [...h.cards].sort((x, y) => rankValue(y) - rankValue(x))[0];
+    return top ? [top] : [];
+  }
+  const counts = new Map<string, number>();
+  for (const c of h.cards) counts.set(c[0]!, (counts.get(c[0]!) ?? 0) + 1);
+  return h.cards.filter((c) => (counts.get(c[0]!) ?? 0) >= 2);
+}
+
+/** Rank everyone on a run by best hand (compareHands), more cards breaking a dead tie on screen only.
+ *  `place` is shared on an exact tie: two equal best hands are both 1st. */
+export function rankStandings<T extends { cards: string[] }>(rows: T[]): (T & { hand: HandRank | null; place: number })[] {
+  const withHands = rows.map((r) => ({ ...r, hand: bestHand(r.cards) }));
+  const cmp = (x: { hand: HandRank | null }, y: { hand: HandRank | null }) => (x.hand && y.hand ? compareHands(y.hand, x.hand) : x.hand ? -1 : y.hand ? 1 : 0);
+  withHands.sort((x, y) => cmp(x, y) || y.cards.length - x.cards.length);
+  const out: (T & { hand: HandRank | null; place: number })[] = [];
+  withHands.forEach((r, i) => {
+    const prev = out[i - 1];
+    out.push({ ...r, place: prev && cmp(prev, r) === 0 ? prev.place : i + 1 });
+  });
+  return out;
+}
+
+export function ordinal(n: number): string {
+  const t = n % 100;
+  const suffix = t >= 11 && t <= 13 ? "th" : ({ 1: "st", 2: "nd", 3: "rd" } as Record<number, string>)[n % 10] ?? "th";
+  return `${n}${suffix}`;
+}
+/** "You're 2nd of 6", "You're tied 1st of 6", "No cards yet". */
+export function placeLine(rows: { userId: string; place: number }[], userId: string): string {
+  const me = rows.find((r) => r.userId === userId);
+  if (!me) return rows.length ? `No cards yet · ${rows.length} on the board` : "No cards yet";
+  const tied = rows.filter((r) => r.place === me.place).length > 1;
+  return `You're ${tied ? "tied " : ""}${ordinal(me.place)} of ${rows.length}`;
+}
+
+/** "2 days 5 hours left", "3 hours left", "40 min left", "ended". */
+export function timeLeft(endsAt: Date | string, now = new Date()): string {
+  const ms = new Date(endsAt).getTime() - now.getTime();
+  if (ms <= 0) return "ended";
+  const mins = Math.floor(ms / 60_000);
+  const days = Math.floor(mins / 1440);
+  const hours = Math.floor((mins % 1440) / 60);
+  const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`;
+  if (days > 0) return `${plural(days, "day")}${hours ? ` ${plural(hours, "hour")}` : ""} left`;
+  if (hours > 0) return `${plural(hours, "hour")} left`;
+  return `${Math.max(1, mins)} min left`;
+}
+
+// ---- Points ledger, as the purse's history shows it
+
+export type LedgerKind = "topup" | "stake" | "won" | "lost" | "refund" | "other";
+/** What a points movement was, from the ledger reason the engine writes (games/index.ts `credit`). */
+export function ledgerKind(reason: string): LedgerKind {
+  if (/top(ped)?[- ]up/i.test(reason)) return "topup";
+  if (/^Won:/.test(reason)) return "won";
+  if (/^Lost:/.test(reason)) return "lost";
+  if (/^Bet (placed|accepted):/.test(reason)) return "stake";
+  if (/^(Push:|Bet withdrawn|Bet expired|Declined)/.test(reason)) return "refund";
+  return "other";
+}
+
+// ---- Bets between agents: who may do what to an open bet
+
+export interface WagerSides {
+  status: string;
+  proposerId: string;
+  accepterId: string | null;
+}
+export type WagerAction = "accept" | "decline" | "withdraw";
+/** An OPEN bet: the proposer may withdraw it; a bet offered to me I may accept or decline; an open
+ *  "anyone" bet anyone else may accept (there is nothing to decline). Anything not OPEN: nothing. */
+export function wagerActions(w: WagerSides, userId: string): WagerAction[] {
+  if (w.status !== "OPEN") return [];
+  if (w.proposerId === userId) return ["withdraw"];
+  if (w.accepterId === userId) return ["accept", "decline"];
+  if (!w.accepterId) return ["accept"];
+  return [];
+}
+/** Declining a challenge: the bet becomes DECLINED and the proposer's stake goes back in full. */
+export function declinePlan(w: WagerSides & { stake: number }, userId: string): { status: "DECLINED"; refundTo: string; amount: number } {
+  if (!wagerActions(w, userId).includes("decline")) throw new Error("Only a bet offered to you can be declined");
+  return { status: "DECLINED", refundTo: w.proposerId, amount: w.stake };
+}
+
+export interface SettledEvent {
+  winnerId: string | null;
+  proposerId: string;
+  accepterId: string | null;
+  proposer: string;
+  accepter: string;
+  short: string;
+  stake: number;
+}
+/** The toast each side sees when a bet settles; null for anyone not party to it. */
+export function settlementLine(e: SettledEvent, userId: string): { text: string; tone: "won" | "lost" | "push" } | null {
+  if (userId !== e.proposerId && userId !== e.accepterId) return null;
+  const pts = `${e.stake.toLocaleString("en-US")} pts`;
+  const other = userId === e.proposerId ? e.accepter : e.proposer;
+  if (!e.winnerId) return { text: `Push on ${e.short}: your ${pts} are back`, tone: "push" };
+  if (e.winnerId === userId) return { text: `You won ${pts} from ${other} on ${e.short}`, tone: "won" };
+  return { text: `${other} won ${pts} from you on ${e.short}`, tone: "lost" };
 }
 
 // ---- Agent levels

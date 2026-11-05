@@ -233,6 +233,57 @@ ratings, extensions), `/voicemails` (agents see their own; supervisors all).
     left, the agent's hand, bets waiting and a quick bet) reloads on any
     `games:*` event. When neither bets nor a run are on it says so plainly
     instead of hiding.
+  - **The agent sees it** (owner, 5 Nov: "The agent should actually see
+    their cards. It should be graphical. It should be fun ... The same with
+    the points. Agents should be able to make bets with each other.").
+    - Cards: `components/playing-card.tsx` (`PlayingCard` sm/md/lg, pure
+      CSS + SVG pips, red hearts/diamonds, a comic back for an empty slot,
+      `aria-label` "Seven of hearts"; `PokerHand` five slots, the cards that
+      make the hand lifted with an amber outline, the hand in words under it;
+      `RunLeaderboard` everyone's best five as small cards, leader on a red
+      halftone). Used by the console and `/games` (supervisors see the same
+      table). Words and ranking are shared rules, tested: `cardLabel`,
+      `describeHand` ("Two pair, kings and sevens", "Royal flush"),
+      `handMakers`, `rankStandings` (compareHands; ties share a place),
+      `placeLine` ("You're 2nd of 6"), `timeLeft` ("2 days 5 hours left").
+      The engine's `RunSummary.rows` now carry `place` and `hand.label/makers`;
+      a run's `winningHand.hand` is the described hand from now on.
+    - Console wiring: `app/(console)/agent/games.tsx`. `useGames` holds one
+      overview for the whole console (reloads on every `games:*`), the deal
+      queue and the toasts. The Games panel is on **both** screens now (main:
+      right column under Chat; assist: as before).
+    - Deal moment: `games:card` {card, runId, run, campaignId, hand} queues a
+      card; `GamesLayer` plays it (back flips to face, "+1 card", run name,
+      the hand so far, ~2.3 s, ✕ to dismiss) only while the agent is **not
+      ON_CALL** (held until wrap-up/Ready). Wide screens: fixed bottom-right
+      over the Chat column, clear of the call and disposition column; below
+      `xl` it sits in the page flow under the notice line, so it covers
+      nothing. The old text notice for a card is gone.
+    - Purse: `PointsPurse` in the top bar ("12,500 pts" on a chip) counts up
+      or down on any reload that changes `points` (rAF, 0.9 s; a +/- delta
+      floats), click for the last 10 ledger rows with `ledgerKind` (top-up,
+      stake, bet won, bet lost, refund). A loss now writes a **0-delta
+      "Lost: …" ledger row** for the loser at settlement (the stake left at
+      bet time) so it shows in the history; `ledgerKind` parses the reason
+      strings in `credit()` calls, so keep their prefixes.
+    - Bets between agents: the panel's bet board (challenges to me with
+      Accept/Decline, my open and live bets with Withdraw, open-to-anyone
+      with Take it, recently settled on the campaign and mine with the
+      winner) and a Challenge form (agent on the campaign from the overview's
+      new `players`, or anyone; kind; stake slider capped at
+      min(`maxStake`, purse); trash talk `WAGER_NOTE_MAX` = 80, also enforced
+      by the engine). **Decline** is new: `declineWager` (rule
+      `declinePlan`/`wagerActions` in shared, tested) sets DECLINED and
+      refunds the proposer; route action `decline`. `games:wager` now carries
+      names, short label (`WAGER_SHORT`), stake and note; the console turns a
+      challenge to me into a toast with Accept/Decline, and a settlement into
+      "Maria won 500 pts from you on Next sale" for each side
+      (`settlementLine`). Rows in the overview carry `actions` for the viewer.
+    - Look: dark console with comic touches from the landing page (2px black
+      outlines, hard drop shadows, `.sw-halftone` / `.sw-halftone-red` dots,
+      the comic red `#c8472b` and cream `#f6efe0`). Keyframes are in
+      `globals.css` (`sw-deal-*`, `sw-pop`, `sw-float-up`, `sw-toast-in`) and
+      all switch off under `prefers-reduced-motion`. No sounds.
 - Other games the owner asked for ideas on (not built): outcome bingo,
   king of the hill, horse race, team boss raid, streak multiplier, mystery
   box, fantasy draft; see the reply of 5 Nov.

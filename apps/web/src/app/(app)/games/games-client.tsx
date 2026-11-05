@@ -1,13 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { POKER_QUALIFIERS, prettyCard } from "@strowger/shared/games";
+import { POKER_QUALIFIERS, WAGER_NOTE_MAX, placeLine, timeLeft } from "@strowger/shared/games";
+import { PlayingCard, PokerHand, RunLeaderboard } from "@/components/playing-card";
 import { endPokerRun, gamesOverview, setCampaignBets, startPokerRun, wager, type GamesOverview, type RunSummary } from "@/lib/games-actions";
-
-const CardFace = ({ c, dim = false }: { c: string; dim?: boolean }) => {
-  const red = c[1] === "H" || c[1] === "D";
-  return <span className={`inline-grid h-9 w-7 place-items-center rounded border text-xs font-bold ${dim ? "border-zinc-700 bg-zinc-900 text-zinc-500" : `border-zinc-300 bg-white ${red ? "text-red-600" : "text-zinc-900"}`}`}>{prettyCard(c)}</span>;
-};
 
 export function GamesClient({ meId, people, canPlay, canManage, initialCampaignId }: { meId: string; people: { id: string; name: string }[]; canPlay: boolean; canManage: boolean; initialCampaignId: string | null }) {
   const [o, setO] = useState<GamesOverview | null>(null);
@@ -19,6 +15,11 @@ export function GamesClient({ meId, people, canPlay, canManage, initialCampaignI
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(t);
+  }, []);
   const refresh = useCallback(() => void gamesOverview(campaignId).then(setO).catch(() => undefined), [campaignId]);
   useEffect(() => {
     const first = setTimeout(refresh, 0);
@@ -134,7 +135,7 @@ export function GamesClient({ meId, people, canPlay, canManage, initialCampaignI
             </label>
             <label className="block">
               <span className="text-zinc-300">Trash talk (optional)</span>
-              <input value={note} onChange={(e) => setNote(e.target.value)} maxLength={140} className="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2" />
+              <input value={note} onChange={(e) => setNote(e.target.value.slice(0, WAGER_NOTE_MAX))} maxLength={WAGER_NOTE_MAX} className="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2" />
             </label>
           </div>
           <button disabled={busy || !canPlay || !betsOn || stake <= 0} onClick={() => void act({ action: "propose", campaignId: c.id, kind, stake, accepterId: against || null, note })} className="mt-3 rounded-md bg-fuchsia-500 px-4 py-2 text-sm font-semibold text-white disabled:opacity-40">
@@ -160,10 +161,17 @@ export function GamesClient({ meId, people, canPlay, canManage, initialCampaignI
                   <button disabled={busy} onClick={() => void act({ action: "withdraw", wagerId: w.id })} className="rounded border border-white/10 px-2 py-1 text-xs hover:bg-white/10">
                     Withdraw
                   </button>
-                ) : !w.accepterId || w.accepterId === meId ? (
-                  <button disabled={busy || !canPlay || !betsOn} onClick={() => void act({ action: "accept", wagerId: w.id })} className="rounded bg-emerald-400 px-2 py-1 text-xs font-semibold text-emerald-950 disabled:opacity-40">
-                    Take it
-                  </button>
+                ) : w.actions.includes("accept") ? (
+                  <span className="flex gap-1">
+                    <button disabled={busy || !canPlay || !betsOn} onClick={() => void act({ action: "accept", wagerId: w.id })} className="rounded bg-emerald-400 px-2 py-1 text-xs font-semibold text-emerald-950 disabled:opacity-40">
+                      {w.accepterId === meId ? "Accept" : "Take it"}
+                    </button>
+                    {w.actions.includes("decline") ? (
+                      <button disabled={busy} onClick={() => void act({ action: "decline", wagerId: w.id })} className="rounded border border-white/10 px-2 py-1 text-xs hover:bg-white/10">
+                        Decline
+                      </button>
+                    ) : null}
+                  </span>
                 ) : null}
               </li>
             ))}
@@ -183,7 +191,8 @@ export function GamesClient({ meId, people, canPlay, canManage, initialCampaignI
               <ul className="space-y-1 text-xs text-zinc-400">
                 {o.settled.map((w) => (
                   <li key={w.id}>
-                    {w.label}: {w.winnerId ? (w.winnerId === meId ? <span className="text-emerald-300">you won {(w.stake * 2).toLocaleString()}</span> : <span className="text-red-300">{w.winnerId === w.proposerId ? w.proposer : w.accepter} won</span>) : "push"}
+                    {w.short}: {w.proposer} vs {w.accepter} ·{" "}
+                    {w.winnerId ? (w.winnerId === meId ? <span className="text-emerald-300">you won {(w.stake * 2).toLocaleString()}</span> : <span className={w.proposerId === meId || w.accepterId === meId ? "text-red-300" : "text-zinc-200"}>{w.winnerId === w.proposerId ? w.proposer : w.accepter} won {(w.stake * 2).toLocaleString()}</span>) : "push"}
                   </li>
                 ))}
               </ul>
@@ -198,22 +207,25 @@ export function GamesClient({ meId, people, canPlay, canManage, initialCampaignI
             <>
               <div className="flex items-baseline justify-between">
                 <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-400">Poker run · {o.run.name}</h2>
-                <span className="text-xs text-zinc-500">{o.run.live ? `${o.run.daysLeft} day${o.run.daysLeft === 1 ? "" : "s"} left` : o.run.daysLeft > 0 ? `starts ${new Date(o.run.startsAt).toLocaleDateString()}` : "closing"}</span>
+                <span className="text-xs text-zinc-500">{o.run.live ? timeLeft(o.run.endsAt, new Date(now)) : o.run.daysLeft > 0 ? `starts ${new Date(o.run.startsAt).toLocaleDateString()}` : "closing"}</span>
               </div>
               <p className="mt-1 text-xs text-zinc-500">
                 {o.run.prize ? <span className="text-amber-200">Prize: {o.run.prize}. </span> : null}
                 {ruleText(o.run)} Best five-card hand when it ends ({new Date(o.run.endsAt).toLocaleString()}) wins.
               </p>
-              <div className="mt-3 rounded-md bg-black/30 p-3">
-                <div className="mb-1 text-xs text-zinc-400">Your hand {mine?.hand ? `· ${mine.hand.name}` : ""}</div>
-                <div className="flex flex-wrap gap-1">
-                  {(mine?.cards ?? []).map((c, i) => (
-                    <CardFace key={i} c={c} dim={Boolean(mine?.hand && !mine.hand.cards.includes(c))} />
-                  ))}
-                  {!mine?.cards.length ? <span className="text-xs text-zinc-500">No cards yet.</span> : null}
+              {canPlay ? (
+                <div className="sw-halftone mt-3 rounded-md border-2 border-black bg-black/30 p-3 shadow-[2px_2px_0_#000]">
+                  <div className="flex justify-between text-xs text-zinc-400">
+                    <span>Your hand</span>
+                    <span>{placeLine(o.run.rows, meId)}</span>
+                  </div>
+                  <PokerHand cards={mine?.cards ?? []} best={mine?.hand?.cards} makers={mine?.hand?.makers} label={mine?.hand?.label ?? null} size="md" />
                 </div>
+              ) : null}
+              <div className="mt-3">
+                <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-zinc-500">The table ({o.run.rows.length})</div>
+                <RunLeaderboard rows={o.run.rows} meId={meId} />
               </div>
-              <Standings rows={o.run.rows} meId={meId} />
             </>
           ) : (
             <>
@@ -236,8 +248,8 @@ export function GamesClient({ meId, people, canPlay, canManage, initialCampaignI
                     <div className="mt-1 flex items-center gap-2 text-xs">
                       <span className={r.winner.userId === meId ? "text-emerald-300" : "text-zinc-300"}>{r.winner.userId === meId ? "You won" : `${r.winner.name} won`} with {r.winner.hand}</span>
                       <span className="flex gap-0.5">
-                        {r.winner.cards.map((c, j) => (
-                          <CardFace key={j} c={c} />
+                        {r.winner.cards.map((c) => (
+                          <PlayingCard key={c} card={c} size="sm" />
                         ))}
                       </span>
                     </div>
@@ -258,27 +270,6 @@ export function GamesClient({ meId, people, canPlay, canManage, initialCampaignI
 function ruleText(r: RunSummary): string {
   if (r.qualifies === "CODES") return `A card for every ${r.codes.join(", ")} disposition.`;
   return r.qualifies === "CONTACT" ? "A card for every live contact." : "A card for every sale.";
-}
-
-function Standings({ rows, meId }: { rows: RunSummary["rows"]; meId: string }) {
-  return (
-    <ol className="mt-3 space-y-1 text-sm">
-      {rows.map((r, i) => (
-        <li key={r.userId} className={`flex items-center gap-2 rounded-md px-3 py-2 ${r.userId === meId ? "bg-emerald-400/10" : "bg-white/5"}`}>
-          <span className="w-4 text-xs text-zinc-500">{i + 1}</span>
-          <span className="flex-1 truncate">
-            {r.name} {r.hand ? <span className="text-xs text-zinc-400">· {r.hand.name}</span> : null}
-          </span>
-          <span className="flex gap-0.5">
-            {r.cards.slice(-5).map((c, j) => (
-              <CardFace key={j} c={c} />
-            ))}
-          </span>
-        </li>
-      ))}
-      {rows.length === 0 ? <li className="text-xs text-zinc-500">Nobody has a card yet.</li> : null}
-    </ol>
-  );
 }
 
 /** Supervisors, admins and team leaders with `manage_games`: bets on/off and the poker run for the selected campaign. */

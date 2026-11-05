@@ -10,8 +10,8 @@ import { createJambonzClient } from "@jambonz/client-sdk-web";
 import { ChatPanel } from "@/components/chat-panel";
 import { isStaleBuildError, NewVersionBanner, useNewVersion } from "@/components/new-version";
 import { myTeams } from "@/lib/chat-actions";
-import { assistSuggest, campaignRebuttals, gamesOverview, wager, type GamesOverview, type Suggestion } from "@/lib/games-actions";
-import { prettyCard } from "@strowger/shared/games";
+import { assistSuggest, campaignRebuttals, type Suggestion } from "@/lib/games-actions";
+import { GamesLayer, GamesPanel, PointsPurse, useGames } from "./games";
 import { superviseStart, superviseStop, type SuperviseMode } from "../floor/actions";
 import { formatPhone } from "@strowger/shared/phone";
 import { DEFAULT_SCREENER_SCRIPT, renderScript } from "@strowger/shared/scripts";
@@ -601,8 +601,7 @@ export function AgentConsole(props: ConsoleProps) {
       setNotice(b.betsEnabled ? `Bets are on for ${b.campaign}: ${b.weeklyPoints.toLocaleString()} points every Monday` : `Bets are off for ${b.campaign}`);
     });
     sock.on("games:won", (w: { name: string; prize: string | null; hand: string }) => setNotice(`You won the poker run '${w.name}' with ${w.hand}${w.prize ? `: ${w.prize}` : ""}`));
-    // A card earned on a disposition is announced, not only added to the panel (owner, 5 Nov: "I don't see it").
-    sock.on("games:card", (c: { card: string; run: string }) => setNotice(`You got a card in '${c.run}': ${prettyCard(c.card)}. Open Games to see your hand.`));
+    // A card earned on a disposition plays as the deal moment (games.tsx GamesLayer), held while on a call.
     sock.on("call:update", (u: { callId: string; status: string; leadId?: string; outcome?: string; inbound?: boolean; from?: string | null; screener?: boolean; screenerPhrase?: string | null; human?: boolean; transfer?: LiveTransferView }) => {
       if (u.status === "transfer" && u.transfer) {
         const t = u.transfer;
@@ -1039,6 +1038,8 @@ export function AgentConsole(props: ConsoleProps) {
   const wrapUp = state === "WRAP_UP";
   const ready = state === "READY";
   const lineUpIdle = (state === "READY" || state === "PAUSED") && Boolean(agent?.agentCallSid);
+  // Games: one overview for the purse, the panel and the deal moment (games.tsx).
+  const games = useGames({ campaignId, socket: sock, meId: me.id, enabled: can("games"), onCall });
   const canDialOut = campaign ? campaign.agentMode !== "CLOSER" || (campaign.closersMayDial && campaign.outboundOn) : false;
 
   // Screener banner steps. "Say it" gives way to "stay quiet" after 5 s (or the Said it click);
@@ -1245,12 +1246,18 @@ export function AgentConsole(props: ConsoleProps) {
                 </button>
               </>
             )}
+            {can("games") ? (
+              <div className="ml-2">
+                <PointsPurse g={games} />
+              </div>
+            ) : null}
             <div className="ml-3 grid h-8 w-8 place-items-center rounded-full bg-gradient-to-br from-cyan-400 to-fuchsia-500 text-xs font-bold">{me.name.slice(0, 1).toUpperCase()}</div>
           </div>
         </div>
 
         <NewVersionBanner show={newVersion} onCall={onCall || wrapUp} />
         {notice ? <div className="mb-4 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">{notice}</div> : null}
+        {can("games") ? <GamesLayer g={games} /> : null}
 
         {/* Status banner: the primary Ready / Pause control */}
         {bannerActionLabel ? (
@@ -1603,6 +1610,7 @@ export function AgentConsole(props: ConsoleProps) {
               <Panel title="Chat">
                 <ChatPanel socket={sock} meId={me.id} openDirectWith={dmWith} height="h-56" />
               </Panel>
+              {can("games") ? <GamesPanel g={games} meId={me.id} campaignId={campaignId} Panel={Panel} /> : null}
               <SprintPanel stats={stats} />
               <Leaderboard stats={stats} />
             </div>
@@ -1621,7 +1629,7 @@ export function AgentConsole(props: ConsoleProps) {
                 )}
               </Panel>
               <AssistPanel campaignId={campaignId} leadId={lead?.id ?? null} />
-              {can("games") ? <GamesPanel meId={me.id} campaignId={campaignId} socket={sock} /> : null}
+              {can("games") ? <GamesPanel g={games} meId={me.id} campaignId={campaignId} Panel={Panel} /> : null}
             </div>
 
             <div className="space-y-4">
@@ -1874,121 +1882,6 @@ function AssistPanel({ campaignId, leadId, compact = false }: { campaignId: stri
         ))}
         {rebuttals.length === 0 ? <div className="text-xs text-zinc-500">No rebuttals on this campaign yet. A supervisor adds them on the campaign page; the Suggest button still works from the script.</div> : null}
       </div>
-    </Panel>
-  );
-}
-
-function GamesPanel({ meId, campaignId, socket }: { meId: string; campaignId: string; socket: Socket | null }) {
-  const [o, setO] = useState<GamesOverview | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-  const [kind, setKind] = useState("NEXT_SALE");
-  const [stake, setStake] = useState(500);
-  // Polled, and reloaded the moment the engine says a run, a bet, a card or the campaign's switches changed.
-  useEffect(() => {
-    const load = () => void gamesOverview(campaignId).then(setO).catch(() => undefined);
-    const first = setTimeout(load, 0);
-    const t = setInterval(load, 30_000);
-    const events = ["games:run", "games:bets", "games:wager", "games:card", "games:points", "games:poker"];
-    for (const e of events) socket?.on(e, load);
-    return () => {
-      clearTimeout(first);
-      clearInterval(t);
-      for (const e of events) socket?.off(e, load);
-    };
-  }, [campaignId, socket]);
-  const act = async (input: Parameters<typeof wager>[0]) => {
-    setBusy(true);
-    const r = await wager(input);
-    setErr(r.ok ? null : r.error);
-    setBusy(false);
-    void gamesOverview(campaignId).then(setO).catch(() => undefined);
-  };
-  const link = (
-    <a href={`/games?campaign=${encodeURIComponent(campaignId)}`} target="_blank" rel="noreferrer" className="text-xs text-sky-300 underline">
-      open
-    </a>
-  );
-  if (!o) return null;
-  const c = o.campaign;
-  const betsOn = Boolean(c?.betsEnabled && c.id === campaignId);
-  const run = o.run && o.run.campaignId === campaignId ? o.run : null;
-  if (!betsOn && !run) {
-    return (
-      <Panel title="Games" right={link} defaultOpen={false}>
-        <div className="text-sm text-zinc-400">Games are off for this campaign: no bets and no poker run. A supervisor switches them on from the campaign page.</div>
-      </Panel>
-    );
-  }
-  const mine = run?.rows.find((r) => r.userId === meId);
-  const forMe = o.wagers.filter((w) => w.status === "OPEN" && w.proposerId !== meId && (!w.accepterId || w.accepterId === meId));
-  return (
-    <Panel title="Games" right={link} defaultOpen={false}>
-      {run ? (
-        <div className="mb-3 rounded-md border border-fuchsia-900/60 bg-fuchsia-950/20 p-2">
-          <div className="flex items-center justify-between text-sm">
-            <b>{run.name}</b>
-            <span className="text-xs text-zinc-400">{run.live ? `${run.daysLeft} day${run.daysLeft === 1 ? "" : "s"} left` : "not running"}</span>
-          </div>
-          {run.prize ? <div className="text-xs text-amber-200">Prize: {run.prize}</div> : null}
-          <div className="mt-1 text-xs text-zinc-400">
-            {run.qualifies === "CODES" ? `A card for every ${run.codes.join(", ")}` : run.qualifies === "CONTACT" ? "A card for every live contact" : "A card for every sale"} · your hand{mine?.hand ? `: ${mine.hand.name}` : ""}
-          </div>
-          <div className="mt-1 flex flex-wrap gap-1">
-            {(mine?.cards ?? []).map((c, i) => (
-              <span key={i} className={`inline-grid h-8 w-6 place-items-center rounded border border-zinc-300 bg-white text-[11px] font-bold ${c[1] === "H" || c[1] === "D" ? "text-red-600" : "text-zinc-900"}`}>
-                {prettyCard(c)}
-              </span>
-            ))}
-            {!mine?.cards.length ? <span className="text-xs text-zinc-500">No cards yet.</span> : null}
-          </div>
-          {run.rows[0] && run.rows[0].userId !== meId ? (
-            <div className="mt-1 text-xs text-zinc-500">
-              Leading: {run.rows[0].name}
-              {run.rows[0].hand ? ` · ${run.rows[0].hand.name}` : ""}
-            </div>
-          ) : null}
-        </div>
-      ) : (
-        <div className="mb-2 text-xs text-zinc-500">No poker run on this campaign.</div>
-      )}
-      {betsOn && c ? (
-        <>
-          <div className="flex items-center justify-between text-sm">
-            <span className="text-zinc-400">Points</span>
-            <span className="text-lg font-semibold tabular-nums">{o.points.toLocaleString()}</span>
-          </div>
-          {err ? <div className="my-1 rounded border border-red-900 bg-red-950/40 px-2 py-1 text-xs text-red-200">{err}</div> : null}
-          <ul className="mt-1 space-y-1 text-xs">
-            {forMe.slice(0, 4).map((w) => (
-              <li key={w.id} className="flex items-center justify-between rounded bg-white/5 px-2 py-1">
-                <span className="truncate">
-                  <b>{w.proposer}</b> · {w.label} · <span className="text-fuchsia-300">{w.stake.toLocaleString()}</span>
-                </span>
-                <button disabled={busy} onClick={() => void act({ action: "accept", wagerId: w.id })} className="ml-2 rounded bg-emerald-400 px-2 py-0.5 font-semibold text-emerald-950 disabled:opacity-40">
-                  Take
-                </button>
-              </li>
-            ))}
-            {forMe.length === 0 ? <li className="text-zinc-500">No bets waiting for you.</li> : null}
-          </ul>
-          <div className="mt-2 flex items-center gap-1 text-xs">
-            <select value={kind} onChange={(e) => setKind(e.target.value)} className="min-w-0 flex-1 rounded border border-white/10 bg-black/30 px-1 py-1">
-              {o.kinds.map((k) => (
-                <option key={k.kind} value={k.kind}>
-                  {k.label}
-                </option>
-              ))}
-            </select>
-            <input type="number" min={1} max={c.maxStake} value={stake} onChange={(e) => setStake(Number(e.target.value))} className="w-16 rounded border border-white/10 bg-black/30 px-1 py-1 tabular-nums" />
-            <button disabled={busy || stake <= 0} onClick={() => void act({ action: "propose", campaignId, kind, stake, accepterId: null })} className="rounded bg-fuchsia-500 px-2 py-1 font-semibold text-white disabled:opacity-40">
-              Bet
-            </button>
-          </div>
-        </>
-      ) : (
-        <div className="text-xs text-zinc-500">Bets are off for this campaign.</div>
-      )}
     </Panel>
   );
 }

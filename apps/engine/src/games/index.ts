@@ -4,7 +4,7 @@
 // the weekly top-up and the auto-close of runs past their end run from the
 // scheduler. Rules in @strowger/shared/games.
 import { prisma } from "@strowger/db";
-import { INSTANT_KINDS, WAGER_KINDS, bestHand, compareHands, dayKey, daysLeft, dealCard, earnsCard, periodKeyFor, runIsLive, weekKey, type HandRank, type PokerRule, type WagerKind } from "@strowger/shared/games";
+import { INSTANT_KINDS, WAGER_KINDS, WAGER_NOTE_MAX, WAGER_SHORT, bestHand, dayKey, daysLeft, dealCard, declinePlan, describeHand, earnsCard, handMakers, ledgerKind, periodKeyFor, rankStandings, runIsLive, wagerActions, weekKey, type HandRank, type PokerRule, type WagerKind } from "@strowger/shared/games";
 import { log } from "../log";
 import { emitToAgent, emitToTenant } from "../realtime";
 
@@ -38,6 +38,13 @@ async function campaignGames(tenantId: string, campaignId: string): Promise<Camp
 }
 
 const displayName = (u: { firstName: string | null; email: string } | null) => (u ? (u.firstName ?? u.email.split("@")[0]!) : "anyone");
+const people = { proposer: { select: { firstName: true, email: true } }, accepter: { select: { firstName: true, email: true } } } as const;
+const shortOf = (kind: string) => WAGER_SHORT[kind as WagerKind] ?? kind;
+
+/** What `games:wager` carries: enough for the console's challenge notice and settlement toast. */
+function wagerEvent(w: { id: string; campaignId: string | null; kind: string; stake: number; note: string | null; proposerId: string; accepterId: string | null; winnerId?: string | null; proposer: { firstName: string | null; email: string }; accepter: { firstName: string | null; email: string } | null }, status: string, extra: Record<string, unknown> = {}) {
+  return { id: w.id, campaignId: w.campaignId, status, kind: w.kind, label: WAGER_KINDS[w.kind as WagerKind] ?? w.kind, short: shortOf(w.kind), stake: w.stake, note: w.note, proposerId: w.proposerId, proposer: displayName(w.proposer), accepterId: w.accepterId, accepter: displayName(w.accepter), winnerId: w.winnerId ?? null, ...extra };
+}
 
 async function credit(tenantId: string, userId: string, delta: number, reason: string, wagerId?: string): Promise<void> {
   await prisma.$transaction([
@@ -77,9 +84,10 @@ export async function proposeWager(tenantId: string, proposerId: string, campaig
   const me = await prisma.user.findFirst({ where: { id: proposerId, tenantId } });
   if (!me || me.points < stake) throw new Error("Not enough points");
   if (accepterId === proposerId) throw new Error("Bet someone else");
-  const w = await prisma.wager.create({ data: { tenantId, campaignId, proposerId, accepterId, kind, stake, note: note?.slice(0, 140) ?? null, period: periodKeyFor(kind) } });
+  if (accepterId && !(await prisma.user.findFirst({ where: { id: accepterId, tenantId, active: true }, select: { id: true } }))) throw new Error("Unknown agent");
+  const w = await prisma.wager.create({ data: { tenantId, campaignId, proposerId, accepterId, kind, stake, note: note?.trim().slice(0, WAGER_NOTE_MAX) || null, period: periodKeyFor(kind) }, include: people });
   await credit(tenantId, proposerId, -stake, `Bet placed: ${WAGER_KINDS[kind]}`, w.id);
-  emitToTenant(tenantId, "games:wager", { id: w.id, campaignId, status: "OPEN" });
+  emitToTenant(tenantId, "games:wager", wagerEvent(w, "OPEN"));
   return w;
 }
 
@@ -97,30 +105,48 @@ export async function acceptWager(tenantId: string, userId: string, wagerId: str
   const upd = await prisma.wager.updateMany({ where: { id: w.id, status: "OPEN" }, data: { status: "ACCEPTED", accepterId: userId } });
   if (upd.count !== 1) throw new Error("Somebody beat you to it");
   await credit(tenantId, userId, -w.stake, `Bet accepted: ${WAGER_KINDS[w.kind as WagerKind]}`, w.id);
-  emitToTenant(tenantId, "games:wager", { id: w.id, campaignId: w.campaignId, status: "ACCEPTED" });
-  return prisma.wager.findUniqueOrThrow({ where: { id: w.id } });
+  const after = await prisma.wager.findUniqueOrThrow({ where: { id: w.id }, include: people });
+  emitToTenant(tenantId, "games:wager", wagerEvent(after, "ACCEPTED"));
+  return after;
 }
 
 export async function withdrawWager(tenantId: string, userId: string, wagerId: string) {
-  const w = await prisma.wager.findFirst({ where: { id: wagerId, tenantId, status: "OPEN", proposerId: userId } });
+  const w = await prisma.wager.findFirst({ where: { id: wagerId, tenantId, status: "OPEN", proposerId: userId }, include: people });
   if (!w) throw new Error("Only an open bet of yours can be withdrawn");
-  await prisma.wager.update({ where: { id: w.id }, data: { status: "DECLINED", settledAt: new Date() } });
+  const upd = await prisma.wager.updateMany({ where: { id: w.id, status: "OPEN" }, data: { status: "DECLINED", settledAt: new Date() } });
+  if (upd.count !== 1) throw new Error("That bet was just taken");
   await credit(tenantId, w.proposerId, w.stake, "Bet withdrawn", w.id);
-  emitToTenant(tenantId, "games:wager", { id: w.id, campaignId: w.campaignId, status: "DECLINED" });
+  emitToTenant(tenantId, "games:wager", wagerEvent(w, "DECLINED", { withdrawn: true }));
+}
+
+/** The challenged agent says no: DECLINED, and the proposer's stake goes back (rule: `declinePlan`). */
+export async function declineWager(tenantId: string, userId: string, wagerId: string) {
+  const w = await prisma.wager.findFirst({ where: { id: wagerId, tenantId }, include: people });
+  if (!w) throw new Error("That bet is gone");
+  const plan = declinePlan(w, userId);
+  const upd = await prisma.wager.updateMany({ where: { id: w.id, status: "OPEN", accepterId: userId }, data: { status: plan.status, settledAt: new Date() } });
+  if (upd.count !== 1) throw new Error("That bet is gone");
+  await credit(tenantId, plan.refundTo, plan.amount, `Declined by ${displayName(w.accepter)}: ${shortOf(w.kind)}`, w.id);
+  emitToTenant(tenantId, "games:wager", wagerEvent(w, "DECLINED", { declined: true }));
 }
 
 async function settle(wagerId: string, winnerId: string | null): Promise<void> {
-  const w = await prisma.wager.findUnique({ where: { id: wagerId } });
+  const w = await prisma.wager.findUnique({ where: { id: wagerId }, include: people });
   if (!w || w.status !== "ACCEPTED" || !w.accepterId) return;
   const upd = await prisma.wager.updateMany({ where: { id: w.id, status: "ACCEPTED" }, data: { status: "SETTLED", winnerId, settledAt: new Date() } });
   if (upd.count !== 1) return;
   const label = WAGER_KINDS[w.kind as WagerKind];
-  if (winnerId) await credit(w.tenantId, winnerId, w.stake * 2, `Won: ${label}`, w.id);
-  else {
+  if (winnerId) {
+    await credit(w.tenantId, winnerId, w.stake * 2, `Won: ${label}`, w.id);
+    // The loser's stake left at bet time; a zero row puts the loss in their purse history.
+    const loserId = winnerId === w.proposerId ? w.accepterId : w.proposerId;
+    const winnerName = displayName(winnerId === w.proposerId ? w.proposer : w.accepter);
+    await credit(w.tenantId, loserId, 0, `Lost: ${shortOf(w.kind)} to ${winnerName} (${w.stake.toLocaleString()} staked)`, w.id);
+  } else {
     await credit(w.tenantId, w.proposerId, w.stake, `Push: ${label}`, w.id);
     await credit(w.tenantId, w.accepterId, w.stake, `Push: ${label}`, w.id);
   }
-  emitToTenant(w.tenantId, "games:wager", { id: w.id, campaignId: w.campaignId, status: "SETTLED", winnerId });
+  emitToTenant(w.tenantId, "games:wager", wagerEvent({ ...w, winnerId }, "SETTLED"));
 }
 
 /** An instant event for one agent on one campaign: settle every accepted "next …" bet of that kind they
@@ -196,7 +222,8 @@ export interface RunSummary {
   status: "ACTIVE" | "ENDED";
   qualifies: string;
   codes: string[];
-  rows: { userId: string; name: string; cards: string[]; hand: { name: string; cards: string[] } | null }[];
+  /** Ranked with compareHands (`rankStandings`); `place` is shared on an exact tie. */
+  rows: { userId: string; name: string; cards: string[]; place: number; hand: { name: string; label: string; cards: string[]; makers: string[] } | null }[];
   winner: { userId: string; name: string; hand: string; cards: string[] } | null;
   endedAt: string | null;
 }
@@ -208,7 +235,7 @@ function ruleOf(run: { qualifies: string; qualifyingCodes: string[] }): PokerRul
   return { qualifies: q, codes: run.qualifyingCodes };
 }
 
-async function standings(runId: string): Promise<{ userId: string; name: string; cards: string[]; hand: HandRank | null }[]> {
+async function standings(runId: string): Promise<{ userId: string; name: string; cards: string[]; hand: HandRank | null; place: number }[]> {
   const cards = await prisma.pokerCard.findMany({ where: { runId }, include: { user: { select: { firstName: true, email: true } } }, orderBy: { dealtAt: "asc" } });
   const byUser = new Map<string, { userId: string; name: string; cards: string[] }>();
   for (const c of cards) {
@@ -216,9 +243,7 @@ async function standings(runId: string): Promise<{ userId: string; name: string;
     e.cards.push(c.card);
     byUser.set(c.userId, e);
   }
-  const rows = [...byUser.values()].map((e) => ({ ...e, hand: bestHand(e.cards) }));
-  rows.sort((a, b) => (a.hand && b.hand ? compareHands(b.hand, a.hand) : a.hand ? -1 : 1) || b.cards.length - a.cards.length);
-  return rows;
+  return rankStandings([...byUser.values()]);
 }
 
 async function summarise(run: RunRow, campaignName: string, now = new Date()): Promise<RunSummary> {
@@ -237,7 +262,7 @@ async function summarise(run: RunRow, campaignName: string, now = new Date()): P
     status: run.status,
     qualifies: run.qualifies,
     codes: run.qualifyingCodes,
-    rows: rows.map((r) => ({ userId: r.userId, name: r.name, cards: r.cards, hand: r.hand ? { name: r.hand.name, cards: r.hand.cards } : null })),
+    rows: rows.map((r) => ({ userId: r.userId, name: r.name, cards: r.cards, place: r.place, hand: r.hand ? { name: r.hand.name, label: describeHand(r.hand), cards: r.hand.cards, makers: handMakers(r.hand) } : null })),
     winner: run.status === "ENDED" ? (wh ?? null) : null,
     endedAt: run.endedAt?.toISOString() ?? null,
   };
@@ -270,14 +295,14 @@ export async function endPokerRun(tenantId: string, runId: string, actorId: stri
   if (run.status === "ENDED") return summarise(run, run.campaign.name);
   const rows = await standings(run.id);
   const top = rows.find((r) => r.hand);
-  const winningHand = top ? { userId: top.userId, name: top.name, hand: top.hand!.name, cards: top.hand!.cards } : null;
+  const winningHand = top ? { userId: top.userId, name: top.name, hand: describeHand(top.hand!), cards: top.hand!.cards } : null;
   const upd = await prisma.pokerRun.updateMany({ where: { id: run.id, status: "ACTIVE" }, data: { status: "ENDED", endedAt: new Date(), winnerId: top?.userId ?? null, winningHand: winningHand ?? undefined } });
   if (upd.count !== 1) return summarise((await prisma.pokerRun.findUniqueOrThrow({ where: { id: run.id } })) as RunRow, run.campaign.name);
   await prisma.auditLog.create({ data: { tenantId, actorId, action: "games.run.end", target: run.id, after: { winner: winningHand } } });
   const ended = await prisma.pokerRun.findUniqueOrThrow({ where: { id: run.id } });
   const summary = await summarise(ended, run.campaign.name);
   emitToTenant(tenantId, "games:run", { status: "ENDED", campaignId: run.campaignId, campaign: run.campaign.name, id: run.id, name: run.name, prize: run.prize, winner: winningHand });
-  if (top) emitToAgent(top.userId, "games:won", { runId: run.id, name: run.name, prize: run.prize, hand: top.hand!.name });
+  if (top) emitToAgent(top.userId, "games:won", { runId: run.id, name: run.name, prize: run.prize, hand: describeHand(top.hand!) });
   return summary;
 }
 
@@ -302,7 +327,8 @@ export async function dealForOutcome(tenantId: string, campaignId: string, userI
   const card = dealCard(held);
   if (!card) return null;
   await prisma.pokerCard.create({ data: { tenantId, userId, runId: run.id, period: weekKey(), card, callId } });
-  emitToAgent(userId, "games:card", { card, runId: run.id, run: run.name });
+  const hand = bestHand([...held, card]);
+  emitToAgent(userId, "games:card", { card, runId: run.id, run: run.name, campaignId, hand: hand ? describeHand(hand) : null });
   emitToTenant(tenantId, "games:poker", { userId, runId: run.id, campaignId });
   return card;
 }
@@ -348,10 +374,12 @@ export async function gamesOverview(tenantId: string, userId: string, scope: "mi
     prisma.pointsLedger.findMany({ where: { tenantId, userId }, orderBy: { createdAt: "desc" }, take: 15 }),
     selected ? prisma.disposition.findMany({ where: { campaignId: selected.id, active: true }, select: { code: true, label: true, isSale: true, isContact: true }, orderBy: { sortOrder: "asc" } }) : Promise.resolve([]),
   ]);
-  const people = { proposer: { select: { firstName: true, email: true } }, accepter: { select: { firstName: true, email: true } } } as const;
   const wagers = selected ? await prisma.wager.findMany({ where: { tenantId, status: { in: ["OPEN", "ACCEPTED"] }, OR: [{ campaignId: selected.id }, { campaignId: null }] }, orderBy: { createdAt: "desc" }, take: 50, include: people }) : [];
-  const settled = await prisma.wager.findMany({ where: { tenantId, status: "SETTLED", OR: [{ proposerId: userId }, { accepterId: userId }] }, orderBy: { settledAt: "desc" }, take: 10, include: people });
-  const shape = (w: (typeof wagers)[number]) => ({ id: w.id, campaignId: w.campaignId, kind: w.kind, label: WAGER_KINDS[w.kind as WagerKind] ?? w.kind, stake: w.stake, status: w.status, proposerId: w.proposerId, proposer: displayName(w.proposer), accepterId: w.accepterId, accepter: displayName(w.accepter), winnerId: w.winnerId, note: w.note, period: w.period, createdAt: w.createdAt.toISOString() });
+  // Recently settled: the campaign's (the floor likes to see who won) and mine anywhere.
+  const settled = await prisma.wager.findMany({ where: { tenantId, status: "SETTLED", OR: [...(selected ? [{ campaignId: selected.id }] : []), { proposerId: userId }, { accepterId: userId }] }, orderBy: { settledAt: "desc" }, take: 10, include: people });
+  const shape = (w: (typeof wagers)[number]) => ({ id: w.id, campaignId: w.campaignId, kind: w.kind, label: WAGER_KINDS[w.kind as WagerKind] ?? w.kind, short: shortOf(w.kind), stake: w.stake, status: w.status, proposerId: w.proposerId, proposer: displayName(w.proposer), accepterId: w.accepterId, accepter: displayName(w.accepter), winnerId: w.winnerId, note: w.note, period: w.period, createdAt: w.createdAt.toISOString(), settledAt: w.settledAt?.toISOString() ?? null, actions: wagerActions(w, userId) });
+  // Who can be challenged on the selected campaign: its active agents.
+  const players = selected ? (await prisma.campaignAgent.findMany({ where: { tenantId, campaignId: selected.id, user: { active: true } }, select: { user: { select: { id: true, firstName: true, email: true } } } })).map((a) => ({ id: a.user.id, name: displayName(a.user) })).sort((a, b) => a.name.localeCompare(b.name)) : [];
 
   const current = selected ? runByCampaign.get(selected.id) ?? null : null;
   const run = current && selected ? await summarise(current, selected.name, now) : null;
@@ -367,12 +395,13 @@ export async function gamesOverview(tenantId: string, userId: string, scope: "mi
     campaign: selected ? { id: selected.id, name: selected.name, status: selected.status, betsEnabled: selected.betsEnabled, weeklyPoints: selected.weeklyPoints, maxStake: selected.maxStake } : null,
     dispositions,
     points: me?.points ?? 0,
-    kinds: Object.entries(WAGER_KINDS).map(([k, label]) => ({ kind: k, label, instant: INSTANT_KINDS.includes(k as WagerKind) })),
+    kinds: Object.entries(WAGER_KINDS).map(([k, label]) => ({ kind: k, label, short: shortOf(k), instant: INSTANT_KINDS.includes(k as WagerKind) })),
+    players,
     wagers: wagers.map(shape),
     settled: settled.map(shape),
     run,
     pastRuns,
-    ledger: ledger.map((l) => ({ delta: l.delta, reason: l.reason, at: l.createdAt.toISOString() })),
+    ledger: ledger.map((l) => ({ id: l.id, delta: l.delta, reason: l.reason, kind: ledgerKind(l.reason), at: l.createdAt.toISOString() })),
   };
 }
 export type GamesOverview = Awaited<ReturnType<typeof gamesOverview>>;
