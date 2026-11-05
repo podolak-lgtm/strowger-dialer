@@ -496,6 +496,20 @@ warm. The customer is never put on hold: no hold music, no private consult.
   TRANSFER_ANSWERED, TRANSFER_NO_ANSWER, TRANSFER_CANCELLED, AGENT_LEFT.
   Migration `20261105223000_external_transfers`. `moveCampaign` moves the
   destinations with the campaign.
+- **Console feedback** (5 Nov: Gage's first warm transfer was cancelled by
+  his own second click, 1.7 s after Dial, because the console showed nothing
+  until the engine's ringing event): Dial now sets a `pending` transfer at
+  once ("Calling <name>…", pulsing dot, `Ns of 25` ring timer, "the lead
+  hears the ring with you"), swapped for the engine's view when it arrives;
+  **Cancel transfer** is greyed for the first 3 s after Dial and while the
+  request is in flight. Connected shows green ("introduce them, then Leave"
+  for warm).
+- **Caller ID refused by Telnyx**: on 5 Nov Telnyx rejected the lead's own
+  number as the `from` (SIP 403 to jambonz, CDR `CALL_REJECTED`, Telnyx
+  error D51). The fallback redial from the campaign's number worked within
+  0.4 s. Showing the customer's number needs Telnyx to allow non-owned
+  caller ID on the account (a request to Telnyx support); until then every
+  CUSTOMER-mode transfer falls back and carries `callerIdFallback`.
 - **Call flow.** `startExternalTransfer` (`POST
   /internal/calls/:id/transfer-external {userId, destinationId, mode}`)
   checks the call is the agent's, answered and live, picks the caller ID,
