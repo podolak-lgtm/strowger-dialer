@@ -259,6 +259,12 @@ billed and sees `/platform`.
   only this campaign with their voicemail box and game rows; cadence
   profiles and audio copied by name; system DNC copied). Agents who also
   work other campaigns stay and are dropped from the moved campaign.
+- **NSR split** (migration `nsr_workspace`, 5 Nov): the original workspace
+  became the client "National Solar Resolutions" (everything in it stayed:
+  numbers, campaign, agents, carrier ids, settings) and the owner's admin
+  user moved to a new empty platform tenant `crossbar-platform`
+  (`tnt_crossbar_platform`). The owner works in NSR through "Open" on
+  /platform. Runs once; a no-op where `crossbar-platform` exists.
 - Not done: invoices as PDF, card payments, tax, proration of seats,
   Telnyx managed sub-accounts per client (would make cost attribution
   exact instead of matched).
