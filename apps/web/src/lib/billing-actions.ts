@@ -3,6 +3,9 @@
 import { requireRole, requireSession } from "@/lib/auth";
 import { engine } from "@/lib/engine";
 import { revalidatePath } from "next/cache";
+import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
+import { prisma } from "@strowger/db";
 
 export type BillingStatus = {
   isPlatform: boolean;
@@ -60,8 +63,79 @@ export async function billingOverview(period?: string): Promise<BillingOverview>
 
 async function platformOnly() {
   const s = await requireRole("ADMIN");
-  if (!s.tenant.isPlatform) throw new Error("Platform workspace only");
+  if (!s.tenant.isPlatform && !s.actingFrom) throw new Error("Platform workspace only");
   return s;
+}
+
+export type VendorSpend = {
+  period: string;
+  rows: { vendor: string; kind: string; costCents: number; quantity: number; records: number }[];
+  totalCents: number;
+  unattributedCents: number;
+  byTenant: { tenantId: string; costCents: number }[];
+  telnyxBalanceCents: number | null;
+  telnyxBalanceAt: string | null;
+  telnyxSyncedAt: string | null;
+};
+
+export async function vendorSpend(period?: string): Promise<VendorSpend> {
+  await platformOnly();
+  return engine<VendorSpend>(`/billing/vendor${period ? `?period=${period}` : ""}`);
+}
+
+export async function syncVendorCosts() {
+  await platformOnly();
+  try {
+    await engine("/billing/vendor/sync", { method: "POST", body: JSON.stringify({ dateRange: "last_7_days" }) });
+    redirect("/platform?msg=" + encodeURIComponent("Telnyx records pulled for the last 7 days."));
+  } catch (e) {
+    if (typeof e === "object" && e && "digest" in e) throw e;
+    redirect("/platform?msg=" + encodeURIComponent(e instanceof Error ? e.message : String(e)) + "&kind=error");
+  }
+}
+
+export async function createWorkspace(formData: FormData) {
+  const s = await platformOnly();
+  const name = String(formData.get("name") ?? "").trim();
+  const adminEmail = String(formData.get("adminEmail") ?? "").trim().toLowerCase() || null;
+  const r = await engine<{ ok: boolean; id: string; slug: string }>("/workspaces", { method: "POST", body: JSON.stringify({ name, adminEmail }) });
+  await prisma.auditLog.create({ data: { tenantId: s.actingFrom?.id ?? s.tenant.id, actorId: s.user.id, action: "workspace.create", target: r.id, after: { name, adminEmail } } });
+  revalidatePath("/platform");
+  redirect("/platform?msg=" + encodeURIComponent(`Workspace "${name}" created${adminEmail ? `; ${adminEmail} can sign in as its admin` : ""}.`));
+}
+
+/** Step into a client workspace: every page scopes to it until "Back". */
+export async function openWorkspace(formData: FormData) {
+  const s = await platformOnly();
+  const tenantId = String(formData.get("tenantId"));
+  const t = await prisma.tenant.findUnique({ where: { id: tenantId } });
+  if (!t) throw new Error("Unknown workspace");
+  (await cookies()).set("strowger_ws", tenantId, { httpOnly: true, sameSite: "lax", path: "/", maxAge: 12 * 3600 });
+  await prisma.auditLog.create({ data: { tenantId, actorId: s.user.id, action: "workspace.enter" } });
+  redirect("/dashboard");
+}
+
+export async function leaveWorkspace() {
+  (await cookies()).delete("strowger_ws");
+  redirect("/platform");
+}
+
+export async function moveCampaignToWorkspace(formData: FormData) {
+  const s = await platformOnly();
+  const campaignId = String(formData.get("campaignId"));
+  const toTenantId = String(formData.get("toTenantId"));
+  const fromTenantId = s.tenant.id;
+  try {
+    const r = await engine<{ ok: boolean; report: Record<string, number | string> }>("/workspaces/move-campaign", { method: "POST", body: JSON.stringify({ campaignId, fromTenantId, toTenantId }) });
+    await prisma.auditLog.create({ data: { tenantId: fromTenantId, actorId: s.user.id, action: "workspace.move-campaign", target: campaignId, after: { toTenantId, ...r.report } } });
+    const rep = r.report;
+    redirect("/platform?msg=" + encodeURIComponent(`Moved "${rep.campaign}": ${rep.lists} lists, ${rep.leads} leads, ${rep.calls} calls, ${rep.messages} texts, ${rep.numbers} numbers, ${rep.people} people, ${rep.dnc} DNC entries copied.`));
+  } catch (e) {
+    if (typeof e === "object" && e && "digest" in e) throw e;
+    const m = e instanceof Error ? e.message : String(e);
+    const j = m.match(/"error":"(.*)"\}$/);
+    redirect("/platform?msg=" + encodeURIComponent(j ? j[1] : m) + "&kind=error");
+  }
 }
 
 export async function platformOverview(period?: string): Promise<PlatformOverview> {

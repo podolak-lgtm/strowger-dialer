@@ -7,6 +7,7 @@ import { prisma } from "@strowger/db";
 import * as z from "zod/v4";
 import { config } from "../config";
 import { log } from "../log";
+import { recordAiUsage } from "../billing/vendor";
 
 const Suggestions = z.object({
   suggestions: z.array(z.object({ title: z.string(), say: z.string(), why: z.string() })).min(1).max(3),
@@ -37,6 +38,7 @@ export async function suggest(tenantId: string, campaignId: string, leadId: stri
     .join("\n\n");
   try {
     const res = await client.messages.parse({ model: config.SMS_AI_MODEL, max_tokens: 1500, system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }], messages: [{ role: "user", content: user }], output_config: { format: zodOutputFormat(Suggestions) } });
+    void recordAiUsage(tenantId, "ai.assist", config.SMS_AI_MODEL, res.usage);
     if (!res.parsed_output) return { ok: false as const, error: "No suggestion came back" };
     return { ok: true as const, ...res.parsed_output };
   } catch (e) {

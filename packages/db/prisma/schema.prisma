@@ -979,6 +979,8 @@ model BillingEntry {
   unitMillicents Int          @default(0)
   amountCents Int
   costCents   Int             @default(0)
+  /// rate = computed from PlatformRates; telnyx = replaced by the carrier's actual charge.
+  costSource  String          @default("rate")
   note        String?
   refId       String?
   /// YYYY-MM the charge belongs to.
@@ -1000,7 +1002,30 @@ model PlatformRates {
   smsCostMillicents        Int      @default(400)
   /// Shown to clients on their billing page: how to prepay.
   prepayInstructions       String?
+  /// Last Telnyx account balance seen (GET /v2/balance) and when.
+  telnyxBalanceCents       Int?
+  telnyxBalanceAt          DateTime?
+  telnyxSyncedAt           DateTime?
   updatedAt                DateTime @updatedAt
+}
+
+/// What vendors charge us, as pulled from their APIs or computed from token usage. One row per record (call, message, AI request) or per day for aggregates.
+model VendorUsage {
+  id        String   @id @default(cuid())
+  tenantId  String?
+  vendor    String
+  /// sip-trunking, messaging, amd, conference, ai.classify, ai.assist, …
+  kind      String
+  quantity  Decimal  @default(1) @db.Decimal(14, 4)
+  costCents Int
+  day       String
+  vendorRecordId String?
+  refId     String?
+  createdAt DateTime @default(now())
+
+  @@unique([vendor, vendorRecordId])
+  @@index([vendor, day])
+  @@index([tenantId, day])
 }
 
 model DidScan {
@@ -1202,6 +1227,9 @@ model Call {
   answeredAt DateTime?
   bridgedAt  DateTime?
   endedAt    DateTime?
+  /// What the carrier actually charged for this call (from Telnyx detail records), and its record id.
+  vendorCostCents Int?
+  vendorRecordId  String?
 
   amdResult        AmdResult?
   screenerDetected Boolean     @default(false)
@@ -1348,6 +1376,7 @@ model Message {
   intent           String?
   intentConfidence Float?
   intentReason     String?
+  vendorCostCents  Int?
   createdAt  DateTime         @default(now())
 
   @@index([leadId, createdAt])

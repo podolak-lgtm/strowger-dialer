@@ -6,6 +6,7 @@
 // matched to an invited row by email.
 import { prisma, type Role, type Tenant, type User } from "@strowger/db";
 import { auth, currentUser } from "@clerk/nextjs/server";
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { cache } from "react";
 
@@ -13,6 +14,8 @@ export interface Session {
   user: User;
   tenant: Tenant;
   roles: Role[];
+  /** Set when a platform admin is working inside a client workspace: their own (platform) tenant. */
+  actingFrom?: Tenant;
 }
 
 /** The Strowger session for the signed-in Clerk user, or null when they have no row yet. */
@@ -39,6 +42,14 @@ export const getSession = cache(async (): Promise<Session | null> => {
     });
   }
   if (!user.active) return null;
+  // A platform admin can step into a client workspace (set on /platform): every page then scopes to that tenant, as its admin.
+  if (user.tenant.isPlatform && user.roles.includes("ADMIN")) {
+    const ws = (await cookies()).get("strowger_ws")?.value;
+    if (ws && ws !== user.tenant.id) {
+      const target = await prisma.tenant.findUnique({ where: { id: ws } });
+      if (target) return { user, tenant: target, roles: ["ADMIN"], actingFrom: user.tenant };
+    }
+  }
   return { user, tenant: user.tenant, roles: user.roles };
 });
 

@@ -8,6 +8,7 @@ import * as z from "zod/v4";
 import { config } from "../config";
 import { log } from "../log";
 import { decideReplyAction, type ReplyAction, type ReplyRead } from "@strowger/shared/sms";
+import { recordAiUsage } from "../billing/vendor";
 
 export const INTENTS = ["OPT_OUT", "CALLBACK_REQUEST", "QUESTION", "WRONG_NUMBER", "INTERESTED", "NOT_INTERESTED", "OTHER"] as const;
 export type Intent = (typeof INTENTS)[number];
@@ -45,6 +46,7 @@ export interface ClassifyInput {
   thread?: { direction: "INBOUND" | "OUTBOUND"; body: string }[];
   timezone?: string | null;
   leadFirstName?: string | null;
+  tenantId?: string | null;
 }
 
 /** Null when not configured or the call fails: the caller falls back to keywords only. */
@@ -70,6 +72,7 @@ export async function classifyReply(input: ClassifyInput): Promise<Classificatio
       messages: [{ role: "user", content: user }],
       output_config: { format: zodOutputFormat(Classification) },
     });
+    void recordAiUsage(input.tenantId ?? null, "ai.classify", config.SMS_AI_MODEL, res.usage);
     const parsed = res.parsed_output;
     if (!parsed) {
       log.warn({ stop: res.stop_reason }, "sms classify: no parsed output");

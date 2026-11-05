@@ -80,7 +80,7 @@ export async function handleInboundText(t: InboundText): Promise<{ ok: boolean; 
   } else if (smsAiConfigured) {
     // No keyword. Let the AI read it: "please don't call me" is an opt-out too.
     const thread = await prisma.message.findMany({ where: { tenantId, OR: [{ fromPhone: from }, { toPhone: from }], id: { not: msg.id } }, orderBy: { createdAt: "desc" }, take: 6, select: { direction: true, body: true } });
-    ai = await classifyReply({ body: t.body, thread: thread.reverse(), timezone: lead?.timezone, leadFirstName: lead?.firstName });
+    ai = await classifyReply({ body: t.body, thread: thread.reverse(), timezone: lead?.timezone, leadFirstName: lead?.firstName, tenantId });
     if (ai) {
       await prisma.message.update({ where: { id: msg.id }, data: { intent: ai.intent, intentConfidence: ai.confidence, intentReason: ai.reason } });
       action = decide(ai);

@@ -232,9 +232,36 @@ billed and sees `/platform`.
   instructions, by-category totals, ledger, past statements by month.
   Owner page `/platform`: every client's balance / revenue / cost /
   margin, record a payment, per-client plan, cost rates.
+- **Vendor actuals** (`billing/vendor.ts`, owner: "get the pricing in via
+  the API on everything"): the hourly `telnyxCosts` job pulls Telnyx
+  `GET /v2/detail_records` for `sip-trunking` (matched to `Call` by
+  direction, far-end number and start time within three minutes),
+  `messaging` (matched by `Message.providerMessageId` = record uuid), and
+  the per-record extras (amd, conference legs, recording, storage, stt,
+  tts, webrtc: unattributed), plus `GET /v2/balance`. Every record lands in
+  `VendorUsage` (unique on vendor + record id, so re-pulls are idempotent);
+  matched calls/texts get `vendorCostCents` and their `BillingEntry`
+  `costCents` is replaced with `costSource: "telnyx"`. AI requests
+  (classify, assist) are costed from `res.usage` at Opus 5.5 list price
+  ($4/$20 per MTok, cache read $0.20, write $5) into `VendorUsage` with
+  the tenant. The scrub has no price API: rate only. `/platform` shows
+  the Telnyx balance, vendor spend by kind, unattributed total, and a
+  "pull last 7 days" button (`/internal/billing/vendor/sync`).
+- **Client workspaces** (`apps/engine/src/workspaces`): `/platform` creates
+  a workspace (tenant + billing account + optional admin user by email),
+  **Open** sets the `strowger_ws` cookie so a platform admin works inside
+  that tenant as ADMIN (`getSession` returns the target tenant with
+  `actingFrom`; a banner with "Back" sits on every page), and **Move
+  campaign** calls `moveCampaign` (one transaction: campaign, lists, leads
+  + events, calls + transfers + voicemails, messages, callbacks,
+  dispositions, dial plans, scripts, webhooks, abandon ledger, sessions,
+  campaign-scoped DNC, number orders, numbers pinned to it, agents who work
+  only this campaign with their voicemail box and game rows; cadence
+  profiles and audio copied by name; system DNC copied). Agents who also
+  work other campaigns stay and are dropped from the moved campaign.
 - Not done: invoices as PDF, card payments, tax, proration of seats,
-  per-tenant Telnyx sub-accounts for cost attribution (costs are computed
-  from rates, not pulled from Telnyx's bill).
+  Telnyx managed sub-accounts per client (would make cost attribution
+  exact instead of matched).
 
 ## Carrier: Telnyx
 

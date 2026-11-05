@@ -26,6 +26,8 @@ import { acceptWager, gamesOverview, proposeWager, withdrawWager } from "../game
 import { suggest } from "../assist";
 import { billingOverview, billingStatus, chargeSeatIfNew, outboundAllowed, platformOverview, rates, recordPayment } from "../billing";
 import { log } from "../log";
+import { syncTelnyxCosts, vendorSpend } from "../billing/vendor";
+import { createWorkspace, moveCampaign } from "../workspaces";
 import type { WagerKind } from "@strowger/shared/games";
 
 const Ids = z.object({ tenantId: z.string(), userId: z.string() });
@@ -280,6 +282,33 @@ export async function registerInternalRoutes(app: FastifyInstance): Promise<void
     await rates();
     await prisma.platformRates.update({ where: { id: "default" }, data: b });
     return { ok: true };
+  });
+
+  // ---- Vendor costs (what we pay) and workspaces
+  app.get("/internal/billing/vendor", async (req) => vendorSpend(z.object({ period: z.string().optional() }).parse(req.query).period));
+  app.post("/internal/billing/vendor/sync", async (req, reply) => {
+    const b = z.object({ dateRange: z.string().optional() }).parse(req.body ?? {});
+    try {
+      return { ok: true, ...(await syncTelnyxCosts(b.dateRange ?? "last_3_days")) };
+    } catch (e) {
+      return reply.code(400).send({ ok: false, error: e instanceof Error ? e.message : String(e) });
+    }
+  });
+  app.post("/internal/workspaces", async (req, reply) => {
+    const b = z.object({ name: z.string().min(2).max(80), adminEmail: z.string().email().nullable() }).parse(req.body);
+    try {
+      return { ok: true, ...(await createWorkspace(b.name, b.adminEmail)) };
+    } catch (e) {
+      return reply.code(400).send({ ok: false, error: e instanceof Error ? e.message : String(e) });
+    }
+  });
+  app.post("/internal/workspaces/move-campaign", async (req, reply) => {
+    const b = z.object({ campaignId: z.string(), fromTenantId: z.string(), toTenantId: z.string() }).parse(req.body);
+    try {
+      return { ok: true, report: await moveCampaign(b.campaignId, b.fromTenantId, b.toTenantId) };
+    } catch (e) {
+      return reply.code(400).send({ ok: false, error: e instanceof Error ? e.message : String(e) });
+    }
   });
 
   // ---- Games

@@ -3,6 +3,7 @@ import Link from "next/link";
 import { hasRole, requireSession } from "@/lib/auth";
 import { billingStatus } from "@/lib/billing-actions";
 import { BillingBadge } from "@/components/billing-badge";
+import { leaveWorkspace } from "@/lib/billing-actions";
 
 export default async function AppLayout({ children }: LayoutProps<"/">) {
   const session = await requireSession();
@@ -27,7 +28,7 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
     { href: "/teams", label: "Teams & rooms", show: hasRole(session, "SUPERVISOR") },
     { href: "/partner", label: "Partner portal", show: session.roles.includes("AFFILIATE") },
     { href: "/billing", label: "Billing", show: hasRole(session, "SUPERVISOR") && !session.tenant.isPlatform },
-    { href: "/platform", label: "Platform", show: hasRole(session) && session.tenant.isPlatform },
+    { href: "/platform", label: "Platform", show: hasRole(session) && (session.tenant.isPlatform || Boolean(session.actingFrom)) },
     { href: "/settings", label: "Settings", show: hasRole(session) },
   ];
   return (
@@ -54,7 +55,21 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
           </div>
         </div>
       </aside>
-      <main className="flex-1 p-8">{children}</main>
+      <main className="flex-1 p-8">
+        {session.actingFrom ? (
+          <div className="mb-4 flex items-center justify-between rounded-md border border-fuchsia-500/40 bg-fuchsia-950/40 px-3 py-2 text-xs text-fuchsia-100">
+            <span>
+              Working inside <b>{session.tenant.name}</b> as platform admin. Everything you do here belongs to that client.
+            </span>
+            <form action={leaveWorkspace}>
+              <button type="submit" className="rounded border border-fuchsia-400/40 px-2 py-0.5 hover:bg-fuchsia-500/20">
+                Back to {session.actingFrom.name}
+              </button>
+            </form>
+          </div>
+        ) : null}
+        {children}
+      </main>
     </div>
   );
 }

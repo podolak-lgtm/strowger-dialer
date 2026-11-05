@@ -11,6 +11,8 @@ import { queueTick } from "../inbound/router";
 import { syncPendingOrders } from "../provision";
 import { settlePeriodWagers, weeklyTopUp } from "../games";
 import { chargeAllDids, suspendOverdue } from "../billing";
+import { syncTelnyxCosts } from "../billing/vendor";
+import { config } from "../config";
 
 interface Job {
   name: string;
@@ -81,6 +83,7 @@ const JOBS: Job[] = [
   { name: "weeklyTopUp", everyMs: 10 * 60_000, run: mondayTopUp },
   { name: "billingSuspend", everyMs: 60 * 60_000, run: () => suspendOverdue() },
   { name: "monthlyDids", everyMs: 30 * 60_000, run: monthlyDids },
+  { name: "telnyxCosts", everyMs: 60 * 60_000, run: () => (config.TELNYX_API_KEY ? syncTelnyxCosts("last_2_days") : Promise.resolve()) },
 ];
 
 export function startScheduler(): () => void {
