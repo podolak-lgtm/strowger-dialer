@@ -7,6 +7,9 @@ import { Badge, Button, Card, Field, PageHeader, Table, Td, inputClass } from "@
 import { deleteDialPlan, saveDialPlan, saveDisposition, updateCampaign } from "../actions";
 import { addWebhook, deleteWebhook, testWebhook, toggleWebhook } from "../webhook-actions";
 import { saveRebuttals, saveScript } from "../script-actions";
+import { copyTransferDestinations, deleteTransferDestination, moveTransferDestination, saveTransferDestination, toggleTransferDestination } from "../transfer-actions";
+import { DEFAULT_WHISPER, TRANSFER_CAP_MINUTES, TRANSFER_RING_SECONDS, WHISPER_VARIABLES } from "@strowger/shared/transfers";
+import { formatPhone } from "@strowger/shared/phone";
 import { SCRIPT_TEMPLATES, rebuttalLines } from "@strowger/shared/scripts";
 import { TemplateTextarea } from "./template-textarea";
 import { GamesCard } from "./games-card";
@@ -33,12 +36,17 @@ export default async function CampaignPage({ params, searchParams }: PageProps<"
       webhooks: { include: { deliveries: { orderBy: { createdAt: "desc" }, take: 1 } }, orderBy: { createdAt: "asc" } },
       scripts: { orderBy: { version: "desc" }, take: 1 },
       pokerRuns: { orderBy: { createdAt: "desc" }, take: 6 },
+      transferDestinations: { orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }] },
       _count: { select: { agents: true } },
     },
   });
   if (!c) notFound();
   const now = new Date();
   const since = new Date(now.getTime() - 30 * 86_400_000);
+  const [ownNumbers, otherCampaigns] = await Promise.all([
+    prisma.callerIdNumber.findMany({ where: { tenantId: s.tenant.id, status: "ACTIVE" }, select: { phone: true }, orderBy: { phone: "asc" } }),
+    prisma.campaign.findMany({ where: { tenantId: s.tenant.id, id: { not: c.id }, transferDestinations: { some: { active: true } } }, select: { id: true, name: true }, orderBy: { name: "asc" } }),
+  ]);
   const ledger = await prisma.abandonLedger.aggregate({ where: { campaignId: c.id, day: { gte: since } }, _sum: { answered: true, abandoned: true } });
   const answered30 = ledger._sum.answered ?? 0;
   const abandoned30 = ledger._sum.abandoned ?? 0;
@@ -383,6 +391,139 @@ export default async function CampaignPage({ params, searchParams }: PageProps<"
               ))}
               <Button type="submit" variant="ghost">Add</Button>
             </form>
+          </div>
+        </Card>
+
+        <Card title="Transfers" className="lg:col-span-2">
+          <p className="mb-3 text-xs text-zinc-500">
+            Where agents can hand a live lead. The lead is never put on hold: the destination is dialled straight into the call, hears the whisper alone, then joins. <strong>Cold</strong> drops the agent the moment the destination answers; <strong>warm</strong> keeps the agent on until they click Leave. No answer in {TRANSFER_RING_SECONDS} s and the agent keeps the lead. After the agent leaves, the two sides get {TRANSFER_CAP_MINUTES} minutes. Caller ID <em>customer</em> shows the lead&apos;s own number to the destination; <em>fixed</em> shows one of our numbers. Whisper variables: {WHISPER_VARIABLES.map((v) => `{{${v}}}`).join(" ")}.
+          </p>
+          <div className="space-y-2">
+            {c.transferDestinations.map((d, i) => (
+              <form key={d.id} action={saveTransferDestination} className={`grid grid-cols-1 gap-2 rounded-md border p-2 text-sm md:grid-cols-[1fr_1fr_90px_1fr_1fr] ${d.active ? "border-zinc-800" : "border-zinc-800/60 opacity-60"}`}>
+                <input type="hidden" name="campaignId" value={c.id} />
+                <input type="hidden" name="destinationId" value={d.id} />
+                <Field label="Name">
+                  <input name="name" defaultValue={d.name} className={inputClass} />
+                </Field>
+                <Field label="Number">
+                  <input name="phone" defaultValue={d.phone} className={inputClass} />
+                </Field>
+                <Field label="Default">
+                  <select name="type" defaultValue={d.type} className={inputClass}>
+                    <option value="COLD">Cold</option>
+                    <option value="WARM">Warm</option>
+                  </select>
+                </Field>
+                <Field label="Caller ID shown">
+                  <select name="callerIdMode" defaultValue={d.callerIdMode} className={inputClass}>
+                    <option value="CUSTOMER">The customer&apos;s number</option>
+                    <option value="STATIC">A fixed number of ours</option>
+                  </select>
+                </Field>
+                <Field label="Fixed number" hint="Used only with a fixed caller ID.">
+                  <select name="staticCallerId" defaultValue={d.staticCallerId ?? ""} className={inputClass}>
+                    <option value="">—</option>
+                    {ownNumbers.map((n) => (
+                      <option key={n.phone} value={n.phone}>
+                        {formatPhone(n.phone)}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <div className="md:col-span-4">
+                  <Field label="Whisper (what the destination hears before joining)">
+                    <input name="whisperText" defaultValue={d.whisperText ?? ""} placeholder={DEFAULT_WHISPER} className={inputClass} />
+                  </Field>
+                </div>
+                <div className="flex flex-wrap items-end gap-2">
+                  <Check name="whisperOn" label="Whisper on" checked={d.whisperOn} />
+                  <Button type="submit" variant="ghost">
+                    Save
+                  </Button>
+                </div>
+                <div className="flex flex-wrap items-center gap-2 md:col-span-5">
+                  <Badge tone={d.active ? "green" : "zinc"}>{d.active ? "active" : "off"}</Badge>
+                  <span className="text-xs text-zinc-500">{d.type === "COLD" ? "cold" : "warm"} by default · caller ID {d.callerIdMode === "CUSTOMER" ? "customer" : d.staticCallerId ? formatPhone(d.staticCallerId) : "fixed (none picked)"}</span>
+                  <span className="flex-1" />
+                  <Button type="submit" variant="ghost" formAction={moveTransferDestination} name="dir" value="up" disabled={i === 0} title="Move up">
+                    ↑
+                  </Button>
+                  <Button type="submit" variant="ghost" formAction={moveTransferDestination} name="dir" value="down" disabled={i === c.transferDestinations.length - 1} title="Move down">
+                    ↓
+                  </Button>
+                  <Button type="submit" variant="ghost" formAction={toggleTransferDestination}>
+                    {d.active ? "Deactivate" : "Activate"}
+                  </Button>
+                  <Button type="submit" variant="danger" formAction={deleteTransferDestination}>
+                    Remove
+                  </Button>
+                  <input type="hidden" name="id" value={d.id} />
+                </div>
+              </form>
+            ))}
+            {c.transferDestinations.length === 0 ? <div className="text-xs text-zinc-500">No destinations yet. Agents see only the closer transfer until one is added.</div> : null}
+            <form action={saveTransferDestination} className="grid grid-cols-1 gap-2 rounded-md border border-dashed border-zinc-800 p-2 text-sm md:grid-cols-[1fr_1fr_90px_1fr_1fr]">
+              <input type="hidden" name="campaignId" value={c.id} />
+              <Field label="Name">
+                <input name="name" placeholder="Closers desk" className={inputClass} />
+              </Field>
+              <Field label="Number">
+                <input name="phone" placeholder="(305) 555-0100" className={inputClass} />
+              </Field>
+              <Field label="Default">
+                <select name="type" defaultValue="COLD" className={inputClass}>
+                  <option value="COLD">Cold</option>
+                  <option value="WARM">Warm</option>
+                </select>
+              </Field>
+              <Field label="Caller ID shown">
+                <select name="callerIdMode" defaultValue="CUSTOMER" className={inputClass}>
+                  <option value="CUSTOMER">The customer&apos;s number</option>
+                  <option value="STATIC">A fixed number of ours</option>
+                </select>
+              </Field>
+              <Field label="Fixed number">
+                <select name="staticCallerId" defaultValue="" className={inputClass}>
+                  <option value="">—</option>
+                  {ownNumbers.map((n) => (
+                    <option key={n.phone} value={n.phone}>
+                      {formatPhone(n.phone)}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <div className="md:col-span-4">
+                <Field label="Whisper">
+                  <input name="whisperText" placeholder={DEFAULT_WHISPER} className={inputClass} />
+                </Field>
+              </div>
+              <div className="flex flex-wrap items-end gap-2">
+                <Check name="whisperOn" label="Whisper on" checked={true} />
+                <Button type="submit" variant="ghost">
+                  Add
+                </Button>
+              </div>
+            </form>
+            {otherCampaigns.length ? (
+              <form action={copyTransferDestinations} className="flex flex-wrap items-end gap-2 text-sm">
+                <input type="hidden" name="campaignId" value={c.id} />
+                <div className="min-w-[240px]">
+                  <Field label="Copy from another campaign" hint="Copies its active destinations; names already here are skipped.">
+                    <select name="fromCampaignId" className={inputClass}>
+                      {otherCampaigns.map((o) => (
+                        <option key={o.id} value={o.id}>
+                          {o.name}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                </div>
+                <Button type="submit" variant="ghost">
+                  Copy
+                </Button>
+              </form>
+            ) : null}
           </div>
         </Card>
 

@@ -101,6 +101,7 @@ export async function moveCampaign(campaignId: string, fromTenantId: string, toT
     const messages = await tx.message.updateMany({ where: { campaignId }, data: { tenantId: toTenantId } });
     await tx.callback.updateMany({ where: { campaignId }, data: { tenantId: toTenantId } });
     await tx.disposition.updateMany({ where: { campaignId }, data: { tenantId: toTenantId } });
+    await tx.transferDestination.updateMany({ where: { campaignId }, data: { tenantId: toTenantId } });
     await tx.dialPlan.updateMany({ where: { campaignId }, data: { tenantId: toTenantId } });
     await tx.script.updateMany({ where: { campaignId }, data: { tenantId: toTenantId } });
     await tx.webhookEndpoint.updateMany({ where: { campaignId }, data: { tenantId: toTenantId } });

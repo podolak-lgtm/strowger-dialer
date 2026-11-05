@@ -37,6 +37,10 @@ import {
   manualDial,
   transferCall,
   transferTargets,
+  transferToDestination,
+  transferLeave,
+  transferCancel,
+  currentTransfer,
   nextLead,
   sendText,
   skipLead,
@@ -47,6 +51,7 @@ import {
   type LeadCard,
   type LeadEdit,
   type LeadHistory,
+  type LiveTransferView,
   type MyCallback,
   type Sprint,
   type TextMessage,
@@ -78,6 +83,8 @@ export interface ConsoleProps {
     /** Read to a phone's call screener (SCREENER banner); null = DEFAULT_SCREENER_SCRIPT. */
     screenerScript: string | null;
     dispositions: Array<{ id: string; code: string; label: string; hotkey: string | null; isCallback: boolean; isSale: boolean; isDnc: boolean }>;
+    /** Where a live lead can be handed (campaign page → Transfers). `type` is the default for the cold/warm flip. */
+    transferDestinations: Array<{ id: string; name: string; type: "COLD" | "WARM"; callerIdMode: "CUSTOMER" | "STATIC"; staticCallerId: string | null }>;
   }>;
   sip: { server: string; realm: string; username: string; password: string; applicationSid: string } | null;
   engineUrl: string;
@@ -377,6 +384,11 @@ export function AgentConsole(props: ConsoleProps) {
   const [twoScreen, setTwoScreen] = useState(false);
   const [held, setHeld] = useState(false);
   const [targets, setTargets] = useState<TransferTarget[] | null>(null);
+  // External transfer in flight on this call, and the dropdown that starts one.
+  const [transfer, setTransfer] = useState<LiveTransferView | null>(null);
+  const [xferMenu, setXferMenu] = useState(false);
+  /** The agent's cold/warm flip per destination (defaults from the campaign page). */
+  const [xferModes, setXferModes] = useState<Record<string, "COLD" | "WARM">>({});
   const [manual, setManual] = useState("");
   const assistWin = useRef<Window | null>(null);
   const [busy, setBusy] = useState(false);
@@ -407,6 +419,12 @@ export function AgentConsole(props: ConsoleProps) {
   const callIdRef = useRef<string | null>(null);
   useEffect(() => {
     callIdRef.current = callId;
+  }, [callId]);
+  // A reload mid-call: pick up the transfer in flight, if any.
+  useEffect(() => {
+    if (!callId) return;
+    const t = setTimeout(() => void currentTransfer(callId).then((x) => x && setTransfer(x)).catch(() => undefined), 0);
+    return () => clearTimeout(t);
   }, [callId]);
 
   const timer = useTicker(callStatus !== "idle" && callStatus !== "ended", callStart);
@@ -543,6 +561,8 @@ export function AgentConsole(props: ConsoleProps) {
         setCallStart(null);
         setScreener(null);
         setScreenerStep("say");
+        setTransfer(null);
+        setXferMenu(false);
       }
     });
     sock.on("text:in", (m: { leadId: string | null; body: string; from: string; action?: string; intent?: string | null }) => {
@@ -562,8 +582,26 @@ export function AgentConsole(props: ConsoleProps) {
       setNotice(b.betsEnabled ? `Bets are on for ${b.campaign}: ${b.weeklyPoints.toLocaleString()} points every Monday` : `Bets are off for ${b.campaign}`);
     });
     sock.on("games:won", (w: { name: string; prize: string | null; hand: string }) => setNotice(`You won the poker run '${w.name}' with ${w.hand}${w.prize ? `: ${w.prize}` : ""}`));
-    sock.on("call:update", (u: { callId: string; status: string; leadId?: string; outcome?: string; inbound?: boolean; from?: string | null; screener?: boolean; screenerPhrase?: string | null; human?: boolean }) => {
+    sock.on("call:update", (u: { callId: string; status: string; leadId?: string; outcome?: string; inbound?: boolean; from?: string | null; screener?: boolean; screenerPhrase?: string | null; human?: boolean; transfer?: LiveTransferView }) => {
+      if (u.status === "transfer" && u.transfer) {
+        const t = u.transfer;
+        setXferMenu(false);
+        if (t.state === "no_answer") setNotice(`No answer at ${t.destinationName}. You still have the lead.`);
+        else if (t.state === "failed") setNotice(`Could not reach ${t.destinationName}. You still have the lead.`);
+        else if (t.state === "cancelled") setNotice(`Transfer to ${t.destinationName} cancelled. You still have the lead.`);
+        else if (t.state === "answered") setNotice(t.callerIdFallback ? `${t.destinationName} answered. Caller ID fell back to the campaign's number.` : null);
+        else if (t.state === "left") setNotice(`You left the call: the lead is with ${t.destinationName}. Dispositioned "${t.dispositionLabel ?? "Transferred"}"; keep it or change it below.`);
+        else if (t.state === "ended" && !t.agentLeftAt) setNotice(`${t.destinationName} hung up. You still have the lead.`);
+        const over = t.state === "no_answer" || t.state === "failed" || t.state === "cancelled" || (t.state === "ended" && !t.agentLeftAt);
+        // "ended" after leaving keeps the disposition the "left" event carried, for the Keep button in wrap-up.
+        setTransfer((prev) => (over ? null : { ...t, dispositionId: t.dispositionId ?? prev?.dispositionId ?? null, dispositionLabel: t.dispositionLabel ?? prev?.dispositionLabel ?? null }));
+        return;
+      }
       if (u.status === "ended" && u.callId === dispositionedRef.current) {
+        void refreshStats();
+        return;
+      }
+      if (u.status === "ended" && callIdRef.current && u.callId !== callIdRef.current) {
         void refreshStats();
         return;
       }
@@ -587,6 +625,8 @@ export function AgentConsole(props: ConsoleProps) {
         setTargets(null);
         setScreener(null);
         setScreenerStep("say");
+        setXferMenu(false);
+        setTransfer(null);
         void refreshStats();
       }
     });
@@ -789,18 +829,44 @@ export function AgentConsole(props: ConsoleProps) {
       setHeld(!held);
     });
 
-  const openTransfer = () =>
+  /** The Transfer dropdown: the campaign's destinations at once, the closers free right now once looked up. */
+  const openXferMenu = () =>
     run(async () => {
+      setXferMenu(true);
       setTargets(await transferTargets(campaignId || null));
     });
+  const closeXferMenu = () => {
+    setXferMenu(false);
+    setTargets(null);
+  };
 
   const doTransfer = (toAgentId: string) =>
     run(async () => {
       if (!callId) return;
       const r = await transferCall(callId, toAgentId);
       if (!r.ok) throw new Error(r.error);
-      setTargets(null);
+      closeXferMenu();
       setNotice("Transferred. Disposition your part of the call.");
+    });
+
+  const startTransfer = (d: ConsoleProps["campaigns"][number]["transferDestinations"][number]) =>
+    run(async () => {
+      if (!callId) return;
+      const r = await transferToDestination(callId, d.id, xferModes[d.id] ?? d.type);
+      if (!r.ok) throw new Error(r.error);
+      closeXferMenu();
+    });
+  const leaveTransfer = () =>
+    run(async () => {
+      if (!callId) return;
+      const r = await transferLeave(callId);
+      if (!r.ok) throw new Error(r.error);
+    });
+  const cancelXfer = () =>
+    run(async () => {
+      if (!callId) return;
+      const r = await transferCancel(callId);
+      if (!r.ok) throw new Error(r.error);
     });
 
   const dialManual = () =>
@@ -884,6 +950,8 @@ export function AgentConsole(props: ConsoleProps) {
       setTargets(null);
       setScreener(null);
       setScreenerStep("say");
+      setXferMenu(false);
+      setTransfer(null);
       setNotes("");
       setCallbackAt("");
       setScheduling(false);
@@ -1252,25 +1320,83 @@ export function AgentConsole(props: ConsoleProps) {
                   </div>
                   {onCall ? (
                     <div className="mt-3">
-                      {targets === null ? (
-                        <button onClick={openTransfer} disabled={busy} className="rounded-lg border border-white/15 px-3 py-1.5 text-sm text-zinc-200 hover:bg-white/10">
-                          Transfer to a closer…
+                      {transfer && transfer.state !== "ended" && !transfer.agentLeftAt ? (
+                        <div className="rounded-xl border border-violet-400/30 bg-violet-400/10 p-3 text-sm">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="rounded bg-violet-500/20 px-1.5 text-[10px] uppercase text-violet-200">{transfer.mode === "COLD" ? "cold" : "warm"}</span>
+                            <span className="font-medium text-violet-100">
+                              {transfer.state === "ringing" ? `Ringing ${transfer.destinationName}…` : transfer.mode === "WARM" ? `Connected: ${transfer.destinationName} is on with you and the lead` : `Connected to ${transfer.destinationName}, handing off…`}
+                            </span>
+                            {transfer.callerIdShown ? (
+                              <span className="rounded-full border border-white/10 px-2 py-0.5 text-[10px] text-zinc-400">
+                                they see {formatPhone(transfer.callerIdShown)}
+                                {transfer.callerIdFallback ? " (fallback)" : ""}
+                              </span>
+                            ) : null}
+                            <span className="flex-1" />
+                            {transfer.mode === "WARM" && transfer.state === "answered" ? (
+                              <button onClick={leaveTransfer} disabled={busy} title="Drop off: the lead and the destination stay connected; you go to wrap-up" className="rounded-lg bg-violet-400 px-3 py-1.5 text-sm font-semibold text-violet-950 disabled:opacity-40">
+                                Leave
+                              </button>
+                            ) : null}
+                            {transfer.state === "ringing" || (transfer.mode === "WARM" && transfer.state === "answered") ? (
+                              <button onClick={cancelXfer} disabled={busy} title="Drop the destination; you keep the lead" className="rounded-lg border border-white/15 px-3 py-1.5 text-sm text-zinc-200 hover:bg-white/10 disabled:opacity-40">
+                                Cancel transfer
+                              </button>
+                            ) : null}
+                          </div>
+                        </div>
+                      ) : !xferMenu ? (
+                        <button onClick={openXferMenu} disabled={busy || callStatus === "dialing"} className="rounded-lg border border-white/15 px-3 py-1.5 text-sm text-zinc-200 hover:bg-white/10 disabled:opacity-40">
+                          Transfer…
                         </button>
                       ) : (
                         <div className="rounded-xl border border-white/10 bg-black/30 p-3">
                           <div className="mb-2 flex items-center justify-between text-xs text-zinc-400">
-                            <span>Ready now on this campaign</span>
-                            <button onClick={() => setTargets(null)} className="hover:text-zinc-100">
+                            <span>Transfer the lead to</span>
+                            <button onClick={closeXferMenu} className="hover:text-zinc-100">
                               close
                             </button>
                           </div>
-                          <div className="flex flex-wrap gap-2">
-                            {targets.map((t) => (
-                              <button key={t.userId} onClick={() => doTransfer(t.userId)} disabled={busy} className="rounded-lg border border-emerald-400/40 bg-emerald-400/10 px-3 py-1.5 text-sm text-emerald-100 hover:bg-emerald-400/20">
-                                {t.name} <span className="text-[10px] text-emerald-300/80">{t.mode.toLowerCase()}</span>
-                              </button>
-                            ))}
-                            {targets.length === 0 ? <span className="text-sm text-zinc-500">Nobody is free right now.</span> : null}
+                          <div className="space-y-1">
+                            {(campaign?.transferDestinations ?? []).map((d) => {
+                              const mode = xferModes[d.id] ?? d.type;
+                              const shows = d.callerIdMode === "CUSTOMER" ? (lead?.phone ? formatPhone(lead.phone) : "the lead's number") : d.staticCallerId ? formatPhone(d.staticCallerId) : "a fixed number";
+                              return (
+                                <div key={d.id} className="flex flex-wrap items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-2 py-1.5 text-sm">
+                                  <button onClick={() => startTransfer(d)} disabled={busy} className="font-medium text-zinc-100 hover:text-white disabled:opacity-40">
+                                    {d.name}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setXferModes((m) => ({ ...m, [d.id]: mode === "COLD" ? "WARM" : "COLD" }))}
+                                    title="Cold: you drop off when they answer. Warm: three-way until you click Leave. Click to flip."
+                                    className={`rounded-full px-2 py-0.5 text-[10px] uppercase ${mode === "COLD" ? "bg-sky-500/20 text-sky-200" : "bg-amber-400/20 text-amber-200"}`}
+                                  >
+                                    {mode === "COLD" ? "cold" : "warm"} ⇄
+                                  </button>
+                                  <span className="rounded-full border border-white/10 px-2 py-0.5 text-[10px] text-zinc-400" title="What the destination's phone shows as the caller">
+                                    they see {shows}
+                                  </span>
+                                  <span className="flex-1" />
+                                  <button onClick={() => startTransfer(d)} disabled={busy} className="rounded-lg border border-emerald-400/40 bg-emerald-400/10 px-3 py-1 text-xs text-emerald-100 hover:bg-emerald-400/20 disabled:opacity-40">
+                                    Dial
+                                  </button>
+                                </div>
+                              );
+                            })}
+                            {(campaign?.transferDestinations ?? []).length === 0 ? <div className="text-xs text-zinc-500">No transfer destinations on this campaign yet (campaign page → Transfers).</div> : null}
+                          </div>
+                          <div className="mt-3 border-t border-white/10 pt-2">
+                            <div className="mb-1 text-xs text-zinc-400">Closers ready now on this campaign</div>
+                            <div className="flex flex-wrap gap-2">
+                              {(targets ?? []).map((t) => (
+                                <button key={t.userId} onClick={() => doTransfer(t.userId)} disabled={busy} className="rounded-lg border border-emerald-400/40 bg-emerald-400/10 px-3 py-1.5 text-sm text-emerald-100 hover:bg-emerald-400/20">
+                                  {t.name} <span className="text-[10px] text-emerald-300/80">{t.mode.toLowerCase()}</span>
+                                </button>
+                              ))}
+                              {targets === null ? <span className="text-xs text-zinc-500">Looking…</span> : targets.length === 0 ? <span className="text-sm text-zinc-500">Nobody is free right now.</span> : null}
+                            </div>
                           </div>
                         </div>
                       )}
@@ -1282,6 +1408,16 @@ export function AgentConsole(props: ConsoleProps) {
                 <Panel title="Call Dispositions" collapsible={false} right={wrapUp ? <span className="rounded bg-fuchsia-500/20 px-1.5 text-xs text-fuchsia-200">wrap-up</span> : onCall ? <span className="text-xs text-zinc-500">ends the call</span> : null}>
                   {!campaign ? null : (
                     <div className="space-y-2">
+                      {wrapUp && transfer?.agentLeftAt ? (
+                        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-violet-400/30 bg-violet-400/10 px-3 py-2 text-xs text-violet-100">
+                          <span>
+                            Transferred to {transfer.destinationName} ({transfer.mode.toLowerCase()}){transfer.state === "ended" ? ", now finished" : ", still talking"}. Dispositioned &ldquo;{transfer.dispositionLabel ?? "Transferred"}&rdquo;: keep it, or pick another below.
+                          </span>
+                          <button onClick={() => transfer.dispositionId && sendDisposition(transfer.dispositionId)} disabled={busy || !transfer.dispositionId} className="rounded-lg bg-violet-400 px-3 py-1 text-xs font-semibold text-violet-950 disabled:opacity-40">
+                            Keep &ldquo;{transfer.dispositionLabel ?? "Transferred"}&rdquo;
+                          </button>
+                        </div>
+                      ) : null}
                       <div className="grid grid-cols-2 gap-2 md:grid-cols-3">
                         {campaign.dispositions
                           .filter((d) => !d.isCallback)

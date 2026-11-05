@@ -118,9 +118,9 @@ export function nextAttemptAt(input: NextAttemptInput): Date {
   return gapEnd;
 }
 
-/** {{first_name}} style templates; unknown keys render empty. */
+/** {{first_name}} style templates (dotted keys such as {{lead.firstName}} too); unknown keys render empty. */
 export function renderTemplate(template: string, vars: Record<string, string | null | undefined>): string {
-  return template.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_, k: string) => (vars[k] ?? "").toString());
+  return template.replace(/\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}/g, (_, k: string) => (vars[k] ?? "").toString());
 }
 
 /** Phone formatting for texts: (305) 555-0100. */

@@ -49,6 +49,9 @@ export type FloorAgent = AgentLive & {
   leadPhone: string | null;
 };
 
+/** A call the agent has left: the lead and an external destination are still talking (dialer/transfers.ts). */
+export type TransferredCall = { transferId: string; callId: string; campaignId: string | null; destinationName: string; mode: "COLD" | "WARM"; leadName: string | null; leadPhone: string | null; agentName: string; agentId: string; since: number };
+
 export type FloorStats = {
   totalDials: number;
   connected: number;
@@ -64,6 +67,7 @@ export type FloorStats = {
   volume: number[]; // calls per 5-minute bucket, last 60 minutes
   campaigns: { id: string; name: string; status: string }[];
   agents: FloorAgent[];
+  transferred: TransferredCall[];
   history: { at: string; action: string; actor: string; target: string | null }[];
   team: { label: string; total: number; rate: number }[];
 };
@@ -75,12 +79,13 @@ export async function floorStats(campaignId: string | null): Promise<FloorStats>
   since.setHours(0, 0, 0, 0);
   const whereDay = { tenantId: s.tenant.id, dialedAt: { gte: since }, ...(campaignId ? { campaignId } : {}) };
 
-  const [live, calls, campaigns, history, users] = await Promise.all([
+  const [live, calls, campaigns, history, users, transferredAll] = await Promise.all([
     engine<{ agents: AgentLive[] }>(`/floor?tenantId=${s.tenant.id}`).then((r) => r.agents).catch(() => [] as AgentLive[]),
-    prisma.call.findMany({ where: whereDay, include: { disposition: { select: { isContact: true, isSale: true } }, transfers: { select: { id: true } } } }),
+    prisma.call.findMany({ where: { ...whereDay, direction: { not: "TRANSFER" } }, include: { disposition: { select: { isContact: true, isSale: true } }, transfers: { select: { id: true } } } }),
     prisma.campaign.findMany({ where: { tenantId: s.tenant.id, status: { in: ["ACTIVE", "PAUSED"] } }, select: { id: true, name: true, status: true }, orderBy: { name: "asc" } }),
     prisma.auditLog.findMany({ where: { tenantId: s.tenant.id, action: { startsWith: "supervise." } }, orderBy: { createdAt: "desc" }, take: 12, include: { actor: { select: { firstName: true, email: true } } } }),
     prisma.user.findMany({ where: { tenantId: s.tenant.id, active: true }, select: { id: true, firstName: true, lastName: true, email: true } }),
+    engine<{ calls: TransferredCall[] }>(`/transferred?tenantId=${s.tenant.id}`).then((r) => r.calls).catch(() => [] as TransferredCall[]),
   ]);
 
   // Team leaders see their team; room supervisors their room; supervisors everything.
@@ -135,7 +140,7 @@ export async function floorStats(campaignId: string | null): Promise<FloorStats>
     const to = new Date(from.getTime() + 86_400_000);
     return { from, to, label: d === 0 ? "Today" : d === 1 ? "Yesterday" : from.toLocaleDateString("en-US", { weekday: "short", day: "numeric" }) };
   });
-  const olderCalls = await prisma.call.findMany({ where: { tenantId: s.tenant.id, dialedAt: { gte: days[2]!.from }, ...(campaignId ? { campaignId } : {}) }, select: { dialedAt: true, bridgedAt: true, disposition: { select: { isSale: true } } } });
+  const olderCalls = await prisma.call.findMany({ where: { tenantId: s.tenant.id, direction: { not: "TRANSFER" }, dialedAt: { gte: days[2]!.from }, ...(campaignId ? { campaignId } : {}) }, select: { dialedAt: true, bridgedAt: true, disposition: { select: { isSale: true } } } });
   const team = days.map((d) => {
     const rows = olderCalls.filter((c) => c.dialedAt >= d.from && c.dialedAt < d.to);
     const conn = rows.filter((c) => c.bridgedAt).length;
@@ -157,6 +162,7 @@ export async function floorStats(campaignId: string | null): Promise<FloorStats>
     volume,
     campaigns,
     agents,
+    transferred: transferredAll.filter((t) => visible.has(t.agentId) && (!campaignId || t.campaignId === campaignId)),
     history: history.map((h) => ({ at: h.createdAt.toISOString(), action: h.action.replace("supervise.", ""), actor: h.actor?.firstName ?? h.actor?.email ?? "?", target: h.target ? nameOf(h.target) : null })),
     team,
   };

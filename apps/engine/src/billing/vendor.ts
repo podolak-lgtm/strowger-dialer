@@ -79,7 +79,7 @@ async function applyCallCost(callId: string, tenantId: string, costCents: number
   await prisma.billingEntry.updateMany({ where: { tenantId, category: "MINUTES", refId: callId }, data: { costCents, costSource: "telnyx" } });
 }
 
-/** Calls: match by direction, the far-end number and a start time within two minutes. */
+/** Calls: match by direction, the far-end number and a start time within three minutes. A transfer's destination leg is outbound at the carrier. */
 export async function pullTelnyxCalls(dateRange = "last_3_days"): Promise<{ records: number; matched: number; costCents: number }> {
   const cdrs = await detailRecords<Cdr>("sip-trunking", dateRange);
   let matched = 0;
@@ -94,7 +94,7 @@ export async function pullTelnyxCalls(dateRange = "last_3_days"): Promise<{ reco
     if (far && started) {
       const digits = far.replace(/\D/g, "").replace(/^1(\d{10})$/, "$1");
       call = await prisma.call.findFirst({
-        where: { direction: dir, phone: digits, vendorRecordId: null, dialedAt: { gte: new Date(started.getTime() - 180_000), lte: new Date(started.getTime() + 180_000) } },
+        where: { direction: dir === "INBOUND" ? "INBOUND" : { in: ["OUTBOUND", "MANUAL", "TRANSFER"] }, phone: digits, vendorRecordId: null, dialedAt: { gte: new Date(started.getTime() - 180_000), lte: new Date(started.getTime() + 180_000) } },
         orderBy: { dialedAt: "asc" },
         select: { id: true, tenantId: true },
       });

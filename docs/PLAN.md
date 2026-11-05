@@ -145,6 +145,16 @@ lock per campaign).
 - **Transfers (fronter → closer).** The closer is another nailed-up conference
   member; warm transfer = closer joins the fronter's room, fronter leaves.
   Closers-only agents are never offered outbound dials.
+- **Transfers to outside numbers (owner, 5 Nov).** Each campaign lists its
+  destinations (name, number, cold or warm by default, the caller ID the
+  destination sees: the customer's own number or a fixed number of ours,
+  a whisper on/off with a template). The customer is never put on hold:
+  the destination is dialled straight into the call, hears the whisper
+  alone, then joins. Cold drops the agent on answer; warm is a three-way
+  until the agent clicks Leave; no answer in 25 s hands the lead back.
+  The agent lands in wrap-up with a "Transferred" disposition already
+  written; the lead and the destination get 90 minutes. See HANDOFF
+  "External transfers".
 - **Supervision.** Supervisor joins the agent's conference: muted (listen),
   `speakOnlyTo` the agent (whisper), unmuted (barge), and takeover = agent
   dropped from the room, supervisor stays.
@@ -232,7 +242,10 @@ notable ones.
 - `AgentSession` (login/logout, state changes with timestamps for
   productivity)
 - `Message` (SMS, lead, direction, provider, status)
-- `Transfer` (call, from agent, to agent, kind)
+- `Transfer` (call, from agent, to agent or external destination, kind
+  cold/warm, caller ID shown, answered / agent-left / ended, outcome)
+- `TransferDestination` (campaign, name, number, default kind, caller ID
+  mode, whisper)
 - `WebhookEndpoint`, `WebhookDelivery`
 - `AuditLog`
 

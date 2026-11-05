@@ -68,6 +68,7 @@ model Tenant {
   leadEvents     LeadEvent[]
   abandonLedger  AbandonLedger[]
   transfers      Transfer[]
+  transferDestinations TransferDestination[]
   campaignAgents CampaignAgent[]
   dispositions   Disposition[]
   dialPlans      DialPlan[]
@@ -343,6 +344,7 @@ model Campaign {
   callerIds     CallerIdNumber[]
   numberOrders  NumberOrder[]
   queues        Queue[]
+  transferDestinations TransferDestination[]
 
   @@unique([tenantId, name])
   @@index([tenantId, status])
@@ -649,6 +651,11 @@ enum LeadEventKind {
   WEBHOOK
   DNC
   BLOCKED
+  TRANSFER_STARTED
+  TRANSFER_ANSWERED
+  TRANSFER_NO_ANSWER
+  TRANSFER_CANCELLED
+  AGENT_LEFT
 }
 
 model LeadEvent {
@@ -1246,6 +1253,8 @@ enum CallDirection {
   OUTBOUND
   INBOUND
   MANUAL
+  /// The destination leg of an external transfer (dialer/transfers.ts); billed like outbound.
+  TRANSFER
 }
 
 enum AmdResult {
@@ -1311,6 +1320,13 @@ model Call {
   /// Raw provider facts worth keeping (final SIP status, AMD events).
   providerData       Json      @default("{}")
 
+  /// External transfer destination legs hang off the lead's call.
+  parent       Call?   @relation("CallLegs", fields: [parentCallId], references: [id])
+  parentCallId String?
+  legs         Call[]  @relation("CallLegs")
+  destination   TransferDestination? @relation(fields: [destinationId], references: [id])
+  destinationId String?
+
   transfers Transfer[]
 
   @@index([tenantId, dialedAt])
@@ -1324,6 +1340,49 @@ enum TransferKind {
   COLD
 }
 
+/// External transfer outcome (null while ringing or connected).
+enum TransferOutcome {
+  ANSWERED
+  NO_ANSWER
+  CANCELLED
+  FAILED
+}
+
+/// What the destination sees as the caller: the lead's own number, or a fixed number of ours.
+enum TransferCallerIdMode {
+  CUSTOMER
+  STATIC
+}
+
+/// A phone number a campaign's agents can transfer a live lead to (owner, 5 Nov).
+model TransferDestination {
+  id         String   @id @default(cuid())
+  tenant     Tenant   @relation(fields: [tenantId], references: [id])
+  tenantId   String
+  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  campaignId String
+  name       String
+  /// E.164.
+  phone      String
+  /// Default for the console's cold/warm toggle. `kind` on Transfer records what was used.
+  type         TransferKind         @default(COLD)
+  callerIdMode TransferCallerIdMode @default(CUSTOMER)
+  /// One of the workspace's numbers (CallerIdNumber.phone, ten digits) when callerIdMode is STATIC.
+  staticCallerId String?
+  whisperOn    Boolean @default(true)
+  /// Template with {{company}}, {{campaign}}, {{lead.firstName}}, {{lead.lastName}} and the script variables; null = the default.
+  whisperText  String?
+  sortOrder    Int     @default(0)
+  active       Boolean @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  transfers Transfer[]
+  calls     Call[]
+
+  @@index([campaignId, sortOrder])
+}
+
 model Transfer {
   id         String       @id @default(cuid())
   tenant     Tenant       @relation(fields: [tenantId], references: [id])
@@ -1334,9 +1393,26 @@ model Transfer {
   fromAgentId String
   toAgent    User?        @relation("TransferTo", fields: [toAgentId], references: [id])
   toAgentId  String?
+  /// WARM = three-way until the agent leaves; COLD = agent dropped on answer. For external transfers this is the mode used.
   kind       TransferKind @default(WARM)
   createdAt  DateTime     @default(now())
   completedAt DateTime?
+
+  // External transfers (dialer/transfers.ts).
+  destination   TransferDestination? @relation(fields: [destinationId], references: [id])
+  destinationId String?
+  /// The Call row of the destination leg (direction TRANSFER).
+  destinationCallId String?
+  /// Ten-digit number the destination saw; null when no external leg.
+  callerIdShown    String?
+  /// Telnyx refused the lead's number as `from`; the campaign's caller ID was used instead.
+  callerIdFallback Boolean   @default(false)
+  answeredAt       DateTime?
+  agentLeftAt      DateTime?
+  endedAt          DateTime?
+  outcome          TransferOutcome?
+
+  @@index([callId])
 }
 
 enum CallbackScope {

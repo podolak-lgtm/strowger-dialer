@@ -47,6 +47,9 @@ test("periods and levels", () => {
   assert.ok(rightsForLevel(1).has("manual_dial"));
   assert.ok(!rightsForLevel(1).has("transfer"));
   assert.ok(rightsForLevel(5).has("transfer"));
+  // Transfer to a typed number is off at every level by default (owner, 5 Nov).
+  for (const l of [1, 2, 3, 4, 5, 6, 7, 8]) assert.ok(!rightsForLevel(l).has("transfer_any_number"), `level ${l}`);
+  assert.ok(rightsForLevel(3, { "3": ["transfer_any_number"] }).has("transfer_any_number"));
   assert.ok(rightsForLevel(1, { "1": ["manual_dial"] }).has("manual_dial"));
   assert.ok(!rightsForLevel(1, { "1": ["manual_dial"] }).has("voicemail_drop"));
 });

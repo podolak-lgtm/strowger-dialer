@@ -24,6 +24,7 @@ import { emitToAgent } from "../realtime";
 import type { Call, Campaign } from "@strowger/db";
 import { getSupervision, supervisorJoinVerbs, supervisorLegEnded } from "../supervise";
 import { voicemailVerbs } from "../dialer/voicemail";
+import { transferConfEvent, transferIdForSid, transferJoinVerbs, transferLegStatus, transferLegVerbs } from "../dialer/transfers";
 import { ivrResult, joinAgentVerbs, leaveQueue, overflowVerbs, queueWaitVerbs, routeInbound } from "../inbound/router";
 import { log } from "../log";
 import { agentRoom, hookUrl, jambonz } from "./client";
@@ -132,7 +133,11 @@ export async function registerJambonzRoutes(app: FastifyInstance): Promise<void>
   // ── Call reached the application ────────────────────────────────────────
   app.post("/jambonz/call", async (req, reply) => {
     const b = req.body as JambonzCallBody;
-    const tag = (b.customerData ?? {}) as { kind?: string; callId?: string; agentId?: string; supervisorId?: string };
+    const tag = (b.customerData ?? {}) as { kind?: string; callId?: string; agentId?: string; supervisorId?: string; transferId?: string };
+
+    // External transfer destination answered: whisper, then its room (dialer/transfers.ts).
+    const transferId = tag.kind === "transfer" && tag.transferId ? tag.transferId : await transferIdForSid(b.call_sid);
+    if (transferId) return reply.send(await transferLegVerbs(transferId));
 
     // Supervisor leg answered: join the agent's room in the requested mode.
     if (tag.kind === "supervisor" && tag.supervisorId) {
@@ -372,9 +377,10 @@ export async function registerJambonzRoutes(app: FastifyInstance): Promise<void>
 
   // ── Conference status (join/leave) ──────────────────────────────────────
   app.post("/jambonz/conf", async (req, reply) => {
-    const q = req.query as { callId?: string; agentId?: string; tenantId?: string };
+    const q = req.query as { callId?: string; agentId?: string; tenantId?: string; transferId?: string; leg?: string };
     const b = req.body as { event?: string; members?: number; conference_sid?: string; call_sid?: string; call_status?: string };
     log.info({ query: q, event: b.event, members: b.members, callSid: b.call_sid, callStatus: b.call_status }, "conference event");
+    if (q.transferId) await transferConfEvent({ transferId: q.transferId, leg: q.leg }, b);
     if (q.callId && b.event === "join") await leadCallBridged(q.callId);
     if (q.agentId && b.event === "end") {
       const live = await getAgent(q.agentId);
@@ -431,6 +437,13 @@ export async function registerJambonzRoutes(app: FastifyInstance): Promise<void>
     ]);
   });
 
+  // External transfer: a leg redirected into the transfer's own room once the agent has left.
+  app.post("/jambonz/xfer-join", async (req, reply) => {
+    const { transferId, leg } = req.query as { transferId?: string; leg?: string };
+    if (!transferId) return reply.send([{ verb: "hangup" }]);
+    return reply.send(await transferJoinVerbs(transferId, leg === "destination" ? "destination" : "lead"));
+  });
+
   // Agent pressed "Leave voicemail": the lead leg is redirected here, out of the room.
   app.post("/jambonz/vm-drop", async (req, reply) => {
     const callId = (req.query as { callId?: string }).callId;
@@ -444,9 +457,16 @@ export async function registerJambonzRoutes(app: FastifyInstance): Promise<void>
   // ── Call status lifecycle ───────────────────────────────────────────────
   app.post("/jambonz/status", async (req, reply) => {
     const b = req.body as JambonzCallBody;
-    const tag = (b.customerData ?? {}) as { kind?: string; callId?: string };
-    const callId = tag.kind === "lead" ? tag.callId : await callIdForSid(b.call_sid);
+    const tag = (b.customerData ?? {}) as { kind?: string; callId?: string; transferId?: string };
     const status = b.call_status ?? "";
+    // The destination leg of an external transfer has its own lifecycle.
+    const transferId = tag.kind === "transfer" && tag.transferId ? tag.transferId : await transferIdForSid(b.call_sid);
+    if (transferId) {
+      log.info({ transferId, callSid: b.call_sid, status, sipStatus: b.sip_status, duration: b.duration }, "transfer leg status");
+      await transferLegStatus(transferId, b.call_sid, status, b.sip_status, b.duration);
+      return reply.send({});
+    }
+    const callId = tag.kind === "lead" ? tag.callId : await callIdForSid(b.call_sid);
     log.info({ callId, kind: tag.kind, callSid: b.call_sid, status, sipStatus: b.sip_status, duration: b.duration, direction: b.direction }, "call status");
     if (callId) {
       if (status === "ringing" || status === "early-media") {

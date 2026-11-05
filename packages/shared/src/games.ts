@@ -190,6 +190,8 @@ export const AGENT_RIGHTS = {
   see_leaderboard: "See the team leaderboard",
   voicemail_drop: "Leave a voicemail and move on",
   skip_lead: "Skip a lead in preview",
+  /** Owner, 5 Nov: off at every level until the typed-number transfer UI exists. The campaign's destinations need no right. */
+  transfer_any_number: "Transfer to any typed number",
 } as const;
 export type AgentRight = keyof typeof AGENT_RIGHTS;
 export const LEVELS = [1, 2, 3, 4, 5, 6, 7, 8] as const;

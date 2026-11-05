@@ -15,7 +15,8 @@
     "./sms": "./src/sms.ts",
     "./did-hygiene": "./src/did-hygiene.ts",
     "./games": "./src/games.ts",
-    "./scripts": "./src/scripts.ts"
+    "./scripts": "./src/scripts.ts",
+    "./transfers": "./src/transfers.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

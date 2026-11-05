@@ -19,7 +19,8 @@ export function parseRange(tenantId: string, q: { from?: string | string[]; to?:
 
 export async function callRows(r: ReportRange) {
   return prisma.call.findMany({
-    where: { tenantId: r.tenantId, dialedAt: { gte: r.from, lte: r.to }, ...(r.campaignId ? { campaignId: r.campaignId } : {}) },
+    // Destination legs of external transfers are billed minutes, not dials: they hang off the lead's call.
+    where: { tenantId: r.tenantId, direction: { not: "TRANSFER" }, dialedAt: { gte: r.from, lte: r.to }, ...(r.campaignId ? { campaignId: r.campaignId } : {}) },
     orderBy: { dialedAt: "asc" },
     include: {
       campaign: { select: { name: true } },

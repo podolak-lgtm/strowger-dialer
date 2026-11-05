@@ -15,6 +15,7 @@ import { sendSms } from "../sms/provider";
 import { deliverPending } from "../webhooks/deliver";
 import { agentVoicemailDrop } from "../dialer/voicemail";
 import { holdCall, manualDial, transferCall, transferTargets } from "../dialer/controls";
+import { agentLeaveTransfer, cancelTransfer, liveTransfer, startExternalTransfer, transferredCalls, transferView } from "../dialer/transfers";
 import { nightlyRecordings } from "../recordings/export";
 import { releaseLead, reserveNextLead } from "../dialer/hopper";
 import { jambonz, jambonzConfigured } from "../jambonz/client";
@@ -221,6 +222,31 @@ export async function registerInternalRoutes(app: FastifyInstance): Promise<void
     const { callId } = req.params as { callId: string };
     const { userId, toAgentId } = z.object({ userId: z.string(), toAgentId: z.string() }).parse(req.body);
     return transferCall(callId, userId, toAgentId);
+  });
+  // External transfers (dialer/transfers.ts): destinations are campaign data the web app reads itself.
+  app.post("/internal/calls/:callId/transfer-external", async (req) => {
+    const { callId } = req.params as { callId: string };
+    const { userId, destinationId, mode } = z.object({ userId: z.string(), destinationId: z.string(), mode: z.enum(["COLD", "WARM"]) }).parse(req.body);
+    return startExternalTransfer(callId, userId, destinationId, mode);
+  });
+  app.post("/internal/calls/:callId/transfer-leave", async (req) => {
+    const { callId } = req.params as { callId: string };
+    const { userId } = z.object({ userId: z.string() }).parse(req.body);
+    return agentLeaveTransfer(callId, userId, "leave");
+  });
+  app.post("/internal/calls/:callId/transfer-cancel", async (req) => {
+    const { callId } = req.params as { callId: string };
+    const { userId } = z.object({ userId: z.string() }).parse(req.body);
+    return cancelTransfer(callId, userId);
+  });
+  app.get("/internal/calls/:callId/transfer", async (req) => {
+    const { callId } = req.params as { callId: string };
+    const t = await liveTransfer(callId);
+    return { transfer: t ? transferView(t, t.agentLeftAt ? "left" : t.answeredAt ? "answered" : "ringing") : null };
+  });
+  app.get("/internal/transferred", async (req) => {
+    const { tenantId } = z.object({ tenantId: z.string() }).parse(req.query);
+    return { calls: await transferredCalls(tenantId) };
   });
   app.post("/internal/calls/manual", async (req) => {
     const { tenantId, userId, phone } = Ids.extend({ phone: z.string() }).parse(req.body);

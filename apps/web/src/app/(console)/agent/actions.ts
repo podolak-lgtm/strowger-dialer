@@ -256,7 +256,8 @@ export async function sprint(campaignId: string | null): Promise<Sprint> {
   const s = await me();
   const since = new Date();
   since.setHours(0, 0, 0, 0);
-  const where = { tenantId: s.tenant.id, dialedAt: { gte: since }, ...(campaignId ? { campaignId } : {}) };
+  // Destination legs of external transfers are not dials.
+  const where = { tenantId: s.tenant.id, direction: { not: "TRANSFER" as const }, dialedAt: { gte: since }, ...(campaignId ? { campaignId } : {}) };
   const [mine, all, queueDepth, callbacksDue, recent] = await Promise.all([
     prisma.call.findMany({ where: { ...where, agentId: s.user.id }, include: { disposition: true } }),
     prisma.call.findMany({ where, include: { disposition: true } }),
@@ -404,6 +405,51 @@ export async function transferCall(callId: string, toAgentId: string): Promise<{
   const s = await me();
   requireRight(s, "transfer");
   return engine(`/calls/${callId}/transfer`, { method: "POST", body: JSON.stringify({ userId: s.user.id, toAgentId }) });
+}
+
+// ── External transfers (campaign destinations; no level gate, owner 5 Nov) ──
+
+export type LiveTransferView = {
+  id: string;
+  state: "ringing" | "answered" | "no_answer" | "cancelled" | "failed" | "left" | "ended";
+  destinationName: string;
+  destinationId: string | null;
+  mode: "COLD" | "WARM";
+  callerIdShown: string | null;
+  callerIdFallback: boolean;
+  answeredAt: string | null;
+  agentLeftAt: string | null;
+  dispositionId?: string | null;
+  dispositionLabel?: string | null;
+};
+
+async function ownCall(callId: string) {
+  const s = await me();
+  const own = await prisma.call.findFirst({ where: { id: callId, tenantId: s.tenant.id, agentId: s.user.id }, select: { id: true } });
+  if (!own) throw new Error("Not your call");
+  return s;
+}
+
+export async function transferToDestination(callId: string, destinationId: string, mode: "COLD" | "WARM"): Promise<{ ok: true; transferId: string } | { ok: false; error: string }> {
+  const s = await ownCall(callId);
+  return engine(`/calls/${callId}/transfer-external`, { method: "POST", body: JSON.stringify({ userId: s.user.id, destinationId, mode }) });
+}
+
+export async function transferLeave(callId: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  const s = await ownCall(callId);
+  return engine(`/calls/${callId}/transfer-leave`, { method: "POST", body: JSON.stringify({ userId: s.user.id }) });
+}
+
+export async function transferCancel(callId: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  const s = await ownCall(callId);
+  return engine(`/calls/${callId}/transfer-cancel`, { method: "POST", body: JSON.stringify({ userId: s.user.id }) });
+}
+
+/** The transfer in flight on a call, for a console that reloads mid-call. */
+export async function currentTransfer(callId: string): Promise<LiveTransferView | null> {
+  await ownCall(callId);
+  const r = await engine<{ transfer: LiveTransferView | null }>(`/calls/${callId}/transfer`);
+  return r.transfer;
 }
 
 export async function manualDial(phone: string): Promise<{ ok: true; callId: string } | { ok: false; error: string }> {

@@ -9,7 +9,7 @@ import { io, type Socket } from "socket.io-client";
 import { ChatPanel } from "@/components/chat-panel";
 import { isStaleBuildError, NewVersionBanner, useNewVersion } from "@/components/new-version";
 import { useCallback, useEffect, useRef, useState, useTransition } from "react";
-import { floorStats, superviseCurrent, superviseMode, superviseStart, superviseStop, superviseTakeover, type FloorAgent, type FloorStats, type Supervision, type SuperviseMode } from "./actions";
+import { floorStats, superviseCurrent, superviseMode, superviseStart, superviseStop, superviseTakeover, type FloorAgent, type FloorStats, type Supervision, type SuperviseMode, type TransferredCall } from "./actions";
 
 type JambonzClient = ReturnType<typeof createJambonzClient>;
 
@@ -259,6 +259,7 @@ export function FloorConsole({ me, view, initialCampaignId, engineUrl, rtToken, 
                   ))}
                   {stats && stats.agents.length === 0 ? <li className="text-sm text-zinc-500">Nobody is logged in.</li> : null}
                 </ul>
+                <TransferredList rows={stats?.transferred ?? []} now={now} />
               </Panel>
             </div>
 
@@ -437,6 +438,7 @@ export function FloorConsole({ me, view, initialCampaignId, engineUrl, rtToken, 
                 </table>
                 {stats && stats.agents.length === 0 ? <div className="p-6 text-center text-sm text-zinc-500">Nobody is logged in.</div> : null}
               </div>
+              <TransferredList rows={stats?.transferred ?? []} now={now} />
             </Panel>
             <Panel title="Chat">
               <ChatPanel socket={sock} meId={me.id} height="h-56" />
@@ -444,6 +446,27 @@ export function FloorConsole({ me, view, initialCampaignId, engineUrl, rtToken, 
           </div>
         )}
       </main>
+    </div>
+  );
+}
+
+/** Calls handed to an external destination: the agent is gone, the lead and the destination are still talking. */
+function TransferredList({ rows, now }: { rows: TransferredCall[]; now: number }) {
+  if (rows.length === 0) return null;
+  return (
+    <div className="mt-3 border-t border-white/10 pt-3">
+      <div className="mb-1 text-xs uppercase tracking-wide text-zinc-500">Transferred, still connected</div>
+      <ul className="space-y-1 text-sm">
+        {rows.map((t) => (
+          <li key={t.transferId} className="flex flex-wrap items-center gap-2 rounded-lg border border-violet-400/20 bg-violet-400/5 px-2 py-1">
+            <span className="rounded bg-violet-500/20 px-1.5 text-[10px] uppercase text-violet-200">{t.mode === "COLD" ? "cold" : "warm"}</span>
+            <span className="font-medium">{t.leadName ?? t.leadPhone ?? "Lead"}</span>
+            <span className="text-zinc-400">transferred to {t.destinationName}</span>
+            <span className="text-xs text-zinc-500">by {t.agentName}</span>
+            <span className="ml-auto text-xs tabular-nums text-zinc-400">{mmss((now - t.since) / 1000)}</span>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }

@@ -36,7 +36,8 @@ built and why; this says how it is wired and what will trip you.
   (`docs/design/`). Not yet exercised against jambonz: the account's API
   key and application SID are still to be set (`docs/JAMBONZ-SETUP.md`).
 - **Phase 2b (DID manager), the cadence engine, the Crossbar scrub, Phase 3
-  (ratio dialing) and Phase 4 (supervision) are built**; see their sections.
+  (ratio dialing), Phase 4 (supervision) and external transfers (cold /
+  warm to campaign destinations, 5 Nov) are built**; see their sections.
   Nothing has yet carried a real call: the jambonz API key and application
   SID are the gate (`docs/JAMBONZ-SETUP.md`).
 - Next: live telephony bring-up with the owner, then Phase 5 (texting
@@ -417,10 +418,148 @@ upload and URL. The same bucket is the natural target for jambonz call
 recording: in the jambonz portal, Account → recording, use the bucket's
 endpoint, name and keys from the Railway dashboard.
 
+## External transfers (owner, 5 Nov)
+
+The agent hands a live lead to a phone number the campaign lists, cold or
+warm. The customer is never put on hold: no hold music, no private consult.
+`apps/engine/src/dialer/transfers.ts`; pure rules and constants in
+`packages/shared/src/transfers.ts` (tested).
+
+- **Models.** `TransferDestination` (per campaign: name, E.164 `phone`,
+  `type` COLD|WARM = the default for the console's flip, `callerIdMode`
+  CUSTOMER|STATIC with `staticCallerId` = one of the workspace's numbers,
+  `whisperOn`, `whisperText` template, `sortOrder`, `active`). Campaign
+  page → **Transfers** card: add, edit, ↑↓ reorder, deactivate, remove (a
+  destination that has been used is deactivated, never deleted), and
+  **Copy from another campaign** (its active destinations; same names are
+  skipped). `Transfer` gained `destinationId`, `destinationCallId`,
+  `callerIdShown`, `callerIdFallback`, `answeredAt`, `agentLeftAt`,
+  `endedAt`, `outcome` (ANSWERED | NO_ANSWER | CANCELLED | FAILED); its
+  existing `kind` is the mode used (COLD|WARM). The destination leg is its
+  own `Call` row, `direction TRANSFER`, `parentCallId` = the lead's call,
+  `destinationId`, `agentId null`, so `chargeCallMinutes` bills both legs
+  (note "Transfer leg") and the Telnyx CDR matcher (`billing/vendor.ts`,
+  outbound records now match OUTBOUND | MANUAL | TRANSFER by far-end number)
+  attributes its cost. Reports, the floor's counts and the console's sprint
+  exclude `TRANSFER` rows from dials. `LeadEvent` kinds TRANSFER_STARTED,
+  TRANSFER_ANSWERED, TRANSFER_NO_ANSWER, TRANSFER_CANCELLED, AGENT_LEFT.
+  Migration `20261105223000_external_transfers`. `moveCampaign` moves the
+  destinations with the campaign.
+- **Call flow.** `startExternalTransfer` (`POST
+  /internal/calls/:id/transfer-external {userId, destinationId, mode}`)
+  checks the call is the agent's, answered and live, picks the caller ID,
+  writes the `Transfer` + leg `Call`, renders the whisper, and
+  `jambonz.calls.create`s the destination with `tag {kind: "transfer",
+  transferId}`, `timeout` = `TRANSFER_RING_SECONDS` (25) and `timeLimit` =
+  `TRANSFER_CAP_MINUTES` (90) × 60. Hooks: `/jambonz/call` routes
+  `kind: transfer` (or Redis `xfersid:<sid>`) to `transferLegVerbs`, which
+  replies `say` (the whisper, destination only: it is on its own leg, not
+  in any room yet) then a `conference` verb; `/jambonz/status` routes the
+  leg's lifecycle to `transferLegStatus`; `/jambonz/conf?transferId=&leg=`
+  to `transferConfEvent`.
+  - **COLD**: the destination joins a fresh room `xfer-<transferId>`
+    (`startConferenceOnEnter: true`, `endConferenceOnExit: true`). On its
+    `join` event the engine calls `agentLeaveTransfer(..., "auto")`, which
+    REST-redirects the lead leg to `/jambonz/xfer-join?leg=lead` (same
+    room, same flags). The agent's room is empty again and the agent's
+    nailed-up leg is untouched, so after a cold transfer answers the agent
+    can disposition, go Ready and take the next call while the lead and
+    the destination keep talking. (Kick/mute of the agent was rejected:
+    the agent must be free; this is why the pair moves rooms instead.)
+  - **WARM**: the destination joins the agent's room (`memberTag:
+    destination`, three-way). **Leave** = `agentLeaveTransfer(...,
+    "leave")`: both the lead and the destination are redirected into
+    `xfer-<transferId>`. **Cancel transfer** (ringing, or warm before
+    Leave) = `cancelTransfer`: a Redis `xfer:cancel:<id>` flag, then
+    `call_status` completed/no-answer on the destination leg; the status
+    hook records CANCELLED and the lead stays with the agent.
+  - **No answer** (busy / no-answer / failed, or the 25 s timeout):
+    outcome NO_ANSWER or FAILED, LeadEvent, console "No answer at
+    <name>", agent keeps the lead.
+  - **After the agent leaves** both legs in `xfer-<id>` carry
+    `endConferenceOnExit: true`, so whichever side hangs up ends the room
+    and the other leg's next verb is `hangup`; the destination leg's
+    `timeLimit` is the 90-minute cap and ends the lead the same way.
+    `transferJoinVerbs` for the lead replies `hangup` when the transfer
+    has already ended (the far side was gone before the lead arrived), so
+    a lead never sits in an empty room.
+  - The lead leg ending for any reason while a transfer is in flight
+    (`leadCallEnded` → `endLiveTransfersForCall`) hangs the destination
+    up. After the agent has left, `leadCallEnded` neither touches the
+    agent's state nor emits to their console (they may be on a new call);
+    the console also ignores an "ended" for a call that is not the one on
+    screen (`callIdRef`).
+- **Disposition and wrap-up.** When the agent leaves (cold auto-drop or
+  warm Leave) the call is dispositioned at once with the campaign's
+  **Transferred** disposition (code `XFER`, `isContact`, created by
+  `transferredDisposition` if missing) and the note "Transferred to <name>
+  (cold|warm)". `dispositionCall` takes `keepWrapUp: true` for this: it
+  writes everything (lead status, events, webhooks) but leaves the agent
+  in WRAP_UP on the call, so the console shows the disposition grid with a
+  banner ("Transferred to X … keep it, or pick another") and a **Keep**
+  button; whatever they click re-dispositions the call (a second
+  DISPOSITION event and webhook delivery: acceptable) and moves them to
+  READY.
+- **Caller ID shown to the destination.** `chooseTransferCallerId`
+  (shared, tested): CUSTOMER = the lead's own number as the `from` of the
+  destination leg; STATIC = the destination's fixed number, only while it
+  is still one of the workspace's active numbers; otherwise the campaign's
+  caller ID that dialled the lead, logged, with `Transfer.callerIdFallback
+  = true`. A carrier refusal of a non-owned `from` arrives as a **4xx
+  after** `calls.create` (the INVITE is answered asynchronously): the
+  status hook sees `failed` with `sip_status` 401/403/407 before answer
+  and `transferLegStatus` redials the same leg row once from the
+  campaign's number, marking the fallback. A synchronous create error does
+  the same once. The console's caller-ID chip shows "they see <number>
+  (fallback)" and the Transfer row carries it for reports. Telnyx normally
+  allows any `from` on a credential connection only when the number is
+  owned or the account has caller-ID override enabled: ask Telnyx support
+  to enable it for the "Strowger (jambonz)" connection if the fallback
+  shows up on every transfer.
+- **Whisper.** `renderWhisper` with `whisperVars` (`{{company}}`,
+  `{{campaign}}`, `{{destination}}`, `{{agent}}`, `{{lead.firstName}}`,
+  `{{lead.lastName}}`, `{{lead.phone}}`, `{{lead.city}}`,
+  `{{lead.state}}`, plus the script spellings `first_name`, `last_name`,
+  `city`, `state`); `renderTemplate` now accepts dotted keys. Default:
+  "Transfer from {{company}}, {{campaign}}. Lead {{lead.firstName}}
+  {{lead.lastName}}." The `say` verb uses the jambonz account's default
+  speech vendor, like TTS voicemail: **with no speech vendor on the
+  account, turn `whisperOn` off per destination** or the destination
+  hears silence before joining.
+- **Realtime.** `call:update` with `status: "transfer"` and a `transfer`
+  object (`transferView`: id, state ringing | answered | no_answer |
+  cancelled | failed | left | ended, destinationName, mode, callerIdShown,
+  callerIdFallback, agentLeftAt, dispositionId/Label on "left") to the
+  agent; `floor:call` `transfer_<state>` to the tenant. The console's
+  **Transfer…** button opens a dropdown: the campaign's active destinations
+  (name, a cold/warm chip that flips on click, a "they see <number>" chip)
+  plus the closers free right now (the existing closer transfer, unchanged).
+  While in flight: "Ringing <name>…" + Cancel; warm connected: Leave +
+  Cancel transfer; cold connected: "handing off…" then wrap-up. `GET
+  /internal/calls/:id/transfer` restores the state on a reload. The floor
+  (`/internal/transferred`, `FloorStats.transferred`) lists "Transferred,
+  still connected" calls (lead, destination, mode, agent, time since the
+  agent left) under the agent list, so a handed-off call does not vanish.
+- **Rights.** Everyone who can take calls may use the destinations (no
+  level gate; the closer transfer keeps `transfer`). New right
+  `transfer_any_number` ("Transfer to any typed number") exists in
+  `AGENT_RIGHTS`, off at every default level (tested); no UI for a typed
+  number yet.
+- **Recording** is the jambonz account's (see Media bucket): the
+  destination leg and the lead leg are calls under the same account, so a
+  recording-on account keeps recording after the agent leaves. Nothing per
+  campaign is sent on the new legs yet; when per-call recording verbs
+  arrive, add them to `transferLegVerbs` and `transferJoinVerbs` under
+  `Campaign.recordingOn`.
+- Not built: typed-number transfers, a transfer report, DTMF to the
+  destination, a supervisor view into `xfer-<id>` rooms (listen/whisper
+  target the agent's room only).
+
 ## Mid-call controls (`dialer/controls.ts`)
 
 - **Hold**: `conf_hold_status` on the lead leg.
-- **Warm transfer**: the closer is claimed first (ON_CALL), the lead leg is
+- **Warm transfer to a closer** (the in-dialer kind; external numbers are
+  the section above): the closer is claimed first (ON_CALL), the lead leg is
   redirected to `/jambonz/transfer` which joins the closer's room; the
   fronter's `Call` closes with a `Transfer` row and a second `Call` under
   the closer inherits the provider call sid (so status hooks follow it);

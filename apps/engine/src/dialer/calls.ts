@@ -14,6 +14,7 @@ import { afterAttempt, daypartNow } from "./cadence";
 import { removeInflight } from "./pacing";
 import { enqueueWebhooks, type WebhookEvent } from "../webhooks/deliver";
 import { leaveQueue } from "../inbound/router";
+import { endLiveTransfersForCall } from "./transfers";
 
 const sidKey = (sid: string) => `callsid:${sid}`;
 
@@ -161,6 +162,8 @@ export async function leadCallEnded(callId: string, status: string, sipStatus: n
   });
   if (call.campaignId) await removeInflight(call.campaignId, callId);
   await leaveQueue(callId).catch(() => undefined);
+  // A destination still ringing or in the three-way has nobody to talk to now.
+  await endLiveTransfersForCall(callId).catch((e) => log.warn({ err: e, callId }, "ending transfers after the lead left failed"));
   void chargeCallMinutes(callId).catch((e) => log.warn({ err: e, callId }, "billing: minutes charge failed"));
   // Short calls (hangups, voicemail drops, abandons) are what carrier analytics punish: count them per number.
   const talk = call.answeredAt ? (Date.now() - call.answeredAt.getTime()) / 1000 : 0;
@@ -181,14 +184,16 @@ export async function leadCallEnded(callId: string, status: string, sipStatus: n
     afterAttempt(call.lead.id, Boolean(call.bridgedAt), call.campaign).catch((e) => log.warn({ err: e, callId }, "cadence afterAttempt failed"));
   }
 
-  if (call.agentId) {
+  // After an external transfer the agent left this call long ago (wrap-up, or on a new call): an "ended" now must not touch their screen.
+  const agentLeft = Boolean(await prisma.transfer.findFirst({ where: { callId, agentLeftAt: { not: null } }, select: { id: true } }));
+  if (call.agentId && !agentLeft) {
     const agent = await getAgent(call.agentId);
     if (agent && agent.currentCallId === callId) {
       await patchAgent(call.agentId, { state: agent.agentCallSid ? "WRAP_UP" : "LOGGED_IN" });
     }
     emitToAgent(call.agentId, "call:update", { callId, status: "ended", outcome });
   }
-  emitToTenant(call.tenantId, "floor:call", { callId, status: "ended", outcome });
+  emitToTenant(call.tenantId, "floor:call", { callId, status: "ended", outcome, transferred: agentLeft });
 }
 
 /**
@@ -230,6 +235,12 @@ export interface DispositionInput {
   callbackAt?: string | null;
   callbackScope?: "AGENT" | "CAMPAIGN";
   actorId: string;
+  /**
+   * Write the disposition but leave the agent in WRAP_UP on this call so they
+   * can change it (the auto "Transferred" disposition when they leave a
+   * transferred call). Default: the agent goes back to READY.
+   */
+  keepWrapUp?: boolean;
 }
 
 /** The campaign's callback disposition, created as "Callback" (CB) when the campaign has none. */
@@ -280,7 +291,8 @@ export async function dispositionCall(input: DispositionInput): Promise<{ ok: tr
 
   const agent = await getAgent(input.actorId);
   if (agent && agent.currentCallId === call.id) {
-    await patchAgent(input.actorId, { currentCallId: null, state: agent.agentCallSid ? "READY" : "LOGGED_IN" });
+    if (input.keepWrapUp) await patchAgent(input.actorId, { state: agent.agentCallSid ? "WRAP_UP" : "LOGGED_IN" });
+    else await patchAgent(input.actorId, { currentCallId: null, state: agent.agentCallSid ? "READY" : "LOGGED_IN" });
   }
   emitToTenant(call.tenantId, "floor:call", { callId: call.id, status: "dispositioned", code: disp.code });
   void onDispositioned(call.tenantId, call.campaign.id, input.actorId, call.id, { isSale: disp.isSale, isContact: disp.isContact, code: disp.code });

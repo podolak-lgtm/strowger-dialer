@@ -109,7 +109,7 @@ export async function chargeCallMinutes(callId: string): Promise<void> {
   const minutes = Math.round((seconds / 60) * 10000) / 10000;
   const [a, r] = await Promise.all([ensureAccount(call.tenantId), rates()]);
   const costPerMin = call.direction === "INBOUND" ? r.telnyxInMillicentsPerMin : r.telnyxOutMillicentsPerMin;
-  await charge({ tenantId: call.tenantId, category: "MINUTES", quantity: minutes, unitMillicents: a.perMinuteMillicents, costCents: Math.round((minutes * costPerMin) / 1000), note: `${call.direction === "INBOUND" ? "Inbound" : "Outbound"} call, ${Math.round(seconds)} s`, refId: callId });
+  await charge({ tenantId: call.tenantId, category: "MINUTES", quantity: minutes, unitMillicents: a.perMinuteMillicents, costCents: Math.round((minutes * costPerMin) / 1000), note: `${call.direction === "INBOUND" ? "Inbound" : call.direction === "TRANSFER" ? "Transfer leg" : "Outbound"} call, ${Math.round(seconds)} s`, refId: callId });
 }
 
 /** A number's monthly fee: our cost plus the markup. Once per number per month. */

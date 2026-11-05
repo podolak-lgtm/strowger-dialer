@@ -55,4 +55,5 @@ test("without rotation the gap alone decides", () => {
 
 test("templates render and blank unknown keys", () => {
   assert.equal(renderTemplate("Hi {{first_name}}, call from {{ caller_id_number }} {{nope}}", { first_name: "Ada", caller_id_number: "(305) 555-0100" }), "Hi Ada, call from (305) 555-0100 ");
+  assert.equal(renderTemplate("Lead {{lead.firstName}} {{ lead.lastName }}", { "lead.firstName": "Ada", "lead.lastName": "Lovelace" }), "Lead Ada Lovelace");
 });

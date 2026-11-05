@@ -12,17 +12,18 @@ export default async function AgentPage({ searchParams }: PageProps<"/agent">) {
 
   const assigned = await prisma.campaignAgent.findMany({
     where: { userId: s.user.id, campaign: { status: "ACTIVE" } },
-    include: { campaign: { include: { dispositions: { where: { active: true }, orderBy: { sortOrder: "asc" } } } } },
+    include: { campaign: { include: { dispositions: { where: { active: true }, orderBy: { sortOrder: "asc" } }, transferDestinations: { where: { active: true }, orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }] } } } },
   });
   // Supervisors may work any active campaign.
   const extra =
     s.roles.includes("SUPERVISOR") || s.roles.includes("ADMIN")
-      ? await prisma.campaign.findMany({ where: { tenantId: s.tenant.id, status: "ACTIVE", id: { notIn: assigned.map((a) => a.campaignId) } }, include: { dispositions: { where: { active: true }, orderBy: { sortOrder: "asc" } } } })
+      ? await prisma.campaign.findMany({ where: { tenantId: s.tenant.id, status: "ACTIVE", id: { notIn: assigned.map((a) => a.campaignId) } }, include: { dispositions: { where: { active: true }, orderBy: { sortOrder: "asc" } }, transferDestinations: { where: { active: true }, orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }] } } })
       : [];
+  const destinations = (rows: { id: string; name: string; type: "COLD" | "WARM"; callerIdMode: "CUSTOMER" | "STATIC"; staticCallerId: string | null }[]) => rows.map((d) => ({ id: d.id, name: d.name, type: d.type, callerIdMode: d.callerIdMode, staticCallerId: d.staticCallerId }));
 
   const campaigns: ConsoleProps["campaigns"] = [
-    ...assigned.map((a) => ({ id: a.campaign.id, name: a.campaign.name, dialMode: a.campaign.dialMode, agentMode: a.agentMode, outboundOn: a.outboundOn, closersMayDial: a.campaign.closersMayDial, wrapUpSeconds: a.campaign.wrapUpSeconds, screenerScript: a.campaign.screenerScript, callbackOwnerMinutes: a.campaign.callbackOwnerMinutes, dispositions: a.campaign.dispositions.map((d) => ({ id: d.id, code: d.code, label: d.label, hotkey: d.hotkey, isCallback: d.isCallback, isSale: d.isSale, isDnc: d.isDnc })) })),
-    ...extra.map((c) => ({ id: c.id, name: c.name, dialMode: c.dialMode, agentMode: "BOTH" as const, outboundOn: true, closersMayDial: c.closersMayDial, wrapUpSeconds: c.wrapUpSeconds, screenerScript: c.screenerScript, callbackOwnerMinutes: c.callbackOwnerMinutes, dispositions: c.dispositions.map((d) => ({ id: d.id, code: d.code, label: d.label, hotkey: d.hotkey, isCallback: d.isCallback, isSale: d.isSale, isDnc: d.isDnc })) })),
+    ...assigned.map((a) => ({ id: a.campaign.id, name: a.campaign.name, dialMode: a.campaign.dialMode, agentMode: a.agentMode, outboundOn: a.outboundOn, closersMayDial: a.campaign.closersMayDial, wrapUpSeconds: a.campaign.wrapUpSeconds, screenerScript: a.campaign.screenerScript, callbackOwnerMinutes: a.campaign.callbackOwnerMinutes, dispositions: a.campaign.dispositions.map((d) => ({ id: d.id, code: d.code, label: d.label, hotkey: d.hotkey, isCallback: d.isCallback, isSale: d.isSale, isDnc: d.isDnc })), transferDestinations: destinations(a.campaign.transferDestinations) })),
+    ...extra.map((c) => ({ id: c.id, name: c.name, dialMode: c.dialMode, agentMode: "BOTH" as const, outboundOn: true, closersMayDial: c.closersMayDial, wrapUpSeconds: c.wrapUpSeconds, screenerScript: c.screenerScript, callbackOwnerMinutes: c.callbackOwnerMinutes, dispositions: c.dispositions.map((d) => ({ id: d.id, code: d.code, label: d.label, hotkey: d.hotkey, isCallback: d.isCallback, isSale: d.isSale, isDnc: d.isDnc })), transferDestinations: destinations(c.transferDestinations) })),
   ];
 
   const billing = await billingStatus();
