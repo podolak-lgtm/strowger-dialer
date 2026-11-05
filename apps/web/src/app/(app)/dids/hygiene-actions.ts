@@ -38,24 +38,29 @@ export async function setRest(formData: FormData) {
   revalidatePath("/dids");
 }
 
-/** Drive the Free Caller Registry form from the engine (several minutes). */
+export type FcrProgress = { state: "running" | "done" | "failed"; step: string; log: { at: string; line: string }[]; startedAt: string; finishedAt?: string; result?: { ok: boolean; feedbackId?: string; count: number; error?: string; step?: string } };
+
+/** Start the Free Caller Registry run on the engine; it runs in the background and the page shows its progress. */
 export async function registerAtRegistry() {
   const s = await requireRole("SUPERVISOR");
-  let msg: string;
-  let kind = "ok";
+  let msg: string | null = null;
   try {
-    const r = await engine<{ ok: boolean; feedbackId?: string; count: number; error?: string; step?: string }>("/provision/fcr", { method: "POST", body: JSON.stringify({ tenantId: s.tenant.id }) });
-    if (r.ok) {
-      msg = `Registered ${r.count} number${r.count === 1 ? "" : "s"} at the Free Caller Registry (feedback id ${r.feedbackId}). First Orion, Hiya and TNS email confirmations to the contact address.`;
-      await prisma.auditLog.create({ data: { tenantId: s.tenant.id, actorId: s.user.id, action: "did.registered", after: { count: r.count, feedbackId: r.feedbackId, via: "fcr-auto" } } });
-    } else {
-      kind = "error";
-      msg = `Registry run stopped at "${r.step}": ${r.error}`;
-    }
+    const r = await engine<{ ok: boolean; error?: string }>("/provision/fcr", { method: "POST", body: JSON.stringify({ tenantId: s.tenant.id }) });
+    if (!r.ok) msg = r.error ?? "Could not start";
+    else await prisma.auditLog.create({ data: { tenantId: s.tenant.id, actorId: s.user.id, action: "did.register.start" } });
   } catch (e) {
-    kind = "error";
     msg = e instanceof Error ? e.message : String(e);
   }
   revalidatePath("/dids");
-  redirect(`/dids?msg=${encodeURIComponent(msg)}&kind=${kind}`);
+  redirect(msg ? `/dids?msg=${encodeURIComponent(msg)}&kind=error` : "/dids");
+}
+
+export async function registryProgress(): Promise<FcrProgress | null> {
+  const s = await requireRole("SUPERVISOR");
+  try {
+    const r = await engine<{ progress: FcrProgress | null }>(`/provision/fcr/status?tenantId=${s.tenant.id}`);
+    return r.progress;
+  } catch {
+    return null;
+  }
 }

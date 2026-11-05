@@ -20,7 +20,7 @@ import { releaseLead, reserveNextLead } from "../dialer/hopper";
 import { jambonz, jambonzConfigured } from "../jambonz/client";
 import { assignNumbersToCampaign, createBrand, createTenDlcCampaign, orderNumbers, provisionStatus, releaseNumber, searchNumbers, setupCarrier, syncNumbers, tenDlcStatus, usecaseFees } from "../provision";
 import type { BrandInput, CampaignInput } from "../provision/telnyx";
-import { registerAtFcr } from "../provision/fcr";
+import { fcrProgress, startFcrRun } from "../provision/fcr";
 import { chatHistory, sendChat } from "../chat";
 import { acceptWager, gamesOverview, proposeWager, withdrawWager } from "../games";
 import { suggest } from "../assist";
@@ -368,8 +368,9 @@ export async function registerInternalRoutes(app: FastifyInstance): Promise<void
   // Free Caller Registry: drives their web form; several minutes. The reply carries ok/error rather than a status code.
   app.post("/internal/provision/fcr", async (req) => {
     const b = z.object({ tenantId: z.string(), ids: z.array(z.string()).optional() }).parse(req.body);
-    return registerAtFcr(b.tenantId, b.ids);
+    return startFcrRun(b.tenantId, b.ids);
   });
+  app.get("/internal/provision/fcr/status", async (req) => ({ progress: await fcrProgress(z.object({ tenantId: z.string() }).parse(req.query).tenantId) }));
   app.get("/internal/provision/tendlc", async (req) => tenDlcStatus(z.object({ tenantId: z.string() }).parse(req.query).tenantId));
   app.post("/internal/provision/tendlc/brand", async (req, reply) => {
     const b = z.object({ tenantId: z.string(), brand: z.custom<BrandInput>() }).parse(req.body);

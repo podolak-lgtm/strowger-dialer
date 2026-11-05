@@ -14,6 +14,7 @@ import { prisma } from "@strowger/db";
 import { chromium } from "playwright";
 import { config } from "../config";
 import { log } from "../log";
+import { redis } from "../redis";
 
 export interface FcrProfile {
   contactEmail: string;
@@ -31,6 +32,41 @@ export interface FcrProfile {
   /** Registry ranges: 1, 101, 501, 1001, 5001, 10001, 50001, dontknow */
   callCount: string;
   explanation?: string;
+}
+
+/** Progress of a run, for the DIDs page to poll. Kept in Redis for a day. */
+export interface FcrProgress {
+  state: "running" | "done" | "failed";
+  step: string;
+  log: { at: string; line: string }[];
+  startedAt: string;
+  finishedAt?: string;
+  result?: FcrResult;
+}
+const progressKey = (tenantId: string) => `fcr:progress:${tenantId}`;
+export async function fcrProgress(tenantId: string): Promise<FcrProgress | null> {
+  const raw = await redis.get(progressKey(tenantId));
+  return raw ? (JSON.parse(raw) as FcrProgress) : null;
+}
+async function note(tenantId: string, p: FcrProgress, step: string, line: string): Promise<void> {
+  p.step = step;
+  p.log.push({ at: new Date().toISOString(), line });
+  await redis.set(progressKey(tenantId), JSON.stringify(p), "EX", 86_400);
+}
+
+/** Start a run in the background; the page polls fcrProgress. Refuses while one is running. */
+export async function startFcrRun(tenantId: string, ids?: string[]): Promise<{ ok: true } | { ok: false; error: string }> {
+  const cur = await fcrProgress(tenantId);
+  if (cur?.state === "running" && Date.now() - new Date(cur.startedAt).getTime() < 15 * 60_000) return { ok: false, error: "A registry run is already in progress" };
+  const p: FcrProgress = { state: "running", step: "starting", log: [], startedAt: new Date().toISOString() };
+  await note(tenantId, p, "starting", "Starting the registry run");
+  void registerAtFcr(tenantId, ids, (step, line) => note(tenantId, p, step, line)).then(async (result) => {
+    p.state = result.ok ? "done" : "failed";
+    p.result = result;
+    p.finishedAt = new Date().toISOString();
+    await note(tenantId, p, result.ok ? "done" : "failed", result.ok ? `Registered ${result.count} numbers. Feedback id ${result.feedbackId}.` : `Stopped at "${result.step}": ${result.error}`);
+  });
+  return { ok: true };
 }
 
 export interface FcrResult {
@@ -77,7 +113,7 @@ async function waitForCode(toAddress: string, since: Date, timeoutMs = 4 * 60_00
 }
 
 /** Register every unregistered number (or the ids given). Takes a few minutes; call it from a route that does not time out. */
-export async function registerAtFcr(tenantId: string, ids?: string[]): Promise<FcrResult> {
+export async function registerAtFcr(tenantId: string, ids?: string[], onStep: (step: string, line: string) => Promise<void> | void = () => undefined): Promise<FcrResult> {
   const tenant = await prisma.tenant.findUniqueOrThrow({ where: { id: tenantId } });
   const profile = ((tenant.settings ?? {}) as { fcr?: Partial<FcrProfile> }).fcr;
   const problems = profileProblems(profile);
@@ -94,6 +130,7 @@ export async function registerAtFcr(tenantId: string, ids?: string[]): Promise<F
   const dir = await mkdtemp(path.join(tmpdir(), "fcr-"));
   const file = path.join(dir, "numbers.txt");
   await writeFile(file, phones.join("\r\n") + "\r\n", "utf8");
+  await onStep("open", `Opening the registry form for ${phones.length} number${phones.length === 1 ? "" : "s"}`);
   const browser = await chromium.launch({ args: ["--no-sandbox"] });
   let step = "open";
   try {
@@ -102,21 +139,25 @@ export async function registerAtFcr(tenantId: string, ids?: string[]): Promise<F
     await page.goto(FORM_URL, { waitUntil: "networkidle", timeout: 60_000 });
 
     step = "send code";
+    await onStep(step, `Asking the registry to email a code to ${p.contactEmail}`);
     const sentAt = new Date();
     await page.fill("#enterprise_contact_verification_email", p.contactEmail);
     await page.click("#new-send-verification-code");
     await page.waitForSelector("#captcha", { state: "visible" });
 
     step = "read code";
+    await onStep(step, "Waiting for the code to arrive in Crossbar's inbox (up to 4 minutes)");
     const code = await waitForCode(p.contactEmail, sentAt);
     log.info({ tenantId }, "fcr: verification code received");
 
     step = "verify";
+    await onStep(step, "Code received; verifying");
     await page.fill("#captcha", code);
     await page.click("#verifyAndContinue");
     await page.waitForSelector("#enterprise_company_name", { state: "visible", timeout: 20_000 });
 
     step = "business details";
+    await onStep(step, `Filling in business details for ${p.companyName}`);
     await page.fill("#enterprise_company_name", p.companyName);
     await page.fill("#enterprise_company_address_line_1", p.address1);
     if (p.address2) await page.fill("#enterprise_company_address_line_2", p.address2);
@@ -138,6 +179,7 @@ export async function registerAtFcr(tenantId: string, ids?: string[]): Promise<F
     }
 
     step = "upload numbers";
+    await onStep(step, "Uploading the numbers file");
     await page.click("#tab2");
     await page.setInputFiles("#enterpriseFile", file);
     await page.click("#nextButton2");
@@ -148,6 +190,7 @@ export async function registerAtFcr(tenantId: string, ids?: string[]): Promise<F
     }
 
     step = "submit";
+    await onStep(step, "Accepting the terms and submitting");
     await page.check("#enableCheckbox");
     await page.click("#submitButton");
     await page.waitForFunction('(() => { const el = document.querySelector(".feedback-id"); const t = el && el.textContent ? el.textContent.trim() : ""; return t !== "" && t !== "[]"; })()', undefined, { timeout: 60_000 });

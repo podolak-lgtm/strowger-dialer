@@ -5,7 +5,8 @@ import { requireRole } from "@/lib/auth";
 import { Badge, Button, Card, Field, Notice, PageHeader, inputClass } from "@/components/ui";
 import { discrepant, provider, worst } from "@/lib/did-reputation";
 import { assignNumberCampaign, bulkCheck, resolveNumber, setAutoRecheck, testNumber } from "./actions";
-import { markRegistered, registerAtRegistry, setDailyCap, setRest } from "./hygiene-actions";
+import { markRegistered, registerAtRegistry, registryProgress, setDailyCap, setRest } from "./hygiene-actions";
+import { FcrProgressView } from "@/components/fcr-progress";
 import { capForNumber, numbersNeeded, warmupStage } from "@strowger/shared/did-hygiene";
 
 function VerdictCell({ v }: { v: CarrierVerdict }) {
@@ -60,6 +61,8 @@ export default async function DidsPage({ searchParams }: PageProps<"/dids">) {
   const recheck = settings.didDailyRecheck ?? true;
   const vendor = provider().name;
   const unregistered = all.filter((n) => !n.registeredAt).length;
+  const fcrRun = await registryProgress();
+  const showRun = fcrRun && (fcrRun.state === "running" || Date.now() - new Date(fcrRun.finishedAt ?? fcrRun.startedAt).getTime() < 6 * 3600_000);
   const resting = all.filter((n) => n.restUntil && n.restUntil > new Date()).length;
   const dialsToday = all.reduce((n, x) => n + x.usedToday, 0);
   const shortToday = all.reduce((n, x) => n + x.shortCallsToday, 0);
@@ -124,12 +127,17 @@ export default async function DidsPage({ searchParams }: PageProps<"/dids">) {
           Caps by number age: week 1 → 40/day, weeks 2–3 → 65/day, then 75/day, spread over 10 hours. Any spam or blocked reading pulls the number for 21 days. Local
           area codes are matched first. Short calls (hangups, voicemail drops, abandons) are what carriers punish most; keep the abandon rate low.
         </p>
+        {showRun ? (
+          <div className="mt-3">
+            <FcrProgressView initial={fcrRun} />
+          </div>
+        ) : null}
         {unregistered ? (
           <div className="mt-3 rounded-md border border-amber-900/60 bg-amber-950/30 p-3">
             <div className="mb-2 text-sm font-medium text-amber-200">Register {unregistered} new number{unregistered === 1 ? "" : "s"} at the Free Caller Registry (free)</div>
             <form action={registerAtRegistry} className="mb-3 flex flex-wrap items-center gap-3">
-              <Button type="submit" disabled={!fcrReady} className="bg-emerald-400 text-emerald-950 hover:bg-emerald-300">
-                Register now, automatically
+              <Button type="submit" disabled={!fcrReady || fcrRun?.state === "running"} className="bg-emerald-400 text-emerald-950 hover:bg-emerald-300">
+                {fcrRun?.state === "running" ? "Registering…" : "Register now, automatically"}
               </Button>
               <span className="text-xs text-zinc-400">
                 {fcrReady ? (
