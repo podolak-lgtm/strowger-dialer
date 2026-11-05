@@ -339,6 +339,7 @@ export default async function SettingsPage() {
           })()}
         </Card>
 
+        <div id="fcr" className="lg:col-span-2 scroll-mt-6" />
         <Card title="Free Caller Registry profile" className="lg:col-span-2">
           {(() => {
             const saved = ((s.tenant.settings ?? {}) as { fcr?: Record<string, string | { feedbackId?: string; at?: string; count?: number }> }).fcr ?? {};

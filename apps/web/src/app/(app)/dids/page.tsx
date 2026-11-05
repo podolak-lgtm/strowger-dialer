@@ -140,7 +140,7 @@ export default async function DidsPage({ searchParams }: PageProps<"/dids">) {
                 ) : (
                   <>
                     Save the{" "}
-                    <Link href="/settings" className="text-sky-300 underline">
+                    <Link href="/settings#fcr" className="text-sky-300 underline">
                       Free Caller Registry profile in Settings
                     </Link>{" "}
                     first (business details and a crossbar.digital contact address).
