@@ -4,10 +4,10 @@
 // hand a live lead to. Add, edit, reorder, deactivate, copy from another
 // campaign. The engine's dialer/transfers.ts does the dialling.
 import { prisma } from "@strowger/db";
-import { normalizePhone } from "@strowger/shared/phone";
-import { destinationE164 } from "@strowger/shared/transfers";
+import { STATIC_CALLER_ID_NOT_OURS, parseTransferDestination } from "@strowger/shared/campaign-form";
 import { revalidatePath } from "next/cache";
 import { requireRole } from "@/lib/auth";
+import { ownsActiveNumber } from "./campaign-data";
 
 async function ownCampaign(tenantId: string, campaignId: string) {
   const c = await prisma.campaign.findFirst({ where: { id: campaignId, tenantId }, select: { id: true } });
@@ -20,22 +20,13 @@ export async function saveTransferDestination(formData: FormData) {
   const campaignId = String(formData.get("campaignId") ?? "");
   const id = String(formData.get("destinationId") ?? "");
   await ownCampaign(s.tenant.id, campaignId);
-  const name = String(formData.get("name") ?? "").trim().slice(0, 80);
-  const phone = destinationE164(String(formData.get("phone") ?? ""));
-  if (!name) throw new Error("A destination needs a name");
-  if (!phone) throw new Error("A destination needs a dialable number, such as (305) 555-0100 or +44 20 7946 0958");
-  const type = String(formData.get("type")) === "WARM" ? "WARM" : "COLD";
-  const callerIdMode = String(formData.get("callerIdMode")) === "STATIC" ? "STATIC" : "CUSTOMER";
-  const staticRaw = normalizePhone(String(formData.get("staticCallerId") ?? ""));
-  let staticCallerId: string | null = null;
-  if (callerIdMode === "STATIC") {
-    if (!staticRaw) throw new Error("Pick one of the workspace's numbers for the fixed caller ID");
-    const owned = await prisma.callerIdNumber.findFirst({ where: { tenantId: s.tenant.id, phone: staticRaw, status: "ACTIVE" }, select: { id: true } });
-    if (!owned) throw new Error("The fixed caller ID must be one of the workspace's active numbers");
-    staticCallerId = staticRaw;
-  }
-  const whisperText = String(formData.get("whisperText") ?? "").trim().slice(0, 500) || null;
-  const data = { tenantId: s.tenant.id, campaignId, name, phone, type, callerIdMode, staticCallerId, whisperOn: formData.get("whisperOn") === "on", whisperText } as const;
+  const parsed = parseTransferDestination((k) => {
+    const v = formData.get(k);
+    return v === null ? null : String(v);
+  });
+  const { name, phone, type, callerIdMode } = parsed;
+  if (parsed.staticCallerId && !(await ownsActiveNumber(prisma, s.tenant.id, parsed.staticCallerId))) throw new Error(STATIC_CALLER_ID_NOT_OURS);
+  const data = { tenantId: s.tenant.id, campaignId, ...parsed } as const;
   if (id) {
     const existing = await prisma.transferDestination.findFirst({ where: { id, tenantId: s.tenant.id, campaignId } });
     if (!existing) throw new Error("Unknown destination");

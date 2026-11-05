@@ -4,7 +4,7 @@
 // the weekly top-up and the auto-close of runs past their end run from the
 // scheduler. Rules in @strowger/shared/games.
 import { prisma } from "@strowger/db";
-import { INSTANT_KINDS, WAGER_KINDS, WAGER_NOTE_MAX, WAGER_SHORT, bestHand, dayKey, daysLeft, dealCard, declinePlan, describeHand, earnsCard, handMakers, ledgerKind, periodKeyFor, rankStandings, runIsLive, wagerActions, weekKey, type HandRank, type PokerRule, type WagerKind } from "@strowger/shared/games";
+import { INSTANT_KINDS, WAGER_KINDS, WAGER_NOTE_MAX, WAGER_SHORT, betTopUps, bestHand, clampBetSettings, dayKey, daysLeft, dealCard, declinePlan, describeHand, earnsCard, handMakers, ledgerKind, periodKeyFor, rankStandings, runIsLive, wagerActions, weekKey, type HandRank, type PokerRule, type WagerKind } from "@strowger/shared/games";
 import { log } from "../log";
 import { emitToAgent, emitToTenant } from "../realtime";
 
@@ -60,18 +60,24 @@ async function credit(tenantId: string, userId: string, delta: number, reason: s
  *  every agent on the campaign who is below the allowance, so the first week is playable at once. */
 export async function setCampaignBets(tenantId: string, campaignId: string, actorId: string, input: { betsEnabled: boolean; weeklyPoints: number; maxStake: number }): Promise<CampaignGames> {
   const before = await campaignGames(tenantId, campaignId);
-  const weeklyPoints = Math.max(0, Math.min(1_000_000, Math.round(input.weeklyPoints) || 0));
-  const maxStake = Math.max(1, Math.min(1_000_000, Math.round(input.maxStake) || 1));
+  const { weeklyPoints, maxStake } = clampBetSettings(input);
   const c = await prisma.campaign.update({ where: { id: campaignId }, data: { betsEnabled: input.betsEnabled, weeklyPoints, maxStake }, select: campaignGamesSelect });
   await prisma.auditLog.create({ data: { tenantId, actorId, action: "games.bets", target: campaignId, before: { betsEnabled: before.betsEnabled, weeklyPoints: before.weeklyPoints, maxStake: before.maxStake }, after: { betsEnabled: c.betsEnabled, weeklyPoints, maxStake } } });
   if (c.betsEnabled && !before.betsEnabled) {
     const agents = await prisma.campaignAgent.findMany({ where: { campaignId, tenantId }, select: { user: { select: { id: true, points: true, active: true } } } });
-    for (const { user } of agents) {
-      if (user.active && user.points < weeklyPoints) await credit(tenantId, user.id, weeklyPoints - user.points, `Bets on for ${c.name}: topped up to ${weeklyPoints.toLocaleString()}`);
-    }
+    for (const t of betTopUps(agents.map((a) => a.user), weeklyPoints)) await credit(tenantId, t.userId, t.delta, betsTopUpReason(c.name, weeklyPoints));
   }
   emitToTenant(tenantId, "games:bets", { campaignId, campaign: c.name, betsEnabled: c.betsEnabled, weeklyPoints, maxStake });
   return c;
+}
+
+export const betsTopUpReason = (campaign: string, weeklyPoints: number) => `Bets on for ${campaign}: topped up to ${weeklyPoints.toLocaleString()}`;
+
+/** The campaign page's single Save wrote the bets switch (and any top-ups) in its own transaction; tell the consoles. */
+export async function announceCampaignBets(tenantId: string, campaignId: string, credits: { userId: string; delta: number; reason: string }[]): Promise<void> {
+  const c = await campaignGames(tenantId, campaignId);
+  for (const t of credits) emitToAgent(t.userId, "games:points", { delta: t.delta, reason: t.reason });
+  emitToTenant(tenantId, "games:bets", { campaignId, campaign: c.name, betsEnabled: c.betsEnabled, weeklyPoints: c.weeklyPoints, maxStake: c.maxStake });
 }
 
 // ---- Bets

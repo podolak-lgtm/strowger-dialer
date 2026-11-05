@@ -1,6 +1,6 @@
 "use server";
 
-// Campaign page → Games card: form actions over the games server actions
+// Campaign page → Games tab: form actions over the games server actions
 // (which check ADMIN/SUPERVISOR or a team leader with `manage_games`).
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
@@ -9,7 +9,7 @@ import { endPokerRun, setCampaignBets, startPokerRun } from "@/lib/games-actions
 function back(campaignId: string, error?: string): never {
   revalidatePath(`/campaigns/${campaignId}`);
   revalidatePath("/games");
-  redirect(`/campaigns/${campaignId}${error ? `?games=${encodeURIComponent(error)}` : ""}#games`);
+  redirect(`/campaigns/${campaignId}?tab=games${error ? `&games=${encodeURIComponent(error)}` : ""}`);
 }
 
 export async function saveCampaignBets(formData: FormData) {

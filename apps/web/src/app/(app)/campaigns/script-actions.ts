@@ -2,13 +2,14 @@
 
 import { prisma } from "@strowger/db";
 import { revalidatePath } from "next/cache";
+import { parseRebuttals, scriptBody } from "@strowger/shared/campaign-form";
 import { requireRole } from "@/lib/auth";
 
 /** Save the campaign script as a new version; the newest active version is what agents see. */
 export async function saveScript(formData: FormData) {
   const s = await requireRole("SUPERVISOR");
   const campaignId = String(formData.get("campaignId"));
-  const body = String(formData.get("body") ?? "").trim();
+  const body = scriptBody(formData.get("body") as string | null);
   const c = await prisma.campaign.findFirst({ where: { id: campaignId, tenantId: s.tenant.id }, select: { id: true } });
   if (!c) throw new Error("Unknown campaign");
   const last = await prisma.script.findFirst({ where: { campaignId }, orderBy: { version: "desc" } });
@@ -24,16 +25,7 @@ export async function saveRebuttals(formData: FormData) {
   const campaignId = String(formData.get("campaignId"));
   const c = await prisma.campaign.findFirst({ where: { id: campaignId, tenantId: s.tenant.id }, select: { id: true } });
   if (!c) throw new Error("Unknown campaign");
-  const rebuttals = String(formData.get("rebuttals") ?? "")
-    .split(/\r?\n/)
-    .map((l) => l.trim())
-    .filter(Boolean)
-    .map((l) => {
-      const [objection, ...rest] = l.split("|");
-      return { objection: (objection ?? "").trim(), response: rest.join("|").trim() };
-    })
-    .filter((r) => r.objection && r.response)
-    .slice(0, 200);
+  const rebuttals = parseRebuttals(formData.get("rebuttals") as string | null);
   await prisma.campaign.update({ where: { id: campaignId }, data: { rebuttals } });
   revalidatePath(`/campaigns/${campaignId}`);
 }

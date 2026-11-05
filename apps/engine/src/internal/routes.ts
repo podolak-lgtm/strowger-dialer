@@ -23,7 +23,7 @@ import { assignNumbersToCampaign, createBrand, createTenDlcCampaign, orderNumber
 import type { BrandInput, CampaignInput } from "../provision/telnyx";
 import { fcrProgress, startFcrRun } from "../provision/fcr";
 import { chatHistory, sendChat } from "../chat";
-import { acceptWager, declineWager, endPokerRun, gamesOverview, proposeWager, setCampaignBets, startPokerRun, withdrawWager } from "../games";
+import { acceptWager, announceCampaignBets, declineWager, endPokerRun, gamesOverview, proposeWager, setCampaignBets, startPokerRun, withdrawWager } from "../games";
 import { suggest } from "../assist";
 import { billingOverview, billingStatus, chargeSeatIfNew, outboundAllowed, platformOverview, rates, recordPayment } from "../billing";
 import { log } from "../log";
@@ -366,6 +366,11 @@ export async function registerInternalRoutes(app: FastifyInstance): Promise<void
     } catch (e) {
       return reply.code(400).send({ ok: false, error: e instanceof Error ? e.message : String(e) });
     }
+  });
+  app.post("/internal/games/bets-saved", async (req) => {
+    const b = z.object({ tenantId: z.string(), campaignId: z.string(), credits: z.array(z.object({ userId: z.string(), delta: z.number(), reason: z.string() })).default([]) }).parse(req.body);
+    await announceCampaignBets(b.tenantId, b.campaignId, b.credits);
+    return { ok: true };
   });
   app.post("/internal/games/run", async (req, reply) => {
     const b = Ids.extend({

@@ -1,5 +1,6 @@
 import { UserButton } from "@clerk/nextjs";
 import Link from "next/link";
+import { NavLink } from "@/components/nav-link";
 import { hasRole, isBarePlatform, requireSession } from "@/lib/auth";
 import { billingStatus } from "@/lib/billing-actions";
 import { BillingBadge } from "@/components/billing-badge";
@@ -46,7 +47,7 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
     <div className="flex min-h-screen flex-col">
       {acting ? (
         // Full-width band above everything: the owner is inside a client and must never mistake it for their own workspace.
-        <header className="sticky top-0 z-30 border-b-2 border-sky-400 bg-gradient-to-r from-sky-900 via-sky-800 to-sky-900 text-sky-50 shadow-lg shadow-sky-950/50">
+        <header data-app-band className="sticky top-0 z-30 border-b-2 border-sky-400 bg-gradient-to-r from-sky-900 via-sky-800 to-sky-900 text-sky-50 shadow-lg shadow-sky-950/50">
           <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 px-6 py-3">
             <div className="min-w-0">
               <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-sky-300">Working in client workspace</div>
@@ -68,18 +69,34 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
           </div>
         </header>
       ) : null}
+      {/* Narrow screens: the sidebar folds into a menu so nothing scrolls sideways. */}
+      <details className="border-b border-zinc-800 bg-zinc-900/60 md:hidden">
+        <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-3 text-sm">
+          <span className="text-lg font-semibold tracking-tight">Strowger</span>
+          <span className="rounded-md border border-zinc-700 px-2 py-1 text-zinc-300">Menu</span>
+        </summary>
+        <nav className="flex flex-wrap gap-1 px-3 pb-3 text-sm">
+          {nav
+            .filter((n) => n.show)
+            .map((n) => (
+              <NavLink key={n.href} href={n.href} className="rounded-md px-2.5 py-1.5 text-zinc-300 hover:bg-zinc-800 hover:text-white">
+                {n.label}
+              </NavLink>
+            ))}
+        </nav>
+      </details>
       <div className="flex flex-1">
-        <aside className="flex w-56 flex-col border-r border-zinc-800 bg-zinc-900/60 p-4">
-          <Link href={bare ? "/platform" : "/dashboard"} className="mb-6 text-lg font-semibold tracking-tight">
+        <aside className="sticky top-0 hidden h-screen w-56 shrink-0 flex-col overflow-y-auto border-r border-zinc-800 bg-zinc-900/60 p-4 md:flex">
+          <Link href={bare ? "/platform" : "/dashboard"} className="mb-4 text-lg font-semibold tracking-tight">
             Strowger
           </Link>
-          <nav className="flex flex-1 flex-col gap-1 text-sm">
+          <nav className="flex flex-1 flex-col gap-0.5 text-sm">
             {nav
               .filter((n) => n.show)
               .map((n) => (
-                <Link key={n.href} href={n.href} className="rounded-md px-3 py-2 text-zinc-300 hover:bg-zinc-800 hover:text-white">
+                <NavLink key={n.href} href={n.href} className="rounded-md px-3 py-1.5 text-zinc-300 hover:bg-zinc-800 hover:text-white">
                   {n.label}
-                </Link>
+                </NavLink>
               ))}
             {bare ? <p className="mt-2 rounded-md border border-dashed border-zinc-700 px-3 py-2 text-xs leading-relaxed text-zinc-500">Pick a client under Platform to work on their campaigns, lists and numbers.</p> : null}
           </nav>
@@ -99,7 +116,7 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
             </div>
           </div>
         </aside>
-        <main className="flex-1 p-8">{children}</main>
+        <main className="min-w-0 flex-1 p-4 md:p-8">{children}</main>
       </div>
     </div>
   );

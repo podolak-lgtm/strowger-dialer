@@ -187,11 +187,10 @@ ratings, extensions), `/voicemails` (agents see their own; supervisors all).
   First entry is the National Solar Resolutions "Solar Exit" fronter
   (opener, recording disclosure, five qualifying questions, empathy
   lines, inline rebuttals, warm-transfer bridge, voicemail), written with
-  the console's `{{variables}}`. The campaign page's "Agent script" and
-  "Agent assist: rebuttals" cards use `TemplateTextarea`
-  (`campaigns/[id]/template-textarea.tsx`, client): a "Load a template"
-  select + button fills the textarea (confirming before it overwrites
-  text); nothing is stored until the card's Save. The rebuttal card's
+  the console's `{{variables}}`. The campaign page's Script & rebuttals
+  tab has a "Load script" / "Load rebuttals" picker in each card header
+  (`campaigns/[id]/tab-script-games.tsx`): it fills the draft (confirming
+  before it overwrites text); nothing is stored until Save campaign. The rebuttal card's
   placeholder is the first template's rebuttals in line format. Add a
   template by appending to the array; the test checks keys are unique
   and only known variables are used.
@@ -202,7 +201,8 @@ ratings, extensions), `/voicemails` (agents see their own; supervisors all).
   a new campaign starts with (`Tenant.settings.games.weeklyPoints/maxStake`;
   the migration `20261105220000_campaign_games_poker_runs` copied the old workspace values
   onto existing campaigns, bets off). Switches live on the campaign page
-  ("Games" card, `campaigns/[id]/games-card.tsx` → `campaigns/games-actions.ts`)
+  (Games tab: bets go through Save campaign, see "Campaign page"; the poker
+  run's Start/End are `campaigns/games-actions.ts`, immediate)
   and on `/games` ("Run the games" card) for whoever `canManageGames`
   (`lib/rights.ts`: ADMIN/SUPERVISOR, or a TEAM_LEADER whose level carries the
   opt-in right `manage_games`, which no level has by default). The web actions
@@ -480,10 +480,11 @@ warm. The customer is never put on hold: no hold music, no private consult.
   `type` COLD|WARM = the default for the console's flip, `callerIdMode`
   CUSTOMER|STATIC with `staticCallerId` = one of the workspace's numbers,
   `whisperOn`, `whisperText` template, `sortOrder`, `active`). Campaign
-  page → **Transfers** card: add, edit, ↑↓ reorder, deactivate, remove (a
-  destination that has been used is deactivated, never deleted), and
-  **Copy from another campaign** (its active destinations; same names are
-  skipped). `Transfer` gained `destinationId`, `destinationCallId`,
+  page → **Transfers** tab: a compact table, a row opens the form in a side
+  panel; add, edit, ↑↓ reorder, remove (a destination that has been used is
+  deactivated, never deleted) and **Copy from campaign** (its active
+  destinations; same names are skipped) all go into the draft and are
+  written by Save campaign; **Deactivate/Activate** acts at once. `Transfer` gained `destinationId`, `destinationCallId`,
   `callerIdShown`, `callerIdFallback`, `answeredAt`, `agentLeftAt`,
   `endedAt`, `outcome` (ANSWERED | NO_ANSWER | CANCELLED | FAILED); its
   existing `kind` is the mode used (COLD|WARM). The destination leg is its
@@ -761,6 +762,82 @@ Lead Queue expands (`CollapsibleLeadCard`) to the same editor.
   then least used. Any spam/blocked reading → SPAM_FLAGGED with a 21-day
   `restUntil`. Short calls (<10 s after answer) are counted per number
   (`shortCallsToday`). DIDs page shows all of it and bulk "mark registered".
+
+## Campaign page: tabs and one Save (owner, 5 Nov)
+
+`/campaigns/<id>` was ~5,200 px tall with 22 Save/Add buttons. It is now a
+sticky header (name, status, stat line, "● Unsaved changes on N tabs",
+Discard, **Save campaign**, Campaign builder) over nine tabs: Dialing,
+Lists & dial plans, Compliance, Voicemail & screeners, Script & rebuttals,
+Transfers, Dispositions, CRM push, Games. The owner's mockup
+(`strowger-campaign-tabs-mockup.html`) never reached the repository; the
+build follows the written spec. Each tab fits 1365×900 without scrolling;
+nothing scrolls sideways down to 390 px (row tables stack as cards through
+container queries, `@container` / `@min-[…]:`).
+
+- **Files.** `campaigns/[id]/page.tsx` (server) only loads: the snapshot
+  (`CampaignDraft`, values as the inputs hold them) plus read-only extras
+  (list counts, webhook delivery state, script history, runs). Client:
+  `editor.tsx` (reducer, header, tabs, save, guards), `editor-ui.tsx`
+  (draft-bound inputs, error highlight via `data-field`), `tab-*.tsx`.
+  Pure parts in `@strowger/shared`: `campaign-draft.ts` (tabs,
+  `SETTING_TAB`, `dirtyTabs`, `removedIds`, `rebaseDraft`) and
+  `campaign-form.ts` (every validation rule the per-section actions had,
+  now shared by them and the single save; tested in
+  `campaign-form.test.ts`).
+- **Tab in the URL**: `?tab=compliance`; default `dialing`. Switching uses
+  `history.replaceState` (no server round trip, no history entry).
+- **Dirty tracking**: per tab, `dirtyTabs(snapshot, draft)` (JSON diff of
+  the tab's slice); orange dot on the tab, red dot when Save returned an
+  error there. Discard puts the snapshot back. When fresh server data
+  arrives (after Save or an immediate action) `rebaseDraft` takes it for
+  clean tabs and keeps edited tabs as they are.
+- **One Save** = `saveCampaignAll` (`campaigns/save-all-action.ts`):
+  validates the whole draft first (errors keyed `settings.name`,
+  `dispositions.<rowKey>.code`, `transfers.<rowKey>.phone`, … with their
+  tab; the page jumps to the first tab, opens the transfer panel if needed
+  and focuses the field; the draft is kept), then writes everything inside
+  one interactive `prisma.$transaction`: campaign settings, rebuttals,
+  bets (with the switch-on top-ups), list attach/detach (`List.campaignId`),
+  dial plans, dispositions, transfer destinations incl. order, webhooks,
+  and a new `Script` version only when the text changed. Only rows that
+  differ from the database are written. One `AuditLog` row
+  `campaign.save` with the diff. Ctrl/Cmd+S saves; toast "Campaign saved".
+  After the commit, if bets changed, the engine is told
+  (`POST /internal/games/bets-saved` → `announceCampaignBets`: `games:bets`
+  to the tenant, `games:points` to each topped-up agent); if the engine is
+  down the save stands and the toast says the consoles were not told.
+  Bet clamps and top-ups are `clampBetSettings` / `betTopUps` in
+  `shared/games.ts`, used by the engine's own `setCampaignBets` too.
+- **What changed in behaviour, deliberately**: rows are added and removed
+  in the draft; a removed **disposition** that calls already used is
+  switched off (`active false`, shown dimmed with "off ↺" to restore), an
+  unused one is deleted; **webhooks** can be edited in place (URL, events,
+  Active replaces Pause/Resume); **lists** can be attached (moves a list
+  from another campaign; no job runs) and detached on the Lists tab.
+  Rebuttals are still one JSON field (no versions); only the script keeps
+  versions ("History (n)" loads an old one into the box).
+- **Immediate, never through Save** (each confirms): poker run Start / End
+  (`games-actions.ts`, redirects to `?tab=games`), transfer destination
+  Deactivate/Activate (`toggleTransferDestination`; the editor patches both
+  snapshot and draft so the tab stays clean), webhook Test.
+- **Leaving with unsaved changes**: sidebar and in-page links are
+  `components/nav-link.tsx` (Link + `onNavigate`, which is how Next 16
+  cancels a client navigation) asking `lib/leave-guard.ts`;
+  `beforeunload` for reload/close; Back is caught by a guard history entry
+  pushed when the draft first turns dirty (`popstate` → confirm; Cancel
+  re-pushes the entry at the current tab's URL).
+- The per-section actions (`updateCampaign`, `saveDialPlan`,
+  `saveDisposition`, `saveScript`, `saveRebuttals`,
+  `saveTransferDestination`, `addWebhook`, …) still exist with the same
+  rules (now via the shared helpers); the page no longer calls them.
+- **App shell**: the sidebar is sticky at full height (its own scroll) and
+  folds into a "Menu" under 768 px; `main` is `min-w-0`, padding 16 px on
+  phones. The client-workspace band carries `data-app-band` so the
+  campaign header sticks below it.
+- The app's `globals.css` still follows `prefers-color-scheme` for the body
+  (a light-mode browser gets a white page around the dark cards); the
+  campaign editor sets its own text colours so it reads either way.
 
 ## Campaign builder
 

@@ -16,7 +16,9 @@
     "./did-hygiene": "./src/did-hygiene.ts",
     "./games": "./src/games.ts",
     "./scripts": "./src/scripts.ts",
-    "./transfers": "./src/transfers.ts"
+    "./transfers": "./src/transfers.ts",
+    "./campaign-form": "./src/campaign-form.ts",
+    "./campaign-draft": "./src/campaign-draft.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

@@ -388,3 +388,18 @@ export function rightsForLevel(level: number, overrides?: Record<string, string[
   const list = overrides?.[String(l)] ?? DEFAULT_LEVEL_RIGHTS[l] ?? [];
   return new Set(list.filter((r): r is AgentRight => r in AGENT_RIGHTS));
 }
+
+// ---- Campaign bets switch
+
+/** The Monday allowance and stake cap as stored: whole numbers, allowance 0..1,000,000, stake 1..1,000,000. */
+export function clampBetSettings(input: { weeklyPoints: number; maxStake: number }): { weeklyPoints: number; maxStake: number } {
+  return {
+    weeklyPoints: Math.max(0, Math.min(1_000_000, Math.round(input.weeklyPoints) || 0)),
+    maxStake: Math.max(1, Math.min(1_000_000, Math.round(input.maxStake) || 1)),
+  };
+}
+
+/** Switching bets on tops every active agent on the campaign up to the allowance; nobody is lowered. */
+export function betTopUps(agents: { id: string; points: number; active: boolean }[], weeklyPoints: number): { userId: string; delta: number }[] {
+  return agents.filter((u) => u.active && u.points < weeklyPoints).map((u) => ({ userId: u.id, delta: weeklyPoints - u.points }));
+}

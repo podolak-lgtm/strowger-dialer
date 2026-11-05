@@ -1,23 +1,20 @@
 "use server";
 
-import { randomBytes } from "node:crypto";
 import { prisma } from "@strowger/db";
 import { revalidatePath } from "next/cache";
+import { parseWebhook } from "@strowger/shared/campaign-form";
 import { requireRole } from "@/lib/auth";
-
-const EVENTS = ["disposition", "sale", "callback", "dnc"] as const;
+import { newWebhookSecret } from "./campaign-data";
 
 export async function addWebhook(formData: FormData) {
   const s = await requireRole("SUPERVISOR");
   const campaignId = String(formData.get("campaignId") ?? "") || null;
-  const url = String(formData.get("url") ?? "").trim();
-  if (!/^https:\/\//.test(url)) throw new Error("Webhook URL must be https");
+  const { url, events } = parseWebhook(formData.get("url") as string | null, formData.getAll("events").map(String));
   if (campaignId) {
     const c = await prisma.campaign.findFirst({ where: { id: campaignId, tenantId: s.tenant.id }, select: { id: true } });
     if (!c) throw new Error("Unknown campaign");
   }
-  const events = formData.getAll("events").map(String).filter((e): e is (typeof EVENTS)[number] => (EVENTS as readonly string[]).includes(e));
-  await prisma.webhookEndpoint.create({ data: { tenantId: s.tenant.id, campaignId, url, secret: `whsec_${randomBytes(24).toString("base64url")}`, events: events.length ? events : ["disposition"] } });
+  await prisma.webhookEndpoint.create({ data: { tenantId: s.tenant.id, campaignId, url, secret: newWebhookSecret(), events } });
   revalidatePath(campaignId ? `/campaigns/${campaignId}` : "/campaigns");
 }
 
