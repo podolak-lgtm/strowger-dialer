@@ -6,6 +6,8 @@ import { Badge, Button, Card, Field, PageHeader, Table, Td, inputClass } from "@
 import { deleteDialPlan, saveDialPlan, saveDisposition, updateCampaign } from "../actions";
 import { addWebhook, deleteWebhook, testWebhook, toggleWebhook } from "../webhook-actions";
 import { saveRebuttals, saveScript } from "../script-actions";
+import { SCRIPT_TEMPLATES, rebuttalLines } from "@strowger/shared/scripts";
+import { TemplateTextarea } from "./template-textarea";
 
 function Check({ name, label, checked }: { name: string; label: string; checked: boolean }) {
   return (
@@ -298,7 +300,14 @@ export default async function CampaignPage({ params }: PageProps<"/campaigns/[id
           <form action={saveScript} className="space-y-2">
             <input type="hidden" name="campaignId" value={c.id} />
             <Field label={`What agents read on the assist screen${c.scripts[0] ? ` (version ${c.scripts[0].version})` : ""}`} hint="Variables: {{first_name}}, {{last_name}}, {{agent}}, {{company}}, {{city}}, {{state}}. Every save keeps the old version.">
-              <textarea name="body" rows={8} defaultValue={c.scripts[0]?.body ?? ""} className={`${inputClass} font-mono text-xs`} placeholder={"Hi {{first_name}}, this is {{agent}} with {{company}}. You asked about…"} />
+              <TemplateTextarea
+                name="body"
+                rows={16}
+                defaultValue={c.scripts[0]?.body ?? ""}
+                placeholder={"Hi {{first_name}}, this is {{agent}} with {{company}}. You asked about…"}
+                options={SCRIPT_TEMPLATES.map((t) => ({ key: t.key, name: t.name, text: t.body }))}
+                loadLabel="Load script"
+              />
             </Field>
             <Button type="submit" variant="ghost">
               Save script
@@ -310,12 +319,13 @@ export default async function CampaignPage({ params }: PageProps<"/campaigns/[id
           <form action={saveRebuttals} className="space-y-2">
             <input type="hidden" name="campaignId" value={c.id} />
             <Field label="Objection | what to say (one per line)" hint="Agents see these on the Assist panel while on a call, and the AI suggestions lean on them first.">
-              <textarea
+              <TemplateTextarea
                 name="rebuttals"
                 rows={8}
                 defaultValue={((c.rebuttals as { objection: string; response: string }[] | null) ?? []).map((r) => `${r.objection} | ${r.response}`).join("\n")}
-                className={`${inputClass} font-mono text-xs`}
-                placeholder={"I'm not interested | Totally fair. Can I ask what you were hoping to find when you filled out the form? If it's not a fit I'll let you go.\nSend me something in writing | Happy to. So I send the right thing, what matters most to you: price or coverage?"}
+                placeholder={rebuttalLines(SCRIPT_TEMPLATES[0]!)}
+                options={SCRIPT_TEMPLATES.map((t) => ({ key: t.key, name: t.name, text: rebuttalLines(t) }))}
+                loadLabel="Load rebuttals"
               />
             </Field>
             <Button type="submit" variant="ghost">
