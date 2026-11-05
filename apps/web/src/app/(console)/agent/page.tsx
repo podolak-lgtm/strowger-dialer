@@ -1,6 +1,7 @@
 import { prisma } from "@strowger/db";
 import { decryptString, mintRealtimeToken } from "@strowger/shared/secrets";
 import { requireRole } from "@/lib/auth";
+import { BUILD_ID } from "@/lib/version";
 import { AgentConsole, type ConsoleProps } from "./console";
 import { rightsOf } from "@/lib/rights";
 import { billingStatus } from "@/lib/billing-actions";
@@ -43,6 +44,7 @@ export default async function AgentPage({ searchParams }: PageProps<"/agent">) {
       engineUrl={process.env.NEXT_PUBLIC_ENGINE_URL ?? "http://localhost:4000"}
       rtToken={mintRealtimeToken({ tenantId: s.tenant.id, userId: s.user.id, roles: s.roles }, secret, 8 * 3600)}
       screen={screen === "assist" ? "assist" : "main"}
+      version={BUILD_ID}
     />
   );
 }

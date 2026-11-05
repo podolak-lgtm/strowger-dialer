@@ -1,5 +1,6 @@
 import { decryptString, mintRealtimeToken } from "@strowger/shared/secrets";
 import { requireRole } from "@/lib/auth";
+import { BUILD_ID } from "@/lib/version";
 import { FloorConsole } from "./floor";
 
 export default async function FloorPage({ searchParams }: PageProps<"/floor">) {
@@ -19,6 +20,7 @@ export default async function FloorPage({ searchParams }: PageProps<"/floor">) {
           ? { server: process.env.JAMBONZ_WSS_URL ?? "wss://sip.jambonz.cloud:8443", realm: process.env.JAMBONZ_SIP_REALM ?? "", username: s.user.sipUsername, password: sipPassword }
           : null
       }
+      version={BUILD_ID}
     />
   );
 }
