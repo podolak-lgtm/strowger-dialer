@@ -77,9 +77,11 @@ export async function suspendOverdue(now = new Date()): Promise<void> {
 
 /** Outbound allowed? Platform workspace is never billed. */
 export async function outboundAllowed(tenantId: string): Promise<{ ok: true } | { ok: false; error: string }> {
-  const t = await prisma.tenant.findUnique({ where: { id: tenantId }, select: { isPlatform: true, billing: { select: { suspended: true } } } });
+  const t = await prisma.tenant.findUnique({ where: { id: tenantId }, select: { isPlatform: true, billing: { select: { suspended: true, balanceCents: true, zeroSince: true } } } });
   if (!t || t.isPlatform) return { ok: true };
   if (t.billing?.suspended) return { ok: false, error: "Outbound is paused: the prepaid balance is used up. Add a payment to continue." };
+  // Never funded: a workspace someone signed up for, or a client whose first payment has not been recorded. Grace only applies after a balance has run down.
+  if (!t.billing || (t.billing.balanceCents <= 0 && !t.billing.zeroSince)) return { ok: false, error: "No prepaid balance on this workspace yet. Ask your account manager to record a payment." };
   return { ok: true };
 }
 
