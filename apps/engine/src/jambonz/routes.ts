@@ -17,7 +17,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { getAgent, patchAgent } from "../agents/state";
 import { redis } from "../redis";
 import { config } from "../config";
-import { callIdForSid, leadCallAnswered, leadCallBridged, leadCallEnded } from "../dialer/calls";
+import { callIdForSid, callStatusOf, leadCallAnswered, leadCallBridged, leadCallEnded, screenerFields } from "../dialer/calls";
 import { readyAgents, recordLedger } from "../dialer/pacing";
 import { detectScreener } from "@strowger/shared/compliance";
 import { emitToAgent } from "../realtime";
@@ -235,7 +235,7 @@ export async function registerJambonzRoutes(app: FastifyInstance): Promise<void>
     if (claimed.count !== 1) return [{ verb: "hangup" }];
     await patchAgent(agent.userId, { state: "ON_CALL", currentCallId: call.id, reservedLeadId: null });
     if (call.leadId) await prisma.lead.update({ where: { id: call.leadId }, data: { ownerId: agent.userId } });
-    emitToAgent(agent.userId, "call:update", { callId: call.id, status: "answered", leadId: call.leadId });
+    emitToAgent(agent.userId, "call:update", { callId: call.id, status: "answered", leadId: call.leadId, ...screenerFields(call) });
     return joinVerbs(call, campaign, agent.userId);
   }
 
@@ -275,11 +275,18 @@ export async function registerJambonzRoutes(app: FastifyInstance): Promise<void>
     const text = b.speech?.alternatives?.[0]?.transcript ?? "";
     if (!callId || !text) return reply.send({});
     const call = await prisma.call.findUnique({ where: { id: callId }, include: { campaign: true } });
-    if (!call?.campaign || call.bridgedAt || call.screenerDetected || call.endedAt) return reply.send({});
+    if (!call?.campaign || call.screenerDetected || call.endedAt) return reply.send({});
     if (call.answeredAt && Date.now() - call.answeredAt.getTime() > 12_000) return reply.send({});
     const m = detectScreener(text);
     if (!m.matched) return reply.send({});
     await prisma.call.update({ where: { id: callId }, data: { screenerDetected: true, amdResult: "SCREENER", providerData: { ...(call.providerData as object), screenerPhrase: m.phrase, screenerText: text } } });
+    // An agent already on the call (preview, or bridged before the phrase landed) is told now: the
+    // console pops the SCREENER banner with the script. The call itself is left where it is.
+    if (call.agentId) emitToAgent(call.agentId, "call:update", { callId, status: callStatusOf(call), leadId: call.leadId, screener: true, screenerPhrase: m.phrase ?? null });
+    if (call.bridgedAt) {
+      log.info({ callId, phrase: m.phrase }, "screener heard on a bridged call: agent told, no redirect");
+      return reply.send({});
+    }
     if (call.providerCallId) {
       await jambonz.calls.redirect(call.providerCallId, { url: hookUrl("/jambonz/screener", { callId }), method: "POST" }).catch((e) => log.warn({ err: e, callId }, "screener redirect failed"));
     }
@@ -321,9 +328,14 @@ export async function registerJambonzRoutes(app: FastifyInstance): Promise<void>
       case "amd_human_detected":
       case "amd_no_speech_detected":
       case "amd_decision_timeout": {
-        if (b.type === "amd_human_detected") patch.amdResult = "HUMAN";
+        if (b.type === "amd_human_detected" && !call.screenerDetected) patch.amdResult = "HUMAN";
         else if (!call.amdResult) patch.amdResult = "UNKNOWN";
         await prisma.call.update({ where: { id: callId }, data: patch });
+        // After a screener, a human voice means the person picked up: the console turns the banner green.
+        if (b.type === "amd_human_detected" && call.screenerDetected && call.agentId) {
+          emitToAgent(call.agentId, "call:update", { callId, status: callStatusOf(call), leadId: call.leadId, ...screenerFields(call), human: true });
+          if (call.leadId) await prisma.leadEvent.create({ data: { tenantId: call.tenantId, leadId: call.leadId, kind: "NOTE", data: { callId, note: "Screener: the person picked up" } } }).catch(() => undefined);
+        }
         // The call is parked on a pause: this reply replaces it with the bridge (or safe harbor).
         if (!call.bridgedAt && !call.screenerDetected) {
           if (call.agentId) return reply.send(await joinVerbs(call, call.campaign, call.agentId));

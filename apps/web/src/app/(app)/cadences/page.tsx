@@ -1,11 +1,11 @@
 import { prisma } from "@strowger/db";
 import Link from "next/link";
-import { requireRole } from "@/lib/auth";
+import { requireClientWorkspace } from "@/lib/auth";
 import { Badge, Button, Empty, PageHeader, Table, Td } from "@/components/ui";
 import { seedStandardCadences } from "./actions";
 
 export default async function CadencesPage() {
-  const s = await requireRole("SUPERVISOR");
+  const s = await requireClientWorkspace("SUPERVISOR");
   const cadences = await prisma.cadenceProfile.findMany({ where: { tenantId: s.tenant.id }, orderBy: [{ kind: "asc" }, { name: "asc" }], include: { lists: { select: { id: true, name: true } } } });
 
   return (

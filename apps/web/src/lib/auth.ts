@@ -73,3 +73,23 @@ export async function requireRole(...roles: Role[]): Promise<Session> {
 export function hasRole(session: Session, ...roles: Role[]): boolean {
   return session.roles.includes("ADMIN") || roles.some((r) => session.roles.includes(r));
 }
+
+/**
+ * True when a platform admin is signed in to the bare platform workspace
+ * with no client opened: there are no campaigns, lists or leads there, so
+ * every campaign-scoped page would be blank.
+ */
+export function isBarePlatform(session: Session): boolean {
+  return session.tenant.isPlatform && !session.actingFrom;
+}
+
+/**
+ * Like `requireRole`, but a campaign-scoped page: in the bare platform
+ * workspace it sends the admin to /platform to pick a client instead of
+ * rendering an empty page. Agents and client admins see no difference.
+ */
+export async function requireClientWorkspace(...roles: Role[]): Promise<Session> {
+  const session = roles.length ? await requireRole(...roles) : await requireSession();
+  if (isBarePlatform(session)) redirect("/platform?pick=1");
+  return session;
+}

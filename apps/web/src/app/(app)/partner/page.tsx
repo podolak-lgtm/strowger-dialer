@@ -3,11 +3,11 @@
 // nothing about other partners or the agents.
 import { prisma } from "@strowger/db";
 import { formatPhone } from "@strowger/shared";
-import { requireRole } from "@/lib/auth";
+import { requireClientWorkspace } from "@/lib/auth";
 import { Badge, Card, Empty, PageHeader, Table, Td } from "@/components/ui";
 
 export default async function PartnerPage() {
-  const s = await requireRole("AFFILIATE");
+  const s = await requireClientWorkspace("AFFILIATE");
   const affiliate = s.user.affiliateId ? await prisma.affiliate.findFirst({ where: { id: s.user.affiliateId, tenantId: s.tenant.id }, include: { lists: { include: { campaign: { select: { name: true, status: true } } } } } }) : null;
   if (!affiliate) {
     return (

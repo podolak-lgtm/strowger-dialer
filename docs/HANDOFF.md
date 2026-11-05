@@ -199,7 +199,7 @@ ratings, extensions), `/voicemails` (agents see their own; supervisors all).
   `Campaign.betsEnabled` (default off), `Campaign.weeklyPoints`,
   `Campaign.maxStake`; the Settings → Games card now holds only the defaults
   a new campaign starts with (`Tenant.settings.games.weeklyPoints/maxStake`;
-  the migration `campaign_games_poker_runs` copied the old workspace values
+  the migration `20261105220000_campaign_games_poker_runs` copied the old workspace values
   onto existing campaigns, bets off). Switches live on the campaign page
   ("Games" card, `campaigns/[id]/games-card.tsx` → `campaigns/games-actions.ts`)
   and on `/games` ("Run the games" card) for whoever `canManageGames`
@@ -299,6 +299,23 @@ billed and sees `/platform`.
   only this campaign with their voicemail box and game rows; cadence
   profiles and audio copied by name; system DNC copied). Agents who also
   work other campaigns stay and are dropped from the moved campaign.
+- **Bare platform vs. inside a client** (owner, 5 Nov: opened Campaigns in
+  the platform workspace, saw a blank page, thought the app broke). The
+  platform tenant holds no campaigns, so with no client opened
+  (`isBarePlatform(session)` in `lib/auth.ts`: `tenant.isPlatform` and no
+  `actingFrom`) the `(app)` layout shows only Platform, People and
+  Settings plus a "pick a client" note, and every campaign-scoped page
+  (dashboard, campaigns, lists, leads, numbers, dids, inbound, cadences,
+  affiliates, compliance, voicemails, games, reports, teams, skills,
+  billing, partner, and their `[id]` pages) calls `requireClientWorkspace`
+  instead of `requireRole` / `requireSession`, which redirects to
+  `/platform?pick=1` there. Inside a client (`actingFrom` set) a
+  full-width sky band sits above the nav and content with the client's
+  name, its balance badge and "Back to platform"; the sidebar shows the
+  client name with "via <platform>". `openWorkspace` also stores
+  `User.lastWorkspaceId` (migration `last_workspace`) so `/platform`
+  offers "Continue in <client>" (the remembered one, else the only one);
+  it never enters a client silently. Non-platform tenants are untouched.
 - **NSR split** (migration `nsr_workspace`, 5 Nov): the original workspace
   became the client "National Solar Resolutions" (everything in it stayed:
   numbers, campaign, agents, carrier ids, settings) and the owner's admin
@@ -660,6 +677,34 @@ room, supervisors and admins everything (`floorStats`).
   on the first 12 s; a phrase match (`shared/compliance/screener.ts`)
   redirects the call to `/jambonz/screener`, which plays the message,
   bridges, or hangs up per `Campaign.screenerAction`.
+- **Screener banner for the agent** (owner, 5 Nov: "pop up the thing and
+  say SCREENER, give them a short script, then tell them to shut up and
+  wait"). `/jambonz/transcript` marks the call (`screenerDetected`,
+  `amdResult SCREENER`, `providerData.screenerPhrase/screenerText`) and,
+  if an agent is already on it (preview, or bridged before the phrase
+  landed), emits `call:update` with `screener: true, screenerPhrase` and
+  leaves the call where it is (no redirect once bridged). Otherwise the
+  redirect runs and the AGENT action's `bridgeToReadyAgent` carries the
+  same fields; so do `leadCallAnswered` / `leadCallBridged`
+  (`screenerFields` in `dialer/calls.ts`), so the console gets the flag
+  on whichever event reaches it first. `amd_human_detected` after a
+  screener keeps `amdResult SCREENER`, emits `call:update` with
+  `human: true` and writes a NOTE `LeadEvent` "Screener: the person picked
+  up". Console (`console.tsx`): amber SCREENER banner at the top of the
+  call panel (and above the Script on the assist screen) with
+  `Campaign.screenerScript` (campaign page, next to the screener action;
+  null = `DEFAULT_SCREENER_SCRIPT` in `shared/scripts.ts`) rendered by
+  `renderScript` (`{{agent}}`/`{{agent.firstName}}`, `{{company}}`,
+  `{{first_name}}`/`{{lead.firstName}}`, …, the same renderer the Script
+  panel now uses). Steps: say it → "Said it" click or 5 s → stay quiet
+  (spinner) → "They picked up. Go." on `human: true` or 25 s later as the
+  time fallback (AMD has usually already spoken before the screener is
+  recognised, so there is no reliable human signal yet). "Said it" writes
+  a NOTE `LeadEvent` (`screenerSaidIt`). Reload: `callScreener` restores
+  the banner from the `Call` row. The call ending or a disposition clears
+  it. **Data note**: the National Solar Resolutions campaign still has
+  `screenerAction MESSAGE`; the owner switches it to "Hand the call to an
+  agent" on the campaign page (no migration touches it).
 - The hopper for ratio reuses the eligibility rules; the Redis sorted-set
   hopper is still an optimisation for later, Postgres handles the current
   scale.

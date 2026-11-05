@@ -76,6 +76,7 @@ export async function updateCampaign(formData: FormData) {
     voicemailRetryMinutes: Math.max(15, num(formData, "voicemailRetryMinutes", 240)),
     screenerDetection: formData.get("screenerDetection") === "on",
     screenerAction: String(formData.get("screenerAction") ?? before.screenerAction) as ScreenerAction,
+    screenerScript: String(formData.get("screenerScript") ?? "").trim() || null,
     recordingOn: formData.get("recordingOn") === "on",
     disclosureOn: formData.get("disclosureOn") === "on",
     callerIdMode: String(formData.get("callerIdMode") ?? before.callerIdMode) as CallerIdMode,

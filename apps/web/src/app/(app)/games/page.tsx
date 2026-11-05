@@ -1,11 +1,11 @@
 import { prisma } from "@strowger/db";
-import { requireRole } from "@/lib/auth";
+import { requireClientWorkspace } from "@/lib/auth";
 import { PageHeader } from "@/components/ui";
 import { canManageGames, rightsOf } from "@/lib/rights";
 import { GamesClient } from "./games-client";
 
 export default async function GamesPage({ searchParams }: PageProps<"/games">) {
-  const s = await requireRole("AGENT", "TEAM_LEADER", "SUPERVISOR");
+  const s = await requireClientWorkspace("AGENT", "TEAM_LEADER", "SUPERVISOR");
   const { campaign } = await searchParams;
   const people = await prisma.user.findMany({ where: { tenantId: s.tenant.id, active: true, roles: { hasSome: ["AGENT", "TEAM_LEADER"] } }, select: { id: true, firstName: true, email: true }, orderBy: [{ firstName: "asc" }] });
   return (

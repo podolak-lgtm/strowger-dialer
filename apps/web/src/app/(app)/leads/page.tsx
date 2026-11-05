@@ -1,11 +1,11 @@
 import { prisma } from "@strowger/db";
 import { formatPhone, normalizePhone } from "@strowger/shared";
 import Link from "next/link";
-import { requireRole } from "@/lib/auth";
+import { requireClientWorkspace } from "@/lib/auth";
 import { Badge, Button, Card, Empty, PageHeader, Table, Td, inputClass } from "@/components/ui";
 
 export default async function LeadsPage({ searchParams }: PageProps<"/leads">) {
-  const s = await requireRole("SUPERVISOR", "ROOM_SUPERVISOR", "TEAM_LEADER");
+  const s = await requireClientWorkspace("SUPERVISOR", "ROOM_SUPERVISOR", "TEAM_LEADER");
   const { q, id } = await searchParams;
   const query = typeof q === "string" ? q.trim() : "";
   const phone = normalizePhone(query);

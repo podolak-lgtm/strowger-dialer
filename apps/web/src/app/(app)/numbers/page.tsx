@@ -1,7 +1,7 @@
 import { prisma } from "@strowger/db";
 import { formatPhone } from "@strowger/shared";
 import Link from "next/link";
-import { requireRole } from "@/lib/auth";
+import { requireClientWorkspace } from "@/lib/auth";
 import { engine } from "@/lib/engine";
 import { Badge, Button, Card, Field, Notice, PageHeader, Table, Td, inputClass } from "@/components/ui";
 import { assignCampaign, assignNumbersToTenDlc, orderSelected, registerBrand, registerCampaign, releaseOne, runSetup, syncNow } from "./actions";
@@ -57,7 +57,7 @@ function tenDlcTone(s: string | undefined): "zinc" | "green" | "amber" | "red" {
 }
 
 export default async function NumbersPage({ searchParams }: PageProps<"/numbers">) {
-  const s = await requireRole("SUPERVISOR");
+  const s = await requireClientWorkspace("SUPERVISOR");
   const sp = await searchParams;
   const str = (k: string) => (typeof sp[k] === "string" ? (sp[k] as string) : "");
   const msg = str("msg");

@@ -114,3 +114,43 @@ export const SCRIPT_TEMPLATES: ScriptTemplate[] = [
 export function rebuttalLines(t: ScriptTemplate): string {
   return t.rebuttals.map((r) => `${r.objection} | ${r.response}`).join("\n");
 }
+
+// ── Rendering ─────────────────────────────────────────────────────────────
+// The campaign script on the assist screen and the screener script in the
+// console banner share one variable set. The dotted forms
+// ({{agent.firstName}}, {{lead.firstName}}) are aliases of the snake case
+// ones so a script reads naturally either way.
+
+export interface ScriptVars {
+  agentName: string;
+  company: string;
+  lead: { firstName?: string | null; lastName?: string | null; city?: string | null; state?: string | null } | null;
+}
+
+/** What an agent says to a phone's call screener so the person picks up. */
+export const DEFAULT_SCREENER_SCRIPT = "Hi, this is {{agent.firstName}} with {{company}} returning a call about {{lead.firstName}}'s solar account. Please pick up.";
+
+const ALIASES: Record<string, string> = {
+  "agent.firstName": "agent",
+  "agent.name": "agent",
+  "lead.firstName": "first_name",
+  "lead.lastName": "last_name",
+  "lead.city": "city",
+  "lead.state": "state",
+};
+
+/** Fill {{first_name}}, {{last_name}}, {{agent}}, {{company}}, {{city}}, {{state}} and their dotted aliases. Unknown keys are left as written. */
+export function renderScript(template: string, vars: ScriptVars): string {
+  const values: Record<string, string> = {
+    first_name: vars.lead?.firstName || "there",
+    last_name: vars.lead?.lastName || "",
+    agent: vars.agentName,
+    company: vars.company,
+    city: vars.lead?.city || "your area",
+    state: vars.lead?.state || "",
+  };
+  return template.replace(/\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}/g, (whole, k: string) => {
+    const key = ALIASES[k] ?? k;
+    return key in values ? values[key]! : whole;
+  });
+}

@@ -1,7 +1,7 @@
 import { prisma, type CarrierVerdict } from "@strowger/db";
 import { formatPhone } from "@strowger/shared";
 import Link from "next/link";
-import { requireRole } from "@/lib/auth";
+import { requireClientWorkspace } from "@/lib/auth";
 import { Badge, Button, Card, Field, Notice, PageHeader, inputClass } from "@/components/ui";
 import { discrepant, provider, worst } from "@/lib/did-reputation";
 import { assignNumberCampaign, bulkCheck, resolveNumber, setAutoRecheck, testNumber } from "./actions";
@@ -42,7 +42,7 @@ function ago(d: Date | null): string {
 }
 
 export default async function DidsPage({ searchParams }: PageProps<"/dids">) {
-  const s = await requireRole("SUPERVISOR");
+  const s = await requireClientWorkspace("SUPERVISOR");
   const { filter, page, msg, kind } = await searchParams;
   const f = typeof filter === "string" ? filter : "all";
   const pageN = Math.max(1, Number(page) || 1);

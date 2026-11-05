@@ -24,11 +24,33 @@ export default async function PlatformPage({ searchParams }: PageProps<"/platfor
   const [o, v, campaigns] = await Promise.all([platformOverview(period), vendorSpend(period), prisma.campaign.findMany({ where: { tenantId: s.tenant.id, status: { not: "ARCHIVED" } }, select: { id: true, name: true }, orderBy: { name: "asc" } })]);
   const totals = o.tenants.reduce((t, x) => ({ revenue: t.revenue + x.revenueCents, cost: t.cost + x.costCents, balance: t.balance + x.balanceCents }), { revenue: 0, cost: 0, balance: 0 });
   const platformTenantId = s.actingFrom?.id ?? s.tenant.id;
+  // No client opened yet: offer the one they used last (or the only one),
+  // but never enter it silently; the owner still chooses.
+  const bare = !s.actingFrom;
+  const remembered = bare ? o.tenants.find((t) => t.id === s.user.lastWorkspaceId) : undefined;
+  const suggested = remembered ?? (bare && o.tenants.length === 1 ? o.tenants[0] : undefined);
+  const sentHere = sp.pick === "1";
 
   return (
     <div>
       <PageHeader title="Platform billing" subtitle={`Every client, ${o.period}. Prices to clients are per workspace; costs come from the vendors' records where they can be matched, else from the rates below.`} />
       {msg ? <Notice kind={kind}>{msg}</Notice> : null}
+      {sentHere ? <Notice kind="warn">That page belongs to a client workspace. Pick a client below to work on their campaigns, lists and numbers.</Notice> : null}
+      {suggested ? (
+        <div className="mb-6 flex flex-wrap items-center justify-between gap-4 rounded-lg border border-sky-700/60 bg-sky-950/40 p-5">
+          <div>
+            <div className="text-xs uppercase tracking-wide text-sky-300">{remembered ? "Where you were last" : "Your only client"}</div>
+            <div className="mt-1 text-xl font-semibold text-white">{suggested.name}</div>
+            <div className="mt-0.5 text-xs text-sky-200/70">You are in the platform workspace, which has no campaigns of its own. Open a client to work on theirs.</div>
+          </div>
+          <form action={openWorkspace}>
+            <input type="hidden" name="tenantId" value={suggested.id} />
+            <Button type="submit" className="px-5 py-2.5 text-base">
+              Continue in {suggested.name} →
+            </Button>
+          </form>
+        </div>
+      ) : null}
       <div className="mb-6 grid gap-4 md:grid-cols-5">
         {[
           ["Revenue this month", cents(totals.revenue)],

@@ -1,11 +1,11 @@
 import { prisma } from "@strowger/db";
 import { formatPhone } from "@strowger/shared";
-import { hasRole, requireRole } from "@/lib/auth";
+import { hasRole, requireClientWorkspace } from "@/lib/auth";
 import { Badge, Button, Empty, Field, PageHeader, Table, Td, inputClass } from "@/components/ui";
 import { saveVoicemailPrefs, setVoicemailStatus } from "../inbound/actions";
 
 export default async function VoicemailsPage() {
-  const s = await requireRole("AGENT", "TEAM_LEADER", "SUPERVISOR");
+  const s = await requireClientWorkspace("AGENT", "TEAM_LEADER", "SUPERVISOR");
   const all = hasRole(s, "SUPERVISOR");
   const rows = await prisma.voicemail.findMany({
     where: { tenantId: s.tenant.id, status: { not: "DONE" }, ...(all ? {} : { OR: [{ assigneeId: s.user.id }, { box: { ownerId: s.user.id } }] }) },

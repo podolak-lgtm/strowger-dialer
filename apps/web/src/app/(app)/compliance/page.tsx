@@ -1,6 +1,6 @@
 import { prisma } from "@strowger/db";
 import { FEDERAL_RULE, formatPhone } from "@strowger/shared";
-import { hasRole, requireRole } from "@/lib/auth";
+import { hasRole, requireClientWorkspace } from "@/lib/auth";
 import { Badge, Button, Card, Field, PageHeader, Table, Td, inputClass } from "@/components/ui";
 import { addDncNumbers, markStateRuleVerified, removeDncEntry, runScrubNow, setScrubRequired } from "./actions";
 import { engine } from "@/lib/engine";
@@ -8,7 +8,7 @@ import { engine } from "@/lib/engine";
 const DAY = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 export default async function CompliancePage() {
-  const s = await requireRole("SUPERVISOR");
+  const s = await requireClientWorkspace("SUPERVISOR");
   const [dncCount, dncRecent, campaigns, rules, scrubCounts, ping] = await Promise.all([
     prisma.dncEntry.count({ where: { tenantId: s.tenant.id } }),
     prisma.dncEntry.findMany({ where: { tenantId: s.tenant.id }, orderBy: { createdAt: "desc" }, take: 50, include: { campaign: { select: { name: true } } } }),

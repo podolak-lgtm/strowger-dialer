@@ -1,7 +1,8 @@
 import { prisma } from "@strowger/db";
+import { DEFAULT_SCREENER_SCRIPT } from "@strowger/shared/scripts";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { requireRole } from "@/lib/auth";
+import { requireClientWorkspace } from "@/lib/auth";
 import { Badge, Button, Card, Field, PageHeader, Table, Td, inputClass } from "@/components/ui";
 import { deleteDialPlan, saveDialPlan, saveDisposition, updateCampaign } from "../actions";
 import { addWebhook, deleteWebhook, testWebhook, toggleWebhook } from "../webhook-actions";
@@ -20,7 +21,7 @@ function Check({ name, label, checked }: { name: string; label: string; checked:
 }
 
 export default async function CampaignPage({ params, searchParams }: PageProps<"/campaigns/[id]">) {
-  const s = await requireRole("SUPERVISOR");
+  const s = await requireClientWorkspace("SUPERVISOR");
   const { id } = await params;
   const { games: gamesError } = await searchParams;
   const c = await prisma.campaign.findFirst({
@@ -179,6 +180,9 @@ export default async function CampaignPage({ params, searchParams }: PageProps<"
                 <option value="AGENT">Hand the call to an agent</option>
                 <option value="HANGUP">Hang up</option>
               </select>
+            </Field>
+            <Field label="Screener script for the agent" hint="Shown in a SCREENER banner on the console when a screened call is handed to an agent: they read it, then stay quiet until the person picks up. Variables: {{agent.firstName}}, {{company}}, {{lead.firstName}}, {{lead.lastName}}, {{city}}, {{state}}. Empty = the default shown here.">
+              <textarea name="screenerScript" rows={2} defaultValue={c.screenerScript ?? ""} className={inputClass} placeholder={DEFAULT_SCREENER_SCRIPT} />
             </Field>
             <p className="text-xs text-zinc-500">Audio files for voicemail drop, screener message, safe-harbor and disclosure are uploaded under Settings → Audio (Phase 2).</p>
           </div>

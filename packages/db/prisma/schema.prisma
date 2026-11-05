@@ -113,6 +113,9 @@ model User {
   /// needs it to register. Never shown to anyone else.
   sipUsername String?  @unique
   sipSecret   String?
+  /// Platform admins only: the client workspace they last opened from
+  /// /platform, so the page can offer "Continue in <client>" next time.
+  lastWorkspaceId String?
   /// For AFFILIATE-role users: the partner whose lists they may see.
   affiliate   Affiliate? @relation(fields: [affiliateId], references: [id])
   affiliateId String?
@@ -282,6 +285,9 @@ model Campaign {
   screenerDetection Boolean        @default(true)
   screenerAction    ScreenerAction @default(MESSAGE)
   screenerAudioId   String?
+  /// What the agent reads to a call screener when screenerAction is AGENT
+  /// (console banner). Null = the default in shared/scripts.ts.
+  screenerScript    String?
 
   recordingOn       Boolean @default(true)
   disclosureOn      Boolean @default(false)
