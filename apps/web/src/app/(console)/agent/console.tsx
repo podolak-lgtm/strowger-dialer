@@ -8,6 +8,7 @@
 // one monitor every column collapses with the chevrons.
 import { createJambonzClient } from "@jambonz/client-sdk-web";
 import { ChatPanel } from "@/components/chat-panel";
+import { isStaleBuildError, NewVersionBanner, useNewVersion } from "@/components/new-version";
 import { myTeams } from "@/lib/chat-actions";
 import { assistSuggest, campaignRebuttals, gamesOverview, type GamesOverview, type Suggestion } from "@/lib/games-actions";
 import { prettyCard } from "@strowger/shared/games";
@@ -74,6 +75,8 @@ export interface ConsoleProps {
   engineUrl: string;
   rtToken: string;
   screen: "main" | "assist";
+  /** Build that rendered this page; /api/version is polled against it (lib/version.ts). */
+  version: string;
 }
 
 type PhoneState = "off" | "connecting" | "registered" | "error" | "in-room";
@@ -145,7 +148,7 @@ function Bar({ label, value, max, from, to }: { label: string; value: number; ma
 }
 
 export function AgentConsole(props: ConsoleProps) {
-  const { me, campaigns, sip, engineUrl, rtToken, screen, roles, rights, billing } = props;
+  const { me, campaigns, sip, engineUrl, rtToken, screen, roles, rights, billing, version } = props;
   const can = (r: string) => rights.includes(r);
   const [campaignId, setCampaignId] = useState<string>(campaigns[0]?.id ?? "");
   const campaign = campaigns.find((c) => c.id === campaignId) ?? null;
@@ -179,6 +182,8 @@ export function AgentConsole(props: ConsoleProps) {
   const [liveAgents, setLiveAgents] = useState<Record<string, AgentLive>>({});
   const [dmWith, setDmWith] = useState<string | null>(null);
   const [watching, setWatching] = useState<{ agentId: string; mode: SuperviseMode } | null>(null);
+  // A deploy changes every Server Action id; this page then fails on any click.
+  const { stale: newVersion, markStale } = useNewVersion(version);
   const isLeader = roles.includes("TEAM_LEADER") || roles.includes("SUPERVISOR") || roles.includes("ADMIN");
 
   const clientRef = useRef<JambonzClient | null>(null);
@@ -419,7 +424,10 @@ export function AgentConsole(props: ConsoleProps) {
     try {
       await fn();
     } catch (e) {
-      setNotice(e instanceof Error ? e.message : String(e));
+      const message = e instanceof Error ? e.message : String(e);
+      // Server Action ids from a previous build: the page is stale, not the action.
+      if (isStaleBuildError(message)) markStale();
+      else setNotice(message);
     } finally {
       setBusy(false);
     }
@@ -703,6 +711,7 @@ export function AgentConsole(props: ConsoleProps) {
           </div>
         </div>
 
+        <NewVersionBanner show={newVersion} onCall={onCall || wrapUp} />
         {notice ? <div className="mb-4 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">{notice}</div> : null}
 
         {/* Status banner */}

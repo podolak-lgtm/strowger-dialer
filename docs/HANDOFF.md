@@ -675,6 +675,21 @@ The engine container runs `prisma migrate deploy` on start. Set the
 variables from `.env.example` on both; the web service also needs
 `NEXT_PUBLIC_*` values at build time (they are Dockerfile build args).
 
+## Deploys and open consoles (5 Nov)
+
+A deploy changes every Server Action id, so an agent console or floor page
+opened before it fails with "Server Action … was not found on the server"
+on the next click (seen on the first test day). `lib/version.ts` exports
+`BUILD_ID` (`RAILWAY_GIT_COMMIT_SHA`, else `.next/BUILD_ID`, else a
+per-process id); `/api/version` returns it, and the agent and floor pages
+pass it in as the `version` prop. `components/new-version.tsx` polls the
+route every 60 s (and on tab focus) and shows a non-blocking "A new version
+is ready — reload when you're between calls" banner with a Reload button;
+the console's `run()` and the floor's `refresh`/`act` also turn the
+"was not found on the server" error into that banner. The page never
+reloads by itself: a reload drops the softphone line, so it must not happen
+while the agent is ON_CALL or WRAP_UP, and the agent decides.
+
 ## Tests
 
 `pnpm test` runs node:test suites. The compliance window tests
