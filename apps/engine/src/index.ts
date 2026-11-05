@@ -91,4 +91,14 @@ process.on("SIGTERM", () => void shutdown("SIGTERM"));
 process.on("SIGINT", () => void shutdown("SIGINT"));
 
 await app.listen({ port: config.ENGINE_PORT, host: "0.0.0.0" });
+// Startup diagnostic: what jambonz holds for this account (registration hook, device calling app, realm), so a
+// rejected softphone registration can be read against the facts rather than the portal.
+if (config.JAMBONZ_API_KEY && config.JAMBONZ_ACCOUNT_SID) {
+  void fetch(`${config.JAMBONZ_API_URL.replace(/\/+$/, "")}/v1/Accounts/${config.JAMBONZ_ACCOUNT_SID}`, { headers: { authorization: `Bearer ${config.JAMBONZ_API_KEY}` }, signal: AbortSignal.timeout(15_000) })
+    .then(async (r) => {
+      const a = (await r.json()) as Record<string, unknown>;
+      log.info({ status: r.status, sip_realm: a.sip_realm, registration_hook: a.registration_hook, device_calling_application_sid: a.device_calling_application_sid, webhook_secret_set: Boolean(a.webhook_secret), plan: a.plan_type ?? a.plan ?? null }, "jambonz account");
+    })
+    .catch((e) => log.warn({ err: e }, "jambonz account lookup failed"));
+}
 log.info({ port: config.ENGINE_PORT, telephony: Boolean(config.JAMBONZ_API_KEY) }, "engine listening");
