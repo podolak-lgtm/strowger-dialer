@@ -35,8 +35,8 @@ export default function Home() {
             <img src={`/${COMIC}`} alt="The story of Almon B. Strowger, the undertaker who invented the automatic telephone exchange out of spite" className="block h-auto w-full" />
           </div>
           <p className="mt-4 border-l-[3px] border-[#c8472b] pl-3 text-base text-zinc-200">
-            <b className="text-zinc-100">There is nothing more American than inventing something out of spite.</b> This dialer carries his name: no operator in the middle, your calls go where you
-            send them.
+            <b className="text-zinc-100">They say necessity is the mother of invention. In 1889, its father was an undertaker who simply refused to be bypassed.</b> This dialer carries his
+            name: no operator in the middle, your calls go where you send them.
           </p>
         </section>
       ) : (

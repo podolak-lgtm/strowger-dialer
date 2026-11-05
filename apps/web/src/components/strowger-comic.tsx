@@ -208,7 +208,7 @@ export function StrowgerComic() {
           ))}
         </Panel>
 
-        <Panel n={6} title="Today" caption={<><b className="text-zinc-100">There is nothing more American than inventing something out of spite.</b> This dialer carries his name. No operator in the middle; your calls go where you send them.</>}>
+        <Panel n={6} title="Today" caption={<><b className="text-zinc-100">They say necessity is the mother of invention. In 1889, its father was an undertaker who refused to be bypassed.</b> This dialer carries his name. No operator in the middle; your calls go where you send them.</>}>
           <rect width="320" height="220" fill={`url(#dots6)`} />
           <rect x="30" y="40" width="260" height="150" rx="6" fill="#111318" stroke={ink} strokeWidth="3" />
           <rect x="44" y="54" width="232" height="18" rx="3" fill="#1f2937" />
@@ -231,7 +231,7 @@ export function StrowgerComic() {
           <Person x={290} y={186} scale={0.6} />
           <path d="M281,176 q9,-14 18,0" stroke={accent} strokeWidth="3" fill="none" />
           <text x="160" y="208" textAnchor="middle" fontFamily="Georgia, serif" fontSize="11" fontStyle="italic" fill={ink}>
-            Strowger, est. 1889 (out of spite)
+            Strowger, est. 1889 (he refused to be bypassed)
           </text>
         </Panel>
       </div>
