@@ -246,15 +246,15 @@ export async function registerJambonzRoutes(app: FastifyInstance): Promise<void>
       // is never handed to them: hold until the AMD hook decides.
       const agent = await getAgent(call.agentId);
       if (!agent?.agentCallSid) return [...screener, ...(await abandonVerbs(call, campaign))];
-      // AMD on: hold a few seconds for the AMD hook, which replaces this flow with the join or the hangup.
-      // If it never answers (first live call, 5 Nov: no AMD event ever arrived), the person is joined anyway rather than left in silence and dropped.
-      if (campaign.amdEnabled) return [...screener, { verb: "pause", length: 4 }, ...(await joinVerbs(call, campaign, call.agentId))];
+      // Joined at once, AMD on or off. AMD keeps running on the leg; a machine
+      // verdict reaches /jambonz/amd, which pulls the call out of the room to
+      // the voicemail handling. (A 4 s hold for the verdict was tried on 5 Nov:
+      // the verdict never came, and the hold was four seconds of dead air on
+      // every answered call.)
       return [...screener, ...(await joinVerbs(call, campaign, call.agentId))];
     }
 
-    // Ratio: with AMD on, hold the line until the AMD hook decides (it replies
-    // with the bridge or the hangup). Without AMD, bridge now.
-    if (campaign.amdEnabled) return [...screener, { verb: "pause", length: 4 }, ...(await bridgeToReadyAgent(call, campaign))];
+    // Ratio: bridge now; a later machine verdict pulls the call back out.
     return [...screener, ...(await bridgeToReadyAgent(call, campaign))];
   }
 

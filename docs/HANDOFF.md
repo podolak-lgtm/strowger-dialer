@@ -474,8 +474,10 @@ Lead Queue expands (`CollapsibleLeadCard`) to the same editor.
   `voicemailRetryMinutes`) or DROP; `voicemailMode` FILE (audio asset) or
   TTS (`voicemailScript` with {{first_name}}, {{last_name}}, {{company}},
   {{callback_number}}, {{agent}}; needs a speech vendor on the jambonz
-  account). With AMD on, **preview calls are parked on a pause too**, so a
-  machine never reaches the agent; the AMD hook joins humans. Agent button
+  account). **Preview calls join the agent on answer, AMD on or off**
+  (5 Nov: a 4 s hold for the AMD verdict was four seconds of dead air on
+  every answered call, and jambonz sent no verdict at all); a later machine
+  verdict pulls the call out of the room to the voicemail action. Agent button
   "Leave VM & next" → `/internal/calls/:id/voicemail` → jambonz redirect to
   `/jambonz/vm-drop` (pause 1 s, message, hangup), auto-disposition with the
   campaign's VM code, agent back to READY.
@@ -597,13 +599,16 @@ room, supervisors and admins everything (`floorStats`).
   `abandonWarnPct` to 1:1 at `abandonCapPct`. The 30-day rate comes from
   `AbandonLedger` (`answered` = human answers, `abandoned` = answers with
   no agent free), cached 30 s in Redis.
-- A pacer call has `agentId null`. On answer `/jambonz/call` parks it on
-  `pause 8` while AMD runs; the AMD hook's reply **replaces** the pause:
-  human / no speech / decision timeout → `bridgeToReadyAgent` (longest-idle
-  READY agent claims the call atomically, `patchAgent ON_CALL`, conference
-  join), or safe-harbor `play` + hangup and an `abandoned` ledger row.
-  Machine → the campaign's voicemail action. With AMD off the bridge
-  happens on answer.
+- A pacer call has `agentId null`. On answer `/jambonz/call` bridges at
+  once with `bridgeToReadyAgent` (longest-idle READY agent claims the call
+  atomically, `patchAgent ON_CALL`, conference join), or safe-harbor `play`
+  + hangup and an `abandoned` ledger row. AMD keeps running on the leg; the
+  AMD hook's reply **replaces** the current verb, so a machine verdict →
+  the campaign's voicemail action even after the join. (Until 5 Nov the
+  call was parked on a pause for the verdict; see the voicemail note above.)
+- The conference, conference-exit and call-status hooks log their bodies
+  (`"conference event"`, `"conference exit for a lead leg"`, `"call
+  status"`): the first place to read when a call has no audio.
 - Screener detection is on only when `SCREENER_STT_VENDOR` is set (the
   jambonz account must have that STT vendor): a `config.transcribe` runs
   on the first 12 s; a phrase match (`shared/compliance/screener.ts`)
