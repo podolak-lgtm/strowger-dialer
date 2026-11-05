@@ -8,6 +8,7 @@
 // one monitor every column collapses with the chevrons.
 import { createJambonzClient } from "@jambonz/client-sdk-web";
 import { ChatPanel } from "@/components/chat-panel";
+import { isStaleBuildError, NewVersionBanner, useNewVersion } from "@/components/new-version";
 import { myTeams } from "@/lib/chat-actions";
 import { assistSuggest, campaignRebuttals, gamesOverview, type GamesOverview, type Suggestion } from "@/lib/games-actions";
 import { prettyCard } from "@strowger/shared/games";
@@ -76,6 +77,8 @@ export interface ConsoleProps {
   engineUrl: string;
   rtToken: string;
   screen: "main" | "assist";
+  /** Build that rendered this page; /api/version is polled against it (lib/version.ts). */
+  version: string;
 }
 
 type PhoneState = "off" | "connecting" | "registered" | "error" | "in-room";
@@ -147,7 +150,7 @@ function Bar({ label, value, max, from, to }: { label: string; value: number; ma
 }
 
 export function AgentConsole(props: ConsoleProps) {
-  const { me, campaigns, sip, engineUrl, rtToken, screen, roles, rights, billing } = props;
+  const { me, campaigns, sip, engineUrl, rtToken, screen, roles, rights, billing, version } = props;
   const can = (r: string) => rights.includes(r);
   const [campaignId, setCampaignId] = useState<string>(campaigns[0]?.id ?? "");
   const campaign = campaigns.find((c) => c.id === campaignId) ?? null;
@@ -177,12 +180,14 @@ export function AgentConsole(props: ConsoleProps) {
   const [manual, setManual] = useState("");
   const assistWin = useRef<Window | null>(null);
   const [busy, setBusy] = useState(false);
-  const [pauseMenu, setPauseMenu] = useState(false);
+  const [pauseMenu, setPauseMenu] = useState<null | "bar" | "banner">(null);
   const [sock, setSock] = useState<Socket | null>(null);
   const [teams, setTeams] = useState<{ id: string; name: string; members: { id: string; name: string }[] }[]>([]);
   const [liveAgents, setLiveAgents] = useState<Record<string, AgentLive>>({});
   const [dmWith, setDmWith] = useState<string | null>(null);
   const [watching, setWatching] = useState<{ agentId: string; mode: SuperviseMode } | null>(null);
+  // A deploy changes every Server Action id; this page then fails on any click.
+  const { stale: newVersion, markStale } = useNewVersion(version);
   const isLeader = roles.includes("TEAM_LEADER") || roles.includes("SUPERVISOR") || roles.includes("ADMIN");
 
   const clientRef = useRef<JambonzClient | null>(null);
@@ -454,7 +459,10 @@ export function AgentConsole(props: ConsoleProps) {
     try {
       await fn();
     } catch (e) {
-      setNotice(e instanceof Error ? e.message : String(e));
+      const message = e instanceof Error ? e.message : String(e);
+      // Server Action ids from a previous build: the page is stale, not the action.
+      if (isStaleBuildError(message)) markStale();
+      else setNotice(message);
     } finally {
       setBusy(false);
     }
@@ -483,7 +491,7 @@ export function AgentConsole(props: ConsoleProps) {
 
   const pause = (reason: string) =>
     run(async () => {
-      setPauseMenu(false);
+      setPauseMenu(null);
       const r = await agentSetState("PAUSED", reason);
       if (!r.ok) throw new Error(r.error);
     });
@@ -667,14 +675,47 @@ export function AgentConsole(props: ConsoleProps) {
     state === "LOGGED_OUT"
       ? { label: "OFFLINE", sub: "Pick a campaign and log in", color: "#8b8f9a" }
       : state === "LOGGED_IN"
-        ? { label: "LOGGED IN", sub: phone === "registered" ? "Click Ready to bring your line up" : phone === "connecting" ? "Registering softphone…" : phone === "error" ? <button type="button" onClick={retryPhone} title="Click to re-register the softphone" className="text-left text-red-300 underline decoration-dotted underline-offset-2 hover:text-red-200">Softphone error: {phoneError} · click to retry</button> : "Softphone offline", color: "#f5c452" }
+        ? { label: "LOGGED IN", sub: phone === "registered" ? "click to go Ready" : phone === "connecting" ? "Registering softphone…" : phone === "error" ? <button type="button" onClick={retryPhone} title="Click to re-register the softphone" className="text-left text-red-300 underline decoration-dotted underline-offset-2 hover:text-red-200">Softphone error: {phoneError} · click to retry</button> : "Softphone offline", color: "#f5c452" }
         : state === "READY"
-          ? { label: "READY", sub: campaign?.dialMode === "PREVIEW" ? "Preview mode · pull the next lead when you are" : "Waiting for Live Call", color: "#3ddc97" }
+          ? { label: "READY", sub: `${campaign?.dialMode === "PREVIEW" ? "Preview mode · pull the next lead when you are" : "Waiting for Live Call"} · click to pause`, color: "#3ddc97" }
           : state === "PAUSED"
-            ? { label: "PAUSED", sub: agent?.pauseReason ?? "On break", color: "#f5c452" }
+            ? { label: "PAUSED", sub: `${agent?.pauseReason ?? "On break"} · click to resume`, color: "#f5c452" }
             : state === "ON_CALL"
               ? { label: "ON CALL", sub: callStatus === "dialing" ? "Dialing…" : callStatus === "answered" ? "Answered · connecting" : "Live", color: "#5ab4ff" }
               : { label: "WRAP-UP", sub: "Disposition the call", color: "#c084fc" };
+
+  // The banner is the primary Ready/Pause control. ON_CALL and WRAP_UP are not clickable,
+  // nor is LOGGED_IN until the softphone has registered (its error text carries its own retry button).
+  const bannerActionLabel =
+    state === "READY"
+      ? "Ready. Click to pause and pick a reason"
+      : state === "PAUSED"
+        ? `Paused (${agent?.pauseReason ?? "On break"}). Click to resume and go Ready`
+        : state === "LOGGED_IN" && phone === "registered"
+          ? "Logged in. Click to go Ready and bring your line up"
+          : null;
+  const bannerClick = () => {
+    if (state === "READY") setPauseMenu((m) => (m === "banner" ? null : "banner"));
+    else if (state === "PAUSED" || state === "LOGGED_IN") goReady();
+  };
+  const bannerClass = "mb-5 flex items-center justify-center gap-6 rounded-2xl border border-white/10 bg-gradient-to-b from-white/[0.06] to-transparent px-6 py-5";
+  const bannerBody = (
+    <>
+      <Waveform colors={["#a855f7", "#ec4899"]} className="hidden md:flex" />
+      <div className="text-center">
+        <div className="text-3xl font-bold tracking-tight">
+          <span style={{ color: banner.color }}>{banner.label}</span>
+          <span className="text-zinc-500"> • </span>
+          <span>{onCall ? timer : state === "LOGGED_OUT" ? "Strowger" : banner.label === "READY" ? "Waiting for Live Call" : stateSince}</span>
+        </div>
+        <div className="mt-1 text-sm text-zinc-400">
+          {campaign ? `${campaign.name} · ` : ""}
+          {banner.sub}
+        </div>
+      </div>
+      <Waveform colors={["#22d3ee", "#3b82f6"]} className="hidden md:flex" />
+    </>
+  );
 
   const leadName = lead ? [lead.firstName, lead.lastName].filter(Boolean).join(" ") || "Unknown name" : "";
   const localTime = lead?.timezone ? new Intl.DateTimeFormat("en-US", { timeZone: lead.timezone, hour: "numeric", minute: "2-digit" }).format(new Date()) : null;
@@ -749,15 +790,15 @@ export function AgentConsole(props: ConsoleProps) {
               <>
                 {!ready && !onCall && !wrapUp ? (
                   <button onClick={goReady} disabled={busy || phone === "off" || phone === "error"} className="rounded-lg bg-emerald-400 px-3 py-1.5 font-semibold text-emerald-950 disabled:opacity-50">
-                    Ready
+                    Go Ready
                   </button>
                 ) : null}
                 {ready ? (
                   <div className="relative">
-                    <button onClick={() => setPauseMenu((m) => !m)} disabled={busy} className="rounded-lg border border-white/15 px-3 py-1.5 text-zinc-200 hover:bg-white/10">
-                      Pause ▾
+                    <button onClick={() => setPauseMenu((m) => (m === "bar" ? null : "bar"))} disabled={busy} className="rounded-lg border border-white/15 px-3 py-1.5 text-zinc-200 hover:bg-white/10">
+                      Pause…
                     </button>
-                    {pauseMenu ? (
+                    {pauseMenu === "bar" ? (
                       <div className="absolute right-0 z-10 mt-1 w-40 overflow-hidden rounded-lg border border-white/10 bg-zinc-900 shadow-xl">
                         {PAUSE_REASONS.map((r) => (
                           <button key={r} onClick={() => pause(r)} className="block w-full px-3 py-2 text-left text-sm hover:bg-white/10">
@@ -777,24 +818,37 @@ export function AgentConsole(props: ConsoleProps) {
           </div>
         </div>
 
+        <NewVersionBanner show={newVersion} onCall={onCall || wrapUp} />
         {notice ? <div className="mb-4 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">{notice}</div> : null}
 
-        {/* Status banner */}
-        <div className="mb-5 flex items-center justify-center gap-6 rounded-2xl border border-white/10 bg-gradient-to-b from-white/[0.06] to-transparent px-6 py-5">
-          <Waveform colors={["#a855f7", "#ec4899"]} className="hidden md:flex" />
-          <div className="text-center">
-            <div className="text-3xl font-bold tracking-tight">
-              <span style={{ color: banner.color }}>{banner.label}</span>
-              <span className="text-zinc-500"> • </span>
-              <span>{onCall ? timer : state === "LOGGED_OUT" ? "Strowger" : banner.label === "READY" ? "Waiting for Live Call" : stateSince}</span>
-            </div>
-            <div className="mt-1 text-sm text-zinc-400">
-              {campaign ? `${campaign.name} · ` : ""}
-              {banner.sub}
-            </div>
+        {/* Status banner: the primary Ready / Pause control */}
+        {bannerActionLabel ? (
+          <div className="relative">
+            <button
+              type="button"
+              onClick={bannerClick}
+              disabled={busy}
+              aria-label={bannerActionLabel}
+              aria-expanded={state === "READY" ? pauseMenu === "banner" : undefined}
+              title={bannerActionLabel}
+              className={`${bannerClass} w-full cursor-pointer transition hover:border-white/25 hover:from-white/[0.1] focus:outline-none focus-visible:ring-2 focus-visible:ring-white/60 disabled:cursor-default disabled:opacity-60`}
+            >
+              {bannerBody}
+            </button>
+            {pauseMenu === "banner" ? (
+              <div className="absolute left-1/2 top-full z-10 -mt-3 w-44 -translate-x-1/2 overflow-hidden rounded-lg border border-white/10 bg-zinc-900 shadow-xl">
+                <div className="px-3 py-1.5 text-[11px] uppercase tracking-wide text-zinc-500">Pause reason</div>
+                {PAUSE_REASONS.map((r) => (
+                  <button key={r} type="button" onClick={() => pause(r)} className="block w-full px-3 py-2 text-left text-sm hover:bg-white/10">
+                    {r}
+                  </button>
+                ))}
+              </div>
+            ) : null}
           </div>
-          <Waveform colors={["#22d3ee", "#3b82f6"]} className="hidden md:flex" />
-        </div>
+        ) : (
+          <div className={bannerClass}>{bannerBody}</div>
+        )}
 
         {screen === "main" ? (
           <div className="grid gap-4 xl:grid-cols-[320px_1fr_300px]">

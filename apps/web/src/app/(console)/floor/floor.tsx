@@ -7,6 +7,7 @@
 import { createJambonzClient } from "@jambonz/client-sdk-web";
 import { io, type Socket } from "socket.io-client";
 import { ChatPanel } from "@/components/chat-panel";
+import { isStaleBuildError, NewVersionBanner, useNewVersion } from "@/components/new-version";
 import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { floorStats, superviseCurrent, superviseMode, superviseStart, superviseStop, superviseTakeover, type FloorAgent, type FloorStats, type Supervision, type SuperviseMode } from "./actions";
 
@@ -19,6 +20,8 @@ interface Props {
   engineUrl: string;
   rtToken: string;
   sip: { server: string; realm: string; username: string; password: string } | null;
+  /** Build that rendered this page; /api/version is polled against it (lib/version.ts). */
+  version: string;
 }
 
 const STATE_TONE: Record<string, string> = {
@@ -69,7 +72,7 @@ function Spark({ values, color = "#22d3ee" }: { values: number[]; color?: string
   );
 }
 
-export function FloorConsole({ me, view, initialCampaignId, engineUrl, rtToken, sip }: Props) {
+export function FloorConsole({ me, view, initialCampaignId, engineUrl, rtToken, sip, version }: Props) {
   const [campaignId, setCampaignId] = useState<string | null>(initialCampaignId);
   const [stats, setStats] = useState<FloorStats | null>(null);
   const [sup, setSup] = useState<Supervision | null>(null);
@@ -79,6 +82,8 @@ export function FloorConsole({ me, view, initialCampaignId, engineUrl, rtToken, 
   const [pending, start] = useTransition();
   const clientRef = useRef<JambonzClient | null>(null);
   const [sock, setSock] = useState<Socket | null>(null);
+  // A deploy changes every Server Action id; this page then fails on any refresh.
+  const { stale: newVersion, markStale } = useNewVersion(version);
 
   const refresh = useCallback(async () => {
     try {
@@ -86,9 +91,11 @@ export function FloorConsole({ me, view, initialCampaignId, engineUrl, rtToken, 
       setStats(st);
       setSup(su);
     } catch (e) {
-      setNotice(e instanceof Error ? e.message : String(e));
+      const message = e instanceof Error ? e.message : String(e);
+      if (isStaleBuildError(message)) markStale();
+      else setNotice(message);
     }
-  }, [campaignId]);
+  }, [campaignId, markStale]);
 
   useEffect(() => {
     const first = setTimeout(() => void refresh(), 0);
@@ -142,8 +149,14 @@ export function FloorConsole({ me, view, initialCampaignId, engineUrl, rtToken, 
   const act = (fn: () => Promise<{ ok: boolean; error?: string } | { ok: boolean }>) =>
     start(async () => {
       setNotice(null);
-      const r = await fn();
-      if (!r.ok) setNotice(("error" in r && r.error) || "That did not work");
+      try {
+        const r = await fn();
+        if (!r.ok) setNotice(("error" in r && r.error) || "That did not work");
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        if (isStaleBuildError(message)) markStale();
+        else setNotice(message);
+      }
       void refresh();
     });
 
@@ -218,6 +231,7 @@ export function FloorConsole({ me, view, initialCampaignId, engineUrl, rtToken, 
           </div>
         </div>
 
+        <NewVersionBanner show={newVersion} onCall={Boolean(sup)} />
         {notice ? <div className="mb-4 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">{notice}</div> : null}
 
         {view === "agents" ? (
