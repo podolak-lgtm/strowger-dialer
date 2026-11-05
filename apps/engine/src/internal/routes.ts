@@ -22,13 +22,13 @@ import { assignNumbersToCampaign, createBrand, createTenDlcCampaign, orderNumber
 import type { BrandInput, CampaignInput } from "../provision/telnyx";
 import { fcrProgress, startFcrRun } from "../provision/fcr";
 import { chatHistory, sendChat } from "../chat";
-import { acceptWager, gamesOverview, proposeWager, withdrawWager } from "../games";
+import { acceptWager, endPokerRun, gamesOverview, proposeWager, setCampaignBets, startPokerRun, withdrawWager } from "../games";
 import { suggest } from "../assist";
 import { billingOverview, billingStatus, chargeSeatIfNew, outboundAllowed, platformOverview, rates, recordPayment } from "../billing";
 import { log } from "../log";
 import { syncTelnyxCosts, vendorSpend } from "../billing/vendor";
 import { createWorkspace, moveCampaign } from "../workspaces";
-import type { WagerKind } from "@strowger/shared/games";
+import { parsePokerRule, type WagerKind } from "@strowger/shared/games";
 
 const Ids = z.object({ tenantId: z.string(), userId: z.string() });
 
@@ -314,16 +314,49 @@ export async function registerInternalRoutes(app: FastifyInstance): Promise<void
 
   // ---- Games
   app.get("/internal/games", async (req) => {
-    const q = z.object({ tenantId: z.string(), userId: z.string() }).parse(req.query);
-    return gamesOverview(q.tenantId, q.userId);
+    const q = z.object({ tenantId: z.string(), userId: z.string(), scope: z.enum(["mine", "all"]).optional(), campaignId: z.string().optional() }).parse(req.query);
+    return gamesOverview(q.tenantId, q.userId, q.scope ?? "mine", q.campaignId || null);
   });
   app.post("/internal/games/wager", async (req, reply) => {
-    const b = Ids.extend({ action: z.enum(["propose", "accept", "withdraw"]), wagerId: z.string().optional(), accepterId: z.string().nullable().optional(), kind: z.string().optional(), stake: z.number().int().optional(), note: z.string().optional() }).parse(req.body);
+    const b = Ids.extend({ action: z.enum(["propose", "accept", "withdraw"]), wagerId: z.string().optional(), campaignId: z.string().optional(), accepterId: z.string().nullable().optional(), kind: z.string().optional(), stake: z.number().int().optional(), note: z.string().optional() }).parse(req.body);
     try {
-      if (b.action === "propose") return { ok: true, wager: await proposeWager(b.tenantId, b.userId, b.accepterId ?? null, b.kind as WagerKind, b.stake ?? 0, b.note) };
+      if (b.action === "propose") return { ok: true, wager: await proposeWager(b.tenantId, b.userId, b.campaignId ?? "", b.accepterId ?? null, b.kind as WagerKind, b.stake ?? 0, b.note) };
       if (b.action === "accept") return { ok: true, wager: await acceptWager(b.tenantId, b.userId, b.wagerId ?? "") };
       await withdrawWager(b.tenantId, b.userId, b.wagerId ?? "");
       return { ok: true };
+    } catch (e) {
+      return reply.code(400).send({ ok: false, error: e instanceof Error ? e.message : String(e) });
+    }
+  });
+  // Campaign switches and poker runs (ADMIN/SUPERVISOR, or a team leader with manage_games; the web checks).
+  app.post("/internal/games/bets", async (req, reply) => {
+    const b = Ids.extend({ campaignId: z.string(), betsEnabled: z.boolean(), weeklyPoints: z.number(), maxStake: z.number() }).parse(req.body);
+    try {
+      return { ok: true, campaign: await setCampaignBets(b.tenantId, b.campaignId, b.userId, b) };
+    } catch (e) {
+      return reply.code(400).send({ ok: false, error: e instanceof Error ? e.message : String(e) });
+    }
+  });
+  app.post("/internal/games/run", async (req, reply) => {
+    const b = Ids.extend({
+      action: z.enum(["start", "end"]),
+      runId: z.string().optional(),
+      campaignId: z.string().optional(),
+      name: z.string().optional(),
+      startsAt: z.string().optional(),
+      endsAt: z.string().optional(),
+      prize: z.string().nullable().optional(),
+      qualifies: z.string().optional(),
+      codes: z.string().optional(),
+    }).parse(req.body);
+    try {
+      if (b.action === "start") {
+        const startsAt = new Date(b.startsAt ?? "");
+        const endsAt = new Date(b.endsAt ?? "");
+        if (Number.isNaN(startsAt.getTime()) || Number.isNaN(endsAt.getTime())) throw new Error("Pick when the run starts and ends");
+        return { ok: true, run: await startPokerRun(b.tenantId, b.campaignId ?? "", b.userId, { name: b.name ?? "", startsAt, endsAt, prize: b.prize ?? null, rule: parsePokerRule(b.qualifies, b.codes) }) };
+      }
+      return { ok: true, run: await endPokerRun(b.tenantId, b.runId ?? "", b.userId) };
     } catch (e) {
       return reply.code(400).send({ ok: false, error: e instanceof Error ? e.message : String(e) });
     }

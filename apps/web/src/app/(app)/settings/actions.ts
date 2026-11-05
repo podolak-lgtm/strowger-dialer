@@ -124,15 +124,13 @@ export async function saveLevelRights(formData: FormData) {
   revalidatePath("/settings");
 }
 
+/** Games: workspace defaults for new campaigns only. Bets, allowance and stake cap are per campaign (campaign page → Games). */
 export async function saveGames(formData: FormData) {
   const s = await requireRole("SUPERVISOR");
   const settings = (s.tenant.settings ?? {}) as Record<string, unknown>;
   const games = {
-    enabled: formData.get("enabled") === "on",
     weeklyPoints: Math.max(0, Math.min(1_000_000, Number(formData.get("weeklyPoints")) || 10_000)),
     maxStake: Math.max(1, Math.min(1_000_000, Number(formData.get("maxStake")) || 5_000)),
-    pokerPeriod: formData.get("pokerPeriod") === "day" ? "day" : "week",
-    pokerPrize: String(formData.get("pokerPrize") ?? "").trim().slice(0, 120),
   };
   await prisma.tenant.update({ where: { id: s.tenant.id }, data: { settings: { ...settings, games } } });
   revalidatePath("/settings");

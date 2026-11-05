@@ -57,6 +57,7 @@ model Tenant {
   wagers         Wager[]
   pointsLedger   PointsLedger[]
   pokerCards     PokerCard[]
+  pokerRuns      PokerRun[]
   audioAssets    AudioAsset[]
   calls          Call[]
   messages       Message[]
@@ -132,6 +133,7 @@ model User {
   wagersAccepted  Wager[]         @relation("WagerAccepter")
   pointsLedger    PointsLedger[]
   pokerCards      PokerCard[]
+  pokerRunsStarted PokerRun[]     @relation("PokerRunCreator")
   supervisedRooms Room[]          @relation("RoomSupervisor")
   campaignAgents  CampaignAgent[]
   agentSessions   AgentSession[]
@@ -309,9 +311,17 @@ model Campaign {
   /// offered to the campaign.
   callbackOwnerMinutes Int @default(30)
 
+  /// Games (owner, 5 Nov): switched on per campaign. Bets between agents on
+  /// this campaign; the Monday allowance and stake cap apply to its agents.
+  /// Defaults for new campaigns come from Tenant.settings.games.
+  betsEnabled  Boolean @default(false)
+  weeklyPoints Int     @default(10000)
+  maxStake     Int     @default(5000)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  pokerRuns     PokerRun[]
   lists         List[]
   agents        CampaignAgent[]
   dispositions  Disposition[]
@@ -872,6 +882,8 @@ model Wager {
   proposerId  String
   accepter    User?       @relation("WagerAccepter", fields: [accepterId], references: [id])
   accepterId  String?
+  /// The campaign the bet is on (bets are switched on per campaign). Null only on bets from before that.
+  campaignId  String?
   /// NEXT_SALE, NEXT_CALL, NEXT_CONTACT, MOST_CALLS_TODAY, MOST_CONTACTS_TODAY, MOST_SALES_TODAY, MOST_SALES_WEEK
   kind        String
   stake       Int
@@ -884,6 +896,7 @@ model Wager {
   settledAt   DateTime?
 
   @@index([tenantId, status, createdAt])
+  @@index([tenantId, campaignId, status])
 }
 
 enum WagerStatus {
@@ -908,21 +921,62 @@ model PointsLedger {
   @@index([tenantId, userId, createdAt])
 }
 
-/// Poker run: one card per sale; best five-card hand in the period wins.
+/// Poker run: an admin starts one per campaign with a name, a window, a prize
+/// and the rule for what deals a card; the best five-card hand when it ends wins.
+model PokerRun {
+  id          String         @id @default(cuid())
+  tenant      Tenant         @relation(fields: [tenantId], references: [id])
+  tenantId    String
+  campaign    Campaign       @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  campaignId  String
+  name        String
+  startsAt    DateTime
+  endsAt      DateTime
+  /// Display only; paying it is the owner's.
+  prize       String?
+  /// SALE | CONTACT | CODES (see shared/games POKER_QUALIFIERS).
+  qualifies   String         @default("SALE")
+  /// Disposition codes that deal a card when qualifies = CODES.
+  qualifyingCodes String[]   @default([])
+  status      PokerRunStatus @default(ACTIVE)
+  createdBy   User           @relation("PokerRunCreator", fields: [createdById], references: [id])
+  createdById String
+  /// Set when the run ends: the best hand and who held it.
+  winnerId    String?
+  /// {"userId","name","hand","cards":[…]} for the winner; null when nobody had a card.
+  winningHand Json?
+  endedAt     DateTime?
+  createdAt   DateTime       @default(now())
+
+  cards PokerCard[]
+
+  @@index([tenantId, campaignId, status])
+}
+
+enum PokerRunStatus {
+  ACTIVE
+  ENDED
+}
+
+/// A card dealt in a poker run (one per qualifying outcome).
 model PokerCard {
-  id        String   @id @default(cuid())
-  tenant    Tenant   @relation(fields: [tenantId], references: [id])
+  id        String    @id @default(cuid())
+  tenant    Tenant    @relation(fields: [tenantId], references: [id])
   tenantId  String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   userId    String
-  /// Period key: YYYY-MM-DD (daily run) or YYYY-Www (weekly run).
+  /// The run the card belongs to. Null only on cards from before explicit runs.
+  run       PokerRun? @relation(fields: [runId], references: [id], onDelete: Cascade)
+  runId     String?
+  /// Legacy period key (YYYY-MM-DD or YYYY-Www) from before runs; the ISO week the card was dealt in since.
   period    String
   /// e.g. "AS", "TD", "9H", "2C"
   card      String
   callId    String?
-  dealtAt   DateTime @default(now())
+  dealtAt   DateTime  @default(now())
 
   @@index([tenantId, period, userId])
+  @@index([runId, userId])
 }
 
 /// Billing (owner, 5 Nov): prepaid per client. A seat is an agent who logs in

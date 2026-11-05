@@ -1,4 +1,5 @@
 import { prisma } from "@strowger/db";
+import Link from "next/link";
 import { formatPhone } from "@strowger/shared";
 import { requireRole } from "@/lib/auth";
 import { Badge, Button, Card, Field, PageHeader, Table, Td, inputClass } from "@/components/ui";
@@ -308,31 +309,26 @@ export default async function SettingsPage() {
           })()}
         </Card>
 
-        <Card title="Games" className="lg:col-span-2">
+        <Card title="Games: defaults for new campaigns" className="lg:col-span-2">
           {(() => {
-            const g = { enabled: true, weeklyPoints: 10000, maxStake: 5000, pokerPeriod: "week", pokerPrize: "", ...(((s.tenant.settings ?? {}) as { games?: Record<string, unknown> }).games ?? {}) } as { enabled: boolean; weeklyPoints: number; maxStake: number; pokerPeriod: string; pokerPrize: string };
+            const g = { weeklyPoints: 10000, maxStake: 5000, ...(((s.tenant.settings ?? {}) as { games?: Record<string, unknown> }).games ?? {}) } as { weeklyPoints: number; maxStake: number };
             return (
               <form action={saveGames} className="flex flex-wrap items-end gap-3 text-sm">
-                <label className="flex items-center gap-2 pb-2 text-zinc-300">
-                  <input type="checkbox" name="enabled" defaultChecked={g.enabled} className="h-4 w-4" /> Games on
-                </label>
+                <p className="w-full text-xs text-zinc-500">
+                  Bets and poker runs are switched on per campaign (campaign page → Games, or the{" "}
+                  <Link href="/games" className="text-sky-300 underline">
+                    Games
+                  </Link>{" "}
+                  page). These are only the starting values a new campaign gets.
+                </p>
                 <Field label="Points every Monday">
                   <input name="weeklyPoints" type="number" min={0} defaultValue={g.weeklyPoints} className={inputClass} />
                 </Field>
                 <Field label="Max stake per bet">
                   <input name="maxStake" type="number" min={1} defaultValue={g.maxStake} className={inputClass} />
                 </Field>
-                <Field label="Poker run resets">
-                  <select name="pokerPeriod" defaultValue={g.pokerPeriod} className={inputClass}>
-                    <option value="day">Every day</option>
-                    <option value="week">Every week</option>
-                  </select>
-                </Field>
-                <Field label="Poker prize (shown to agents)">
-                  <input name="pokerPrize" defaultValue={g.pokerPrize} className={inputClass} placeholder="$100 gift card" />
-                </Field>
                 <Button type="submit" variant="ghost">
-                  Save games
+                  Save defaults
                 </Button>
               </form>
             );

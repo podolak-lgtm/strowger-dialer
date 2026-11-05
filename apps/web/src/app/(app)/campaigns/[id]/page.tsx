@@ -8,6 +8,7 @@ import { addWebhook, deleteWebhook, testWebhook, toggleWebhook } from "../webhoo
 import { saveRebuttals, saveScript } from "../script-actions";
 import { SCRIPT_TEMPLATES, rebuttalLines } from "@strowger/shared/scripts";
 import { TemplateTextarea } from "./template-textarea";
+import { GamesCard } from "./games-card";
 
 function Check({ name, label, checked }: { name: string; label: string; checked: boolean }) {
   return (
@@ -18,9 +19,10 @@ function Check({ name, label, checked }: { name: string; label: string; checked:
   );
 }
 
-export default async function CampaignPage({ params }: PageProps<"/campaigns/[id]">) {
+export default async function CampaignPage({ params, searchParams }: PageProps<"/campaigns/[id]">) {
   const s = await requireRole("SUPERVISOR");
   const { id } = await params;
+  const { games: gamesError } = await searchParams;
   const c = await prisma.campaign.findFirst({
     where: { id, tenantId: s.tenant.id },
     include: {
@@ -29,12 +31,13 @@ export default async function CampaignPage({ params }: PageProps<"/campaigns/[id
       dispositions: { orderBy: { sortOrder: "asc" } },
       webhooks: { include: { deliveries: { orderBy: { createdAt: "desc" }, take: 1 } }, orderBy: { createdAt: "asc" } },
       scripts: { orderBy: { version: "desc" }, take: 1 },
+      pokerRuns: { orderBy: { createdAt: "desc" }, take: 6 },
       _count: { select: { agents: true } },
     },
   });
   if (!c) notFound();
-  const since = new Date();
-  since.setUTCDate(since.getUTCDate() - 30);
+  const now = new Date();
+  const since = new Date(now.getTime() - 30 * 86_400_000);
   const ledger = await prisma.abandonLedger.aggregate({ where: { campaignId: c.id, day: { gte: since } }, _sum: { answered: true, abandoned: true } });
   const answered30 = ledger._sum.answered ?? 0;
   const abandoned30 = ledger._sum.abandoned ?? 0;
@@ -333,6 +336,8 @@ export default async function CampaignPage({ params }: PageProps<"/campaigns/[id
             </Button>
           </form>
         </Card>
+
+        <GamesCard campaign={{ id: c.id, betsEnabled: c.betsEnabled, weeklyPoints: c.weeklyPoints, maxStake: c.maxStake }} runs={c.pokerRuns} error={typeof gamesError === "string" ? gamesError : undefined} now={now} />
 
         <Card title="CRM push (webhooks)" className="lg:col-span-2">
           <p className="mb-3 text-xs text-zinc-500">

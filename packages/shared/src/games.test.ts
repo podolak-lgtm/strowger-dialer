@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { bestHand, compareHands, dealCard, periodKeyFor, rightsForLevel, weekKey } from "./games";
+import { AGENT_RIGHTS, DEFAULT_LEVEL_RIGHTS, OPT_IN_RIGHTS, bestHand, compareHands, daysLeft, dealCard, earnsCard, parsePokerRule, periodKeyFor, rightsForLevel, runIsLive, thisWeekWindow, weekKey } from "./games";
 
 test("poker: categories", () => {
   assert.equal(bestHand(["AS", "KS", "QS", "JS", "TS"])!.name, "Straight flush");
@@ -49,4 +49,40 @@ test("periods and levels", () => {
   assert.ok(rightsForLevel(5).has("transfer"));
   assert.ok(rightsForLevel(1, { "1": ["manual_dial"] }).has("manual_dial"));
   assert.ok(!rightsForLevel(1, { "1": ["manual_dial"] }).has("voicemail_drop"));
+});
+
+test("poker run rule: what earns a card", () => {
+  assert.ok(earnsCard({ qualifies: "SALE", codes: [] }, { isSale: true, isContact: true, code: "SALE" }));
+  assert.ok(!earnsCard({ qualifies: "SALE", codes: [] }, { isSale: false, isContact: true, code: "NI" }));
+  assert.ok(earnsCard({ qualifies: "CONTACT", codes: [] }, { isSale: false, isContact: true, code: "NI" }));
+  assert.ok(!earnsCard({ qualifies: "CONTACT", codes: [] }, { isSale: false, isContact: false, code: "NA" }));
+  assert.ok(earnsCard({ qualifies: "CODES", codes: ["XFER", "SALE"] }, { isSale: false, isContact: true, code: "xfer" }));
+  assert.ok(!earnsCard({ qualifies: "CODES", codes: ["XFER"] }, { isSale: true, isContact: true, code: "SALE" }));
+});
+
+test("poker run rule: parsing the form", () => {
+  assert.deepEqual(parsePokerRule("CODES", "sale, xfer xfer;cb"), { qualifies: "CODES", codes: ["SALE", "XFER", "CB"] });
+  assert.deepEqual(parsePokerRule("CODES", ""), { qualifies: "SALE", codes: [] }); // no codes: falls back to sales
+  assert.deepEqual(parsePokerRule("contact", null), { qualifies: "CONTACT", codes: [] });
+  assert.deepEqual(parsePokerRule("nonsense", ["A"]), { qualifies: "SALE", codes: [] });
+});
+
+test("poker run window and days left", () => {
+  const w = thisWeekWindow(new Date("2026-11-05T12:00:00Z")); // a Thursday
+  assert.equal(w.startsAt.toISOString(), "2026-11-02T00:00:00.000Z");
+  assert.equal(w.endsAt.toISOString(), "2026-11-09T00:00:00.000Z");
+  assert.equal(thisWeekWindow(new Date("2026-11-08T23:00:00Z")).startsAt.toISOString(), "2026-11-02T00:00:00.000Z"); // Sunday still that week
+  assert.equal(daysLeft(w.endsAt, new Date("2026-11-05T12:00:00Z")), 4);
+  assert.equal(daysLeft(w.endsAt, new Date("2026-11-10T00:00:00Z")), 0);
+  const run = { status: "ACTIVE", startsAt: w.startsAt, endsAt: w.endsAt };
+  assert.ok(runIsLive(run, new Date("2026-11-05T12:00:00Z")));
+  assert.ok(!runIsLive(run, new Date("2026-11-09T00:00:00Z")));
+  assert.ok(!runIsLive({ ...run, status: "ENDED" }, new Date("2026-11-05T12:00:00Z")));
+});
+
+test("manage_games is a right nobody gets by level alone; a tenant grants it", () => {
+  assert.ok("manage_games" in AGENT_RIGHTS);
+  assert.ok(OPT_IN_RIGHTS.includes("manage_games"));
+  for (const l of Object.keys(DEFAULT_LEVEL_RIGHTS)) assert.ok(!rightsForLevel(Number(l)).has("manage_games"), `level ${l}`);
+  assert.ok(rightsForLevel(7, { "7": ["games", "manage_games"] }).has("manage_games"));
 });

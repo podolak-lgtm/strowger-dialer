@@ -21,11 +21,15 @@ export async function createCampaign(formData: FormData) {
   const name = String(formData.get("name") ?? "").trim();
   const dialMode = String(formData.get("dialMode") ?? "PREVIEW") as DialMode;
   if (!name) throw new Error("Name is required");
+  // Games defaults (Settings → Games); bets stay off until switched on for the campaign.
+  const g = ((s.tenant.settings ?? {}) as { games?: { weeklyPoints?: number; maxStake?: number } }).games ?? {};
   const c = await prisma.campaign.create({
     data: {
       tenantId: s.tenant.id,
       name,
       dialMode,
+      weeklyPoints: Math.max(0, Math.min(1_000_000, Number(g.weeklyPoints) || 10_000)),
+      maxStake: Math.max(1, Math.min(1_000_000, Number(g.maxStake) || 5_000)),
       dispositions: { create: DEFAULT_DISPOSITIONS.map((d, i) => ({ ...d, tenantId: s.tenant.id, sortOrder: i })) },
       dialPlans: {
         create: [

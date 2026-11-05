@@ -10,7 +10,7 @@ import { createJambonzClient } from "@jambonz/client-sdk-web";
 import { ChatPanel } from "@/components/chat-panel";
 import { isStaleBuildError, NewVersionBanner, useNewVersion } from "@/components/new-version";
 import { myTeams } from "@/lib/chat-actions";
-import { assistSuggest, campaignRebuttals, gamesOverview, type GamesOverview, type Suggestion } from "@/lib/games-actions";
+import { assistSuggest, campaignRebuttals, gamesOverview, wager, type GamesOverview, type Suggestion } from "@/lib/games-actions";
 import { prettyCard } from "@strowger/shared/games";
 import { superviseStart, superviseStop, type SuperviseMode } from "../floor/actions";
 import { formatPhone } from "@strowger/shared/phone";
@@ -387,6 +387,11 @@ export function AgentConsole(props: ConsoleProps) {
   // One automatic re-register after a failure; after that the "phone error" badge / banner is the retry.
   const phoneAutoRetriedRef = useRef(false);
   const socketRef = useRef<Socket | null>(null);
+  // The campaign on screen, for socket handlers that outlive a campaign switch.
+  const campaignIdRef = useRef(campaignId);
+  useEffect(() => {
+    campaignIdRef.current = campaignId;
+  }, [campaignId]);
   // Dispositioning a live call hangs it up first; the lead leg's "ended" event
   // can then land after the disposition cleared the call. Ignore it for that id.
   const dispositionedRef = useRef<string | null>(null);
@@ -528,6 +533,17 @@ export function AgentConsole(props: ConsoleProps) {
       if (m.leadId) void textThread(m.leadId).then(setThread);
       void refreshStats();
     });
+    // Games: a run starting or bets switching on for the campaign on screen is announced here; the panel reloads itself.
+    sock.on("games:run", (r: { status: "ACTIVE" | "ENDED"; campaignId: string; campaign: string; name: string; prize: string | null; winner?: { name: string; hand: string } | null }) => {
+      if (r.campaignId !== campaignIdRef.current) return;
+      if (r.status === "ACTIVE") setNotice(`Poker run '${r.name}' started on ${r.campaign}${r.prize ? `: ${r.prize}` : ""}`);
+      else setNotice(`Poker run '${r.name}' ended: ${r.winner ? `${r.winner.name} wins with ${r.winner.hand}` : "nobody held a card"}`);
+    });
+    sock.on("games:bets", (b: { campaignId: string; campaign: string; betsEnabled: boolean; weeklyPoints: number }) => {
+      if (b.campaignId !== campaignIdRef.current) return;
+      setNotice(b.betsEnabled ? `Bets are on for ${b.campaign}: ${b.weeklyPoints.toLocaleString()} points every Monday` : `Bets are off for ${b.campaign}`);
+    });
+    sock.on("games:won", (w: { name: string; prize: string | null; hand: string }) => setNotice(`You won the poker run '${w.name}' with ${w.hand}${w.prize ? `: ${w.prize}` : ""}`));
     sock.on("call:update", (u: { callId: string; status: string; leadId?: string; outcome?: string; inbound?: boolean; from?: string | null }) => {
       if (u.status === "ended" && u.callId === dispositionedRef.current) {
         void refreshStats();
@@ -1346,7 +1362,7 @@ export function AgentConsole(props: ConsoleProps) {
                 )}
               </Panel>
               <AssistPanel campaignId={campaignId} leadId={lead?.id ?? null} />
-              {can("games") ? <GamesPanel meId={me.id} /> : null}
+              {can("games") ? <GamesPanel meId={me.id} campaignId={campaignId} socket={sock} /> : null}
             </div>
 
             <div className="space-y-4">
@@ -1603,39 +1619,117 @@ function AssistPanel({ campaignId, leadId, compact = false }: { campaignId: stri
   );
 }
 
-function GamesPanel({ meId }: { meId: string }) {
+function GamesPanel({ meId, campaignId, socket }: { meId: string; campaignId: string; socket: Socket | null }) {
   const [o, setO] = useState<GamesOverview | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [kind, setKind] = useState("NEXT_SALE");
+  const [stake, setStake] = useState(500);
+  // Polled, and reloaded the moment the engine says a run, a bet, a card or the campaign's switches changed.
   useEffect(() => {
-    const load = () => void gamesOverview().then(setO).catch(() => undefined);
+    const load = () => void gamesOverview(campaignId).then(setO).catch(() => undefined);
     const first = setTimeout(load, 0);
     const t = setInterval(load, 30_000);
+    const events = ["games:run", "games:bets", "games:wager", "games:card", "games:points", "games:poker"];
+    for (const e of events) socket?.on(e, load);
     return () => {
       clearTimeout(first);
       clearInterval(t);
+      for (const e of events) socket?.off(e, load);
     };
-  }, []);
-  if (!o || !o.settings.enabled) return null;
-  const mine = o.poker.rows.find((r) => r.userId === meId);
-  const open = o.wagers.filter((w) => w.status === "OPEN" && w.proposerId !== meId && (!w.accepterId || w.accepterId === meId)).length;
+  }, [campaignId, socket]);
+  const act = async (input: Parameters<typeof wager>[0]) => {
+    setBusy(true);
+    const r = await wager(input);
+    setErr(r.ok ? null : r.error);
+    setBusy(false);
+    void gamesOverview(campaignId).then(setO).catch(() => undefined);
+  };
+  const link = (
+    <a href={`/games?campaign=${encodeURIComponent(campaignId)}`} target="_blank" rel="noreferrer" className="text-xs text-sky-300 underline">
+      open
+    </a>
+  );
+  if (!o) return null;
+  const c = o.campaign;
+  const betsOn = Boolean(c?.betsEnabled && c.id === campaignId);
+  const run = o.run && o.run.campaignId === campaignId ? o.run : null;
+  if (!betsOn && !run) {
+    return (
+      <Panel title="Games" right={link} defaultOpen={false}>
+        <div className="text-sm text-zinc-400">Games are off for this campaign: no bets and no poker run. A supervisor switches them on from the campaign page.</div>
+      </Panel>
+    );
+  }
+  const mine = run?.rows.find((r) => r.userId === meId);
+  const forMe = o.wagers.filter((w) => w.status === "OPEN" && w.proposerId !== meId && (!w.accepterId || w.accepterId === meId));
   return (
-    <Panel title="Games" right={<a href="/games" target="_blank" rel="noreferrer" className="text-xs text-sky-300 underline">open</a>} defaultOpen={false}>
-      <div className="flex items-center justify-between text-sm">
-        <span className="text-zinc-400">Points</span>
-        <span className="text-lg font-semibold tabular-nums">{o.points.toLocaleString()}</span>
-      </div>
-      <div className="mt-1 flex items-center justify-between text-sm">
-        <span className="text-zinc-400">Bets waiting for you</span>
-        <span className={open ? "rounded-full bg-fuchsia-500 px-2 text-xs font-bold text-white" : "text-zinc-500"}>{open}</span>
-      </div>
-      <div className="mt-2 text-xs text-zinc-400">Poker run {mine?.hand ? `· ${mine.hand.name}` : ""}</div>
-      <div className="mt-1 flex flex-wrap gap-1">
-        {(mine?.cards ?? []).map((c, i) => (
-          <span key={i} className={`inline-grid h-8 w-6 place-items-center rounded border border-zinc-300 bg-white text-[11px] font-bold ${c[1] === "H" || c[1] === "D" ? "text-red-600" : "text-zinc-900"}`}>
-            {prettyCard(c)}
-          </span>
-        ))}
-        {!mine?.cards.length ? <span className="text-xs text-zinc-500">No cards yet: every sale deals one.</span> : null}
-      </div>
+    <Panel title="Games" right={link} defaultOpen={false}>
+      {run ? (
+        <div className="mb-3 rounded-md border border-fuchsia-900/60 bg-fuchsia-950/20 p-2">
+          <div className="flex items-center justify-between text-sm">
+            <b>{run.name}</b>
+            <span className="text-xs text-zinc-400">{run.live ? `${run.daysLeft} day${run.daysLeft === 1 ? "" : "s"} left` : "not running"}</span>
+          </div>
+          {run.prize ? <div className="text-xs text-amber-200">Prize: {run.prize}</div> : null}
+          <div className="mt-1 text-xs text-zinc-400">
+            {run.qualifies === "CODES" ? `A card for every ${run.codes.join(", ")}` : run.qualifies === "CONTACT" ? "A card for every live contact" : "A card for every sale"} · your hand{mine?.hand ? `: ${mine.hand.name}` : ""}
+          </div>
+          <div className="mt-1 flex flex-wrap gap-1">
+            {(mine?.cards ?? []).map((c, i) => (
+              <span key={i} className={`inline-grid h-8 w-6 place-items-center rounded border border-zinc-300 bg-white text-[11px] font-bold ${c[1] === "H" || c[1] === "D" ? "text-red-600" : "text-zinc-900"}`}>
+                {prettyCard(c)}
+              </span>
+            ))}
+            {!mine?.cards.length ? <span className="text-xs text-zinc-500">No cards yet.</span> : null}
+          </div>
+          {run.rows[0] && run.rows[0].userId !== meId ? (
+            <div className="mt-1 text-xs text-zinc-500">
+              Leading: {run.rows[0].name}
+              {run.rows[0].hand ? ` · ${run.rows[0].hand.name}` : ""}
+            </div>
+          ) : null}
+        </div>
+      ) : (
+        <div className="mb-2 text-xs text-zinc-500">No poker run on this campaign.</div>
+      )}
+      {betsOn && c ? (
+        <>
+          <div className="flex items-center justify-between text-sm">
+            <span className="text-zinc-400">Points</span>
+            <span className="text-lg font-semibold tabular-nums">{o.points.toLocaleString()}</span>
+          </div>
+          {err ? <div className="my-1 rounded border border-red-900 bg-red-950/40 px-2 py-1 text-xs text-red-200">{err}</div> : null}
+          <ul className="mt-1 space-y-1 text-xs">
+            {forMe.slice(0, 4).map((w) => (
+              <li key={w.id} className="flex items-center justify-between rounded bg-white/5 px-2 py-1">
+                <span className="truncate">
+                  <b>{w.proposer}</b> · {w.label} · <span className="text-fuchsia-300">{w.stake.toLocaleString()}</span>
+                </span>
+                <button disabled={busy} onClick={() => void act({ action: "accept", wagerId: w.id })} className="ml-2 rounded bg-emerald-400 px-2 py-0.5 font-semibold text-emerald-950 disabled:opacity-40">
+                  Take
+                </button>
+              </li>
+            ))}
+            {forMe.length === 0 ? <li className="text-zinc-500">No bets waiting for you.</li> : null}
+          </ul>
+          <div className="mt-2 flex items-center gap-1 text-xs">
+            <select value={kind} onChange={(e) => setKind(e.target.value)} className="min-w-0 flex-1 rounded border border-white/10 bg-black/30 px-1 py-1">
+              {o.kinds.map((k) => (
+                <option key={k.kind} value={k.kind}>
+                  {k.label}
+                </option>
+              ))}
+            </select>
+            <input type="number" min={1} max={c.maxStake} value={stake} onChange={(e) => setStake(Number(e.target.value))} className="w-16 rounded border border-white/10 bg-black/30 px-1 py-1 tabular-nums" />
+            <button disabled={busy || stake <= 0} onClick={() => void act({ action: "propose", campaignId, kind, stake, accepterId: null })} className="rounded bg-fuchsia-500 px-2 py-1 font-semibold text-white disabled:opacity-40">
+              Bet
+            </button>
+          </div>
+        </>
+      ) : (
+        <div className="text-xs text-zinc-500">Bets are off for this campaign.</div>
+      )}
     </Panel>
   );
 }

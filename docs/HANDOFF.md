@@ -165,8 +165,9 @@ ratings, extensions), `/voicemails` (agents see their own; supervisors all).
   `vm_alert`.
 - **Agent levels 1–8**: `User.level` (People → person). Rights
   (`AGENT_RIGHTS` in `shared/games.ts`: manual dial, send text, transfer,
-  assist screen, Everyone chat, games, leaderboard, voicemail drop, skip
-  lead) default by level (`DEFAULT_LEVEL_RIGHTS`) and are overridden per
+  assist screen, Everyone chat, games, manage games, leaderboard, voicemail
+  drop, skip lead) default by level (`DEFAULT_LEVEL_RIGHTS`; `OPT_IN_RIGHTS`
+  such as `manage_games` are on no level until the tenant ticks them) and are overridden per
   tenant in Settings → Agent levels (`Tenant.settings.levelRights`).
   `lib/rights.ts` `rightsOf(session)`: supervisors/room supervisors/admins
   have everything; team leaders follow their level. Console actions call
@@ -193,18 +194,44 @@ ratings, extensions), `/voicemails` (agents see their own; supervisors all).
   placeholder is the first template's rebuttals in line format. Add a
   template by appending to the array; the test checks keys are unique
   and only known variables are used.
-- **Games** (`apps/engine/src/games`, rules in `shared/games.ts`, tested):
-  `User.points` topped up to `settings.games.weeklyPoints` (10,000) every
-  Monday UTC by the scheduler; **bets** (`Wager`) between two agents on
-  NEXT_SALE / NEXT_CONTACT / NEXT_CALL (settled by the dialer hooks
-  `onDialed` / `onDispositioned` the moment either party does it) or
-  MOST_CALLS/CONTACTS/SALES_TODAY and MOST_SALES_WEEK (settled by the
-  `wagers` job after the period from `Call` rows; tie = push; open bets past
-  their period are voided and refunded). Stakes are escrowed in
-  `PointsLedger`. **Poker run** (`PokerCard`): every sale deals a card from
-  the agent's remaining deck for the period (day or week, Settings → Games);
-  `bestHand` ranks best five of N; standings on `/games` and the console
-  Games panel. Prize text is display only; paying it is the owner's.
+- **Games are per campaign** (owner, 5 Nov: "enable this at the campaign
+  level"; `apps/engine/src/games`, rules in `shared/games.ts`, tested).
+  `Campaign.betsEnabled` (default off), `Campaign.weeklyPoints`,
+  `Campaign.maxStake`; the Settings → Games card now holds only the defaults
+  a new campaign starts with (`Tenant.settings.games.weeklyPoints/maxStake`;
+  the migration `campaign_games_poker_runs` copied the old workspace values
+  onto existing campaigns, bets off). Switches live on the campaign page
+  ("Games" card, `campaigns/[id]/games-card.tsx` → `campaigns/games-actions.ts`)
+  and on `/games` ("Run the games" card) for whoever `canManageGames`
+  (`lib/rights.ts`: ADMIN/SUPERVISOR, or a TEAM_LEADER whose level carries the
+  opt-in right `manage_games`, which no level has by default). The web actions
+  (`lib/games-actions.ts`) call the engine (`/internal/games/bets`,
+  `/internal/games/run`), which writes the audit log and emits the realtime
+  notices.
+  - **Bets** (`Wager.campaignId`): `proposeWager` needs the campaign's
+    `betsEnabled`; accept re-checks it. `User.points` stay per person (one
+    purse across campaigns): the Monday top-up sets each agent to the largest
+    `weeklyPoints` among their ACTIVE bets-on campaigns, and **switching bets
+    on tops up the campaign's agents at once** so the first week is playable.
+    Instant bets settle on the dialer hooks of that campaign (bets with no
+    campaign, from before, settle on any); period bets count `Call` rows on
+    the bet's campaign.
+  - **Poker runs are explicit** (`PokerRun`: campaign, name, `startsAt`/
+    `endsAt`, prize text, `qualifies` SALE|CONTACT|CODES + `qualifyingCodes`,
+    ACTIVE|ENDED, `createdById`, `winnerId`/`winningHand` once ended). One
+    ACTIVE run per campaign. `PokerCard.runId` links cards; `earnsCard`
+    (shared) decides on every disposition of a live run. Ending (button, or
+    the `pokerRuns` job 5-minutely once `endsAt` passes) ranks hands with
+    `bestHand`, stores the winner and shows it under "Past runs" on `/games`.
+    Cards from before runs keep `runId` null and are history only.
+  - **It reaches the agents**: Socket.IO `games:run` {status, campaignId,
+    name, prize, endsAt|winner} and `games:bets` {campaignId, betsEnabled,
+    weeklyPoints} to the tenant room, `games:won` to the winner. The console
+    shows the one-line notice for its campaign on screen ("Poker run '…'
+    started: …") and `GamesPanel` (now per campaign, with the run, days
+    left, the agent's hand, bets waiting and a quick bet) reloads on any
+    `games:*` event. When neither bets nor a run are on it says so plainly
+    instead of hiding.
 - Other games the owner asked for ideas on (not built): outcome bingo,
   king of the hill, horse race, team boss raid, streak multiplier, mystery
   box, fantasy draft; see the reply of 5 Nov.

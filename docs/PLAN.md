@@ -373,8 +373,12 @@ theme.
 ## Gamification (owner, 5 Nov)
 
 Weekly points (10,000 every Monday) agents bet against each other on any
-stat; a poker run where every sale deals a card and the best hand of the
-day or week wins a bonus. Built. The owner wants variety: rotate other games
+stat; a poker run where every qualifying outcome deals a card and the best
+hand when the run ends wins a bonus. Built, **switched on per campaign**
+(owner, 5 Nov): an admin or supervisor (or a team leader given the right)
+enables bets on a campaign and starts a named poker run with a period, a
+prize and what earns a card; agents on that campaign are told on their
+console the moment it happens. The owner wants variety: rotate other games
 (bingo, king of the hill, horse race, boss raid, streaks, mystery box,
 fantasy draft) so it never gets boring. Agent levels 1–8 carry rights; the
 owner may later tie screens to levels.

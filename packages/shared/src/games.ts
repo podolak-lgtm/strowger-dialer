@@ -115,6 +115,62 @@ export function bestHand(cards: string[]): HandRank | null {
   return best;
 }
 
+// ---- Poker runs (owner, 5 Nov: "Admin should be able to set up a poker run")
+//
+// A run belongs to one campaign, has a name, a window, a prize and a rule for
+// what deals a card. Only one ACTIVE run per campaign at a time.
+
+export const POKER_QUALIFIERS = {
+  SALE: "Every sale",
+  CONTACT: "Every live contact",
+  CODES: "These disposition codes",
+} as const;
+export type PokerQualifier = keyof typeof POKER_QUALIFIERS;
+
+export interface PokerRule {
+  qualifies: PokerQualifier;
+  /** Disposition codes, upper-case, for CODES. */
+  codes: string[];
+}
+
+/** Whether a disposition earns a card under the run's rule. Codes compare case-insensitively. */
+export function earnsCard(rule: PokerRule, outcome: { isSale: boolean; isContact: boolean; code: string }): boolean {
+  if (rule.qualifies === "SALE") return outcome.isSale;
+  if (rule.qualifies === "CONTACT") return outcome.isContact;
+  const code = outcome.code.trim().toUpperCase();
+  return rule.codes.some((c) => c.trim().toUpperCase() === code);
+}
+
+/** Parse the rule as the forms post it: a qualifier and a free-text code list ("SALE, XFER"). Unknown qualifier falls back to SALE. */
+export function parsePokerRule(qualifies: string | null | undefined, codes: string | string[] | null | undefined): PokerRule {
+  const q = (qualifies ?? "").toUpperCase();
+  const list = (Array.isArray(codes) ? codes : (codes ?? "").split(/[\s,;]+/)).map((c) => c.trim().toUpperCase()).filter(Boolean);
+  if (q === "CODES") return list.length ? { qualifies: "CODES", codes: [...new Set(list)] } : { qualifies: "SALE", codes: [] };
+  return { qualifies: q === "CONTACT" ? "CONTACT" : "SALE", codes: [] };
+}
+
+/** Monday 00:00 UTC of the week holding `d`, and the following Monday: the "this week" run window. */
+export function thisWeekWindow(d = new Date()): { startsAt: Date; endsAt: Date } {
+  const t = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+  const day = t.getUTCDay() || 7;
+  const startsAt = new Date(t.getTime() - (day - 1) * 86_400_000);
+  return { startsAt, endsAt: new Date(startsAt.getTime() + 7 * 86_400_000) };
+}
+
+/** Whole days left in a run (ceil), never below zero. */
+export function daysLeft(endsAt: Date | string, now = new Date()): number {
+  const end = typeof endsAt === "string" ? new Date(endsAt) : endsAt;
+  return Math.max(0, Math.ceil((end.getTime() - now.getTime()) / 86_400_000));
+}
+
+/** Whether a run is live now: ACTIVE and inside its window. */
+export function runIsLive(run: { status: string; startsAt: Date | string; endsAt: Date | string }, now = new Date()): boolean {
+  if (run.status !== "ACTIVE") return false;
+  const s = new Date(run.startsAt).getTime();
+  const e = new Date(run.endsAt).getTime();
+  return now.getTime() >= s && now.getTime() < e;
+}
+
 export function prettyCard(c: string): string {
   const suit = { C: "♣", D: "♦", H: "♥", S: "♠" }[c[1]!] ?? c[1];
   const rank = c[0] === "T" ? "10" : c[0];
@@ -130,6 +186,7 @@ export const AGENT_RIGHTS = {
   assist_screen: "Use the assist screen (second monitor)",
   chat_everyone: "Post in Everyone chat",
   games: "Play the games (bets, poker run)",
+  manage_games: "Start poker runs and switch bets on for a campaign (team leaders)",
   see_leaderboard: "See the team leaderboard",
   voicemail_drop: "Leave a voicemail and move on",
   skip_lead: "Skip a lead in preview",
@@ -149,6 +206,9 @@ export const DEFAULT_LEVEL_RIGHTS: Record<number, AgentRight[]> = {
   7: ["see_leaderboard", "voicemail_drop", "manual_dial", "games", "chat_everyone", "send_text", "skip_lead", "assist_screen", "transfer"],
   8: ["see_leaderboard", "voicemail_drop", "manual_dial", "games", "chat_everyone", "send_text", "skip_lead", "assist_screen", "transfer"],
 };
+
+/** Rights nobody gets by level alone; a tenant grants them in Settings → Agent levels. */
+export const OPT_IN_RIGHTS: AgentRight[] = ["manage_games"];
 
 export function rightsForLevel(level: number, overrides?: Record<string, string[]> | null): Set<AgentRight> {
   const l = Math.max(1, Math.min(8, Math.round(level || 1)));

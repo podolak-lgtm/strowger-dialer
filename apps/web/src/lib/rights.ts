@@ -15,3 +15,13 @@ export function rightsOf(s: Session): Set<AgentRight> {
 export function requireRight(s: Session, right: AgentRight): void {
   if (!rightsOf(s).has(right)) throw new Error(`Your agent level does not allow this: ${AGENT_RIGHTS[right]}. Ask a supervisor.`);
 }
+
+/** Who may start poker runs and switch bets on: admins and supervisors, and a team leader whose level carries `manage_games`. */
+export function canManageGames(s: Session): boolean {
+  if (s.roles.some((r) => r === "ADMIN" || r === "SUPERVISOR")) return true;
+  return s.roles.includes("TEAM_LEADER") && rightsOf(s).has("manage_games");
+}
+
+export function requireManageGames(s: Session): void {
+  if (!canManageGames(s)) throw new Error("Only a supervisor, admin, or a team leader whose level allows it can run the games.");
+}

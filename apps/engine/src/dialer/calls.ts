@@ -113,7 +113,7 @@ export async function dialLeadForAgent(campaign: Campaign, lead: Lead, agentId: 
     } as CreateReq;
     const sid = await jambonz.calls.create(req);
     await redis.set(sidKey(sid), call.id, "EX", 6 * 3600);
-    void onDialed(campaign.tenantId, agentId);
+    void onDialed(campaign.tenantId, campaign.id, agentId);
     await prisma.call.update({ where: { id: call.id }, data: { providerCallId: sid } });
     const cadence = await prisma.list.findUnique({ where: { id: lead.listId }, select: { cadence: { select: { dayparts: true } } } });
     await prisma.lead.update({
@@ -267,7 +267,7 @@ export async function dispositionCall(input: DispositionInput): Promise<{ ok: tr
     await patchAgent(input.actorId, { currentCallId: null, state: agent.agentCallSid ? "READY" : "LOGGED_IN" });
   }
   emitToTenant(call.tenantId, "floor:call", { callId: call.id, status: "dispositioned", code: disp.code });
-  void onDispositioned(call.tenantId, input.actorId, call.id, { isSale: disp.isSale, isContact: disp.isContact });
+  void onDispositioned(call.tenantId, call.campaign.id, input.actorId, call.id, { isSale: disp.isSale, isContact: disp.isContact, code: disp.code });
 
   // CRM push: one delivery per endpoint that subscribes to any of these events.
   const events: WebhookEvent[] = ["disposition", ...(disp.isSale ? (["sale"] as const) : []), ...(disp.isCallback ? (["callback"] as const) : []), ...(disp.isDnc ? (["dnc"] as const) : [])];

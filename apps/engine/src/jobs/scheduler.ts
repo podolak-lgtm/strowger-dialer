@@ -9,7 +9,7 @@ import { deliverPending } from "../webhooks/deliver";
 import { nightlyRecordings } from "../recordings/export";
 import { queueTick } from "../inbound/router";
 import { syncPendingOrders } from "../provision";
-import { settlePeriodWagers, weeklyTopUp } from "../games";
+import { endExpiredRuns, settlePeriodWagers, weeklyTopUp } from "../games";
 import { chargeAllDids, suspendOverdue } from "../billing";
 import { syncTelnyxCosts } from "../billing/vendor";
 import { config } from "../config";
@@ -80,6 +80,7 @@ const JOBS: Job[] = [
   { name: "queues", everyMs: 1_000, run: queueTick },
   { name: "numberOrders", everyMs: 3 * 60_000, run: syncPendingOrders },
   { name: "wagers", everyMs: 15 * 60_000, run: () => settlePeriodWagers() },
+  { name: "pokerRuns", everyMs: 5 * 60_000, run: () => endExpiredRuns() },
   { name: "weeklyTopUp", everyMs: 10 * 60_000, run: mondayTopUp },
   { name: "billingSuspend", everyMs: 60 * 60_000, run: () => suspendOverdue() },
   { name: "monthlyDids", everyMs: 30 * 60_000, run: monthlyDids },
