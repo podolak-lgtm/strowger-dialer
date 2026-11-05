@@ -411,7 +411,13 @@ register, the "phone error" badge and the "Softphone error: …" banner text
 are buttons: a click drops the existing JsSIP client and calls
 `connectPhone()` again (badge reads "registering…" meanwhile); the console
 also retries once by itself 10 s after a failure, then leaves it to the
-click. The error text keeps the user, realm and server.
+click. The error text keeps the user, realm and server. The big status
+banner is the primary Ready/Pause control (owner, 5 Nov): it is a
+`<button>` with an `aria-label` when READY (opens the pause-reason menu
+under the banner), PAUSED ("… · click to resume" → `goReady`) or LOGGED IN
+with the softphone registered ("click to go Ready" → `goReady`); ON CALL
+and WRAP-UP are plain. The top-bar "Go Ready" / "Pause…" buttons stay as
+secondary controls; `pauseMenu` records which anchor opened the menu.
 
 ## Voicemail, recordings, DID hygiene (owner, 4 Nov)
 
