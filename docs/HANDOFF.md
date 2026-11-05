@@ -19,7 +19,10 @@ built and why; this says how it is wired and what will trip you.
 - **Deployed on Railway** (project `strowger`): services `web`, `engine`,
   `Postgres`, `Redis`, deploying from **`main`** (created 4 Nov from the
   build branch; work continues on branches and merges to `main`). Engine: https://engine-production-d809.up.railway.app,
-  web: https://web-production-c3af0.up.railway.app. `ENGINE_INTERNAL_KEY`
+  web: **https://strowger.crossbar.digital** (custom domain live 5 Nov;
+  `NEXT_PUBLIC_APP_URL`, `WEB_PUBLIC_URL` and the first entry of the
+  engine's `WEB_ORIGIN` list point at it; the Railway URL
+  https://web-production-c3af0.up.railway.app still works). `ENGINE_INTERNAL_KEY`
   is a Railway-generated shared variable both services reference.
   **`CLERK_SECRET_KEY` on the web service is set by the owner in the
   Railway dashboard, never by a session.**

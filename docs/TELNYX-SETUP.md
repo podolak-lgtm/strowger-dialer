@@ -53,8 +53,8 @@ Registry.
    Register a **10DLC brand and campaign** on it (required for US A2P;
    Telnyx walks through it; approval takes days, so start now).
 2. On the profile, **Inbound settings → webhook URL**:
-   `https://web-production-c3af0.up.railway.app/api/webhooks/sms/telnyx`
-   (switch to `https://strowger.crossbar.digital/...` once the domain is live).
+   `https://strowger.crossbar.digital/api/webhooks/sms/telnyx` (carrier setup
+   on the Numbers page sets this on the profile it creates).
    Webhook API version v2.
 3. Assign your numbers to the profile; tick **SMS-enabled** for them in
    Strowger → Settings → Caller ID numbers.
