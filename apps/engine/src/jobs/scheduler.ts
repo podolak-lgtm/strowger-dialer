@@ -10,6 +10,7 @@ import { nightlyRecordings } from "../recordings/export";
 import { queueTick } from "../inbound/router";
 import { syncPendingOrders } from "../provision";
 import { settlePeriodWagers, weeklyTopUp } from "../games";
+import { chargeAllDids, suspendOverdue } from "../billing";
 
 interface Job {
   name: string;
@@ -61,6 +62,14 @@ async function mondayTopUp(): Promise<void> {
   await redis.set("job:weeklyTopUp:last", key);
 }
 
+/** First tick of each month: the monthly fee for every number still on the account. */
+async function monthlyDids(): Promise<void> {
+  const key = new Date().toISOString().slice(0, 7);
+  if ((await redis.get("job:monthlyDids:last")) === key) return;
+  await chargeAllDids();
+  await redis.set("job:monthlyDids:last", key);
+}
+
 const JOBS: Job[] = [
   { name: "scrub", everyMs: 2 * 60_000, run: scrubAllTenants },
   { name: "dailyReset", everyMs: 10 * 60_000, run: dailyReset },
@@ -70,6 +79,8 @@ const JOBS: Job[] = [
   { name: "numberOrders", everyMs: 3 * 60_000, run: syncPendingOrders },
   { name: "wagers", everyMs: 15 * 60_000, run: () => settlePeriodWagers() },
   { name: "weeklyTopUp", everyMs: 10 * 60_000, run: mondayTopUp },
+  { name: "billingSuspend", everyMs: 60 * 60_000, run: () => suspendOverdue() },
+  { name: "monthlyDids", everyMs: 30 * 60_000, run: monthlyDids },
 ];
 
 export function startScheduler(): () => void {

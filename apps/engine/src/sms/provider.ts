@@ -1,6 +1,7 @@
 // Outbound SMS behind one interface. Commio first (same numbers as voice),
 // Telnyx as the alternative, and a log-only provider when neither is set so
 // cadences can be exercised without a carrier.
+import { chargeSms } from "../billing";
 import { prisma } from "@strowger/db";
 import { config } from "../config";
 import { log } from "../log";
@@ -99,6 +100,7 @@ export async function sendSms(input: { tenantId: string; campaignId: string | nu
     where: { id: row.id },
     data: { status: r.ok ? "SENT" : "FAILED", providerMessageId: r.providerMessageId ?? null, error: r.error ?? null },
   });
+  if (r.ok) void chargeSms(input.tenantId, row.id).catch(() => undefined);
   if (input.leadId) {
     await prisma.leadEvent.create({ data: { tenantId: input.tenantId, leadId: input.leadId, kind: "TEXT_OUT", data: { purpose: input.purpose, ok: r.ok, error: r.error ?? null, provider: p.name } } });
   }

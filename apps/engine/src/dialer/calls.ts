@@ -1,5 +1,6 @@
 // Placing a call to a lead, and what happens when it ends or is dispositioned.
 import { onDispositioned, onDialed } from "../games";
+import { chargeCallMinutes, outboundAllowed } from "../billing";
 import { prisma, type Campaign, type Lead } from "@strowger/db";
 import { toE164 } from "@strowger/shared/phone";
 import { DID_RULES, capForNumber, hourlyCap } from "@strowger/shared/did-hygiene";
@@ -73,6 +74,8 @@ export async function dialLeadForAgent(campaign: Campaign, lead: Lead, agentId: 
   const agent = await getAgent(agentId);
   if (!agent || !agent.agentCallSid) return { ok: false, error: "Your phone line is not up. Click Ready first." };
 
+  const allowed = await outboundAllowed(campaign.tenantId);
+  if (!allowed.ok) return { ok: false, error: allowed.error };
   const callerId = preferredCallerId ?? (await pickCallerId(campaign, lead.phone));
   if (!callerId) return { ok: false, error: "No caller ID number is available for this campaign" };
 
@@ -158,6 +161,7 @@ export async function leadCallEnded(callId: string, status: string, sipStatus: n
   });
   if (call.campaignId) await removeInflight(call.campaignId, callId);
   await leaveQueue(callId).catch(() => undefined);
+  void chargeCallMinutes(callId).catch((e) => log.warn({ err: e, callId }, "billing: minutes charge failed"));
   // Short calls (hangups, voicemail drops, abandons) are what carrier analytics punish: count them per number.
   const talk = call.answeredAt ? (Date.now() - call.answeredAt.getTime()) / 1000 : 0;
   if (call.callerId && call.answeredAt && talk < DID_RULES.shortCallSeconds) {

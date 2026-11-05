@@ -7,6 +7,7 @@
 // same number is stopped at intake, with no lookup. Unresolved numbers stay
 // PENDING and are asked again next run. Nothing here deletes a lead: the
 // report and the audit trail need the row.
+import { chargeScrub } from "../billing";
 import { prisma } from "@strowger/db";
 import { log } from "../log";
 import { SCRUB_BATCH, crossbarConfigured, crossbarScrub } from "./crossbar";
@@ -46,6 +47,7 @@ export async function scrubPendingForTenant(tenantId: string, limit = SCRUB_BATC
     return out;
   }
   out.checked = r.checked;
+  void chargeScrub(tenantId, r.checked).catch((e) => log.warn({ err: e }, "billing: scrub charge failed"));
   const now = new Date();
   const litig = r.flagged.filter((f) => f.kind === "LITIGATOR");
   const compl = r.flagged.filter((f) => f.kind === "DNC_COMPLAINER");

@@ -24,6 +24,8 @@ import { registerAtFcr } from "../provision/fcr";
 import { chatHistory, sendChat } from "../chat";
 import { acceptWager, gamesOverview, proposeWager, withdrawWager } from "../games";
 import { suggest } from "../assist";
+import { billingOverview, billingStatus, chargeSeatIfNew, outboundAllowed, platformOverview, rates, recordPayment } from "../billing";
+import { log } from "../log";
 import type { WagerKind } from "@strowger/shared/games";
 
 const Ids = z.object({ tenantId: z.string(), userId: z.string() });
@@ -52,6 +54,9 @@ export async function registerInternalRoutes(app: FastifyInstance): Promise<void
     const { tenantId, userId, campaignId } = Ids.extend({ campaignId: z.string() }).parse(req.body);
     const campaign = await prisma.campaign.findFirst({ where: { id: campaignId, tenantId } });
     if (!campaign) return { ok: false, error: "Unknown campaign" };
+    const allowed = await outboundAllowed(tenantId);
+    if (!allowed.ok) return { ok: false, error: allowed.error };
+    await chargeSeatIfNew(tenantId, userId).catch((e) => log.warn({ err: e }, "billing: seat charge failed"));
     const existing = await getAgent(userId);
     if (existing && existing.sessionId && existing.campaignId !== campaignId) {
       await prisma.agentSession.update({ where: { id: existing.sessionId }, data: { endedAt: new Date() } }).catch(() => undefined);
@@ -248,6 +253,35 @@ export async function registerInternalRoutes(app: FastifyInstance): Promise<void
       return reply.code(400).send({ error: message });
     }
   };
+  // ---- Billing
+  app.get("/internal/billing/status", async (req) => billingStatus(z.object({ tenantId: z.string() }).parse(req.query).tenantId));
+  app.get("/internal/billing/overview", async (req) => {
+    const q = z.object({ tenantId: z.string(), period: z.string().optional() }).parse(req.query);
+    return billingOverview(q.tenantId, q.period);
+  });
+  app.get("/internal/billing/platform", async (req) => platformOverview(z.object({ period: z.string().optional() }).parse(req.query).period));
+  app.post("/internal/billing/payment", async (req, reply) => {
+    const b = z.object({ tenantId: z.string(), amountCents: z.number().int(), note: z.string().max(200), createdById: z.string() }).parse(req.body);
+    try {
+      await recordPayment(b.tenantId, b.amountCents, b.note, b.createdById);
+      return { ok: true };
+    } catch (e) {
+      return reply.code(400).send({ ok: false, error: e instanceof Error ? e.message : String(e) });
+    }
+  });
+  app.post("/internal/billing/plan", async (req) => {
+    const b = z.object({ tenantId: z.string(), seatMonthlyCents: z.number().int().min(0), perMinuteMillicents: z.number().int().min(0), didMarkupPct: z.number().int().min(0), scrubMarginMillicents: z.number().int().min(0), smsPriceMillicents: z.number().int().min(0), lowBalanceCents: z.number().int().min(0), graceDays: z.number().int().min(0).max(60) }).parse(req.body);
+    const { tenantId, ...plan } = b;
+    await prisma.billingAccount.upsert({ where: { tenantId }, create: { tenantId, ...plan }, update: plan });
+    return { ok: true };
+  });
+  app.post("/internal/billing/rates", async (req) => {
+    const b = z.object({ telnyxOutMillicentsPerMin: z.number().int().min(0), telnyxInMillicentsPerMin: z.number().int().min(0), didMonthlyCents: z.number().int().min(0), scrubCostMillicents: z.number().int().min(0), smsCostMillicents: z.number().int().min(0), prepayInstructions: z.string().max(2000).nullable() }).parse(req.body);
+    await rates();
+    await prisma.platformRates.update({ where: { id: "default" }, data: b });
+    return { ok: true };
+  });
+
   // ---- Games
   app.get("/internal/games", async (req) => {
     const q = z.object({ tenantId: z.string(), userId: z.string() }).parse(req.query);

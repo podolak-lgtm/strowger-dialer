@@ -7,6 +7,7 @@ import { prisma } from "@strowger/db";
 import { stateForAreaCode } from "@strowger/shared";
 import { config } from "../config";
 import { log } from "../log";
+import { chargeDidMonthly } from "../billing";
 import { jambonzAdmin, type Carrier } from "./jambonz-admin";
 import { TELNYX_SIGNALLING_IPS, TELNYX_SIP_HOST, telnyx, telnyxConfigured, type BrandInput, type CampaignInput } from "./telnyx";
 
@@ -263,6 +264,7 @@ async function finishNumber(t: { id: string; telnyxConnectionId: string | null; 
       where: { id: row.id },
       data: { telnyxNumberId: tn.id, jambonzPhoneNumberSid: jzSid, provisionStatus: jzSid ? (t.telnyxMessagingProfileId ? "ready" : "voice") : "ordered", provisionError: null, smsEnabled: Boolean(t.telnyxMessagingProfileId), status: row.status === "RETIRED" ? "ACTIVE" : row.status },
     });
+    if (jzSid) void chargeDidMonthly(t.id, row.id, phone).catch((e) => log.warn({ err: e }, "billing: did charge failed"));
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     log.warn({ phone, err: msg }, "provisioning number failed");

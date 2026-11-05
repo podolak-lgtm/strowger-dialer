@@ -58,6 +58,8 @@ export interface ConsoleProps {
   roles: string[];
   /** From the agent level (lib/rights.ts). Buttons are hidden without the right; the actions refuse too. */
   rights: string[];
+  /** Prepaid balance state; shown in the top bar when it needs attention. */
+  billing: { balanceCents: number; low: boolean; critical: boolean; suspended: boolean; isPlatform: boolean; graceDays: number } | null;
   campaigns: Array<{
     id: string;
     name: string;
@@ -143,7 +145,7 @@ function Bar({ label, value, max, from, to }: { label: string; value: number; ma
 }
 
 export function AgentConsole(props: ConsoleProps) {
-  const { me, campaigns, sip, engineUrl, rtToken, screen, roles, rights } = props;
+  const { me, campaigns, sip, engineUrl, rtToken, screen, roles, rights, billing } = props;
   const can = (r: string) => rights.includes(r);
   const [campaignId, setCampaignId] = useState<string>(campaigns[0]?.id ?? "");
   const campaign = campaigns.find((c) => c.id === campaignId) ?? null;
@@ -651,6 +653,11 @@ export function AgentConsole(props: ConsoleProps) {
             </span>
           </div>
           <div className="flex items-center gap-2">
+            {billing && !billing.isPlatform && (billing.suspended || billing.critical || billing.low) ? (
+              <span className={`mr-2 rounded-md border px-2 py-1 text-xs ${billing.suspended || billing.critical ? "border-red-500/50 bg-red-950/60 text-red-200" : "border-amber-500/50 bg-amber-950/60 text-amber-200"}`}>
+                {billing.suspended ? "Outbound paused: prepaid balance used up" : billing.critical ? `Balance used up: outbound pauses in ${billing.graceDays} days` : `Low prepaid balance: $${(billing.balanceCents / 100).toFixed(0)}`}
+              </span>
+            ) : null}
             {screen === "main" ? (
               <label className="mr-2 flex cursor-pointer items-center gap-2 text-xs text-zinc-400" title="Open the assist screen in a second window every time you log in">
                 <span>2 screens</span>

@@ -36,6 +36,10 @@ model Tenant {
   tenDlcCampaignId String?
   tenDlcBrand      Json?
   tenDlcCampaign   Json?
+  /// The owner's own workspace: sees every client's billing and sets cost rates (one tenant).
+  isPlatform       Boolean  @default(false)
+  billing          BillingAccount?
+  billingEntries   BillingEntry[]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -917,6 +921,86 @@ model PokerCard {
   dealtAt   DateTime @default(now())
 
   @@index([tenantId, period, userId])
+}
+
+/// Billing (owner, 5 Nov): prepaid per client. A seat is an agent who logs in
+/// during the month; admins and managers are free. Minutes, DIDs (cost + 50%),
+/// scrub records (cost + margin) and texts are charged as they happen. Prices
+/// are in millicents (1/1000 of a cent) so 1.2¢/min is 1200.
+model BillingAccount {
+  id                   String   @id @default(cuid())
+  tenant               Tenant   @relation(fields: [tenantId], references: [id])
+  tenantId             String   @unique
+  balanceCents         Int      @default(0)
+  seatMonthlyCents     Int      @default(7000)
+  perMinuteMillicents  Int      @default(1200)
+  /// Markup on the DID monthly cost, percent (50 = cost + 50%).
+  didMarkupPct         Int      @default(50)
+  /// Added on top of our scrub cost, per record.
+  scrubMarginMillicents Int     @default(500)
+  /// Per text segment sent, price to the client.
+  smsPriceMillicents   Int      @default(1500)
+  /// Warn below this balance.
+  lowBalanceCents      Int      @default(20000)
+  /// Days the balance may sit at or below zero before outbound is paused.
+  graceDays            Int      @default(3)
+  suspended            Boolean  @default(false)
+  suspendedAt          DateTime?
+  zeroSince            DateTime?
+  notes                String?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+}
+
+enum BillingKind {
+  CHARGE
+  PAYMENT
+  ADJUSTMENT
+}
+
+enum BillingCategory {
+  SEAT
+  MINUTES
+  DID
+  SCRUB
+  SMS
+  OTHER
+  PAYMENT
+}
+
+/// The ledger. Charges are negative amounts; payments positive. costCents is what we paid, for margin.
+model BillingEntry {
+  id          String          @id @default(cuid())
+  tenant      Tenant          @relation(fields: [tenantId], references: [id])
+  tenantId    String
+  kind        BillingKind
+  category    BillingCategory
+  quantity    Decimal         @default(1) @db.Decimal(14, 4)
+  unitMillicents Int          @default(0)
+  amountCents Int
+  costCents   Int             @default(0)
+  note        String?
+  refId       String?
+  /// YYYY-MM the charge belongs to.
+  period      String
+  createdById String?
+  createdAt   DateTime        @default(now())
+
+  @@index([tenantId, period, category])
+  @@index([tenantId, createdAt])
+}
+
+/// Platform-wide cost rates (what we pay), one row. Edited on /platform.
+model PlatformRates {
+  id                       String   @id @default("default")
+  telnyxOutMillicentsPerMin Int     @default(500)
+  telnyxInMillicentsPerMin  Int     @default(320)
+  didMonthlyCents          Int      @default(110)
+  scrubCostMillicents      Int      @default(500)
+  smsCostMillicents        Int      @default(400)
+  /// Shown to clients on their billing page: how to prepay.
+  prepayInstructions       String?
+  updatedAt                DateTime @updatedAt
 }
 
 model DidScan {

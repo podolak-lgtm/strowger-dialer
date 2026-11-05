@@ -1,5 +1,6 @@
 // Mid-call controls an agent uses: hold, warm transfer to a closer, and a
 // manual dial of a typed number under the same compliance rules.
+import { outboundAllowed } from "../billing";
 import { prisma, type Campaign } from "@strowger/db";
 import { evaluateDialWindow } from "@strowger/shared/compliance";
 import { resolveZone } from "@strowger/shared/geo";
@@ -87,6 +88,8 @@ export async function transferCall(callId: string, fromAgentId: string, toAgentI
 
 /** Dial a number the agent typed. Same window and DNC rules; attaches to a lead if one exists. */
 export async function manualDial(tenantId: string, agentId: string, raw: string): Promise<{ ok: true; callId: string } | { ok: false; error: string }> {
+  const allowed = await outboundAllowed(tenantId);
+  if (!allowed.ok) return { ok: false, error: allowed.error };
   const phone = normalizePhone(raw);
   if (!phone) return { ok: false, error: "That is not a dialable US number" };
   const live = await getAgent(agentId);

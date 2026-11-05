@@ -3,6 +3,7 @@ import { decryptString, mintRealtimeToken } from "@strowger/shared/secrets";
 import { requireRole } from "@/lib/auth";
 import { AgentConsole, type ConsoleProps } from "./console";
 import { rightsOf } from "@/lib/rights";
+import { billingStatus } from "@/lib/billing-actions";
 
 export default async function AgentPage({ searchParams }: PageProps<"/agent">) {
   const s = await requireRole("AGENT", "TEAM_LEADER", "SUPERVISOR");
@@ -23,6 +24,7 @@ export default async function AgentPage({ searchParams }: PageProps<"/agent">) {
     ...extra.map((c) => ({ id: c.id, name: c.name, dialMode: c.dialMode, agentMode: "BOTH" as const, outboundOn: true, closersMayDial: c.closersMayDial, wrapUpSeconds: c.wrapUpSeconds, dispositions: c.dispositions.map((d) => ({ id: d.id, code: d.code, label: d.label, hotkey: d.hotkey, isCallback: d.isCallback, isSale: d.isSale, isDnc: d.isDnc })) })),
   ];
 
+  const billing = await billingStatus();
   const secret = process.env.ENGINE_INTERNAL_KEY ?? "";
   const sipPassword = s.user.sipSecret ? decryptString(s.user.sipSecret, secret) : null;
 
@@ -31,6 +33,7 @@ export default async function AgentPage({ searchParams }: PageProps<"/agent">) {
       me={{ id: s.user.id, name: s.user.firstName ?? s.user.email.split("@")[0]!, tenant: s.tenant.name }}
       roles={s.roles}
       rights={[...rightsOf(s)]}
+      billing={billing ? { balanceCents: billing.balanceCents, low: billing.low, critical: billing.critical, suspended: billing.suspended, isPlatform: billing.isPlatform, graceDays: billing.graceDays } : null}
       campaigns={campaigns}
       sip={
         s.user.sipUsername && sipPassword

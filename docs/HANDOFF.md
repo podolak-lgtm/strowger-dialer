@@ -196,6 +196,46 @@ ratings, extensions), `/voicemails` (agents see their own; supervisors all).
   king of the hill, horse race, team boss raid, streak multiplier, mystery
   box, fantasy draft; see the reply of 5 Nov.
 
+## Billing (owner, 5 Nov): prepaid, per seat + per minute, everything billable
+
+`apps/engine/src/billing`, `BillingAccount` (one per tenant: balance in
+cents, the client's rate plan, low-balance threshold, grace days,
+suspension), `BillingEntry` (the ledger: charges negative, payments
+positive, `costCents` = what we paid, `period` YYYY-MM), `PlatformRates`
+(one row: Telnyx per-minute in/out, number per month, scrub per record,
+text per segment, prepay instructions). `Tenant.isPlatform` marks the
+owner's workspace (the first tenant created, by migration): it is never
+billed and sees `/platform`.
+
+- **Seat** = an agent (not ADMIN/SUPERVISOR/ROOM_SUPERVISOR) who logs into
+  the dialer; charged once per user per month at first login
+  (`chargeSeatIfNew` in `/internal/agents/login`). Default $70.
+- **Minutes**: `chargeCallMinutes` from `leadCallEnded` (inbound and
+  outbound), answered-to-ended by the second at the per-minute price
+  (default 1.2¢); cost from the platform rates by direction.
+- **Numbers**: `chargeDidMonthly` when a number becomes ready in
+  provisioning and on the first scheduler tick of each month for every
+  active number (`monthlyDids`); price = cost + `didMarkupPct` (50).
+- **Scrub**: `chargeScrub` in the scrub job for every record Crossbar
+  checked; price = cost + `scrubMarginMillicents` (0.5¢). The cost rate
+  defaults to 0.5¢ and must be corrected from the SubscriberVerify invoice.
+- **Texts**: `chargeSms` on every sent message (default 1.5¢ a segment;
+  segments counted as 1 for now).
+- **Prepay**: no cards. The owner records payments on `/platform` (wire,
+  check); `recordPayment` lifts a suspension at once. Balance ≤ 0 starts
+  `zeroSince`; the hourly `billingSuspend` job pauses outbound (agent
+  login, lead dial, manual dial refuse with a clear message) after
+  `graceDays` (3). The sidebar badge (supervisors) and the console top bar
+  (everyone) go amber below `lowBalanceCents` ($200) with a runway estimate
+  from the 30-day average, red at zero.
+- Client page `/billing`: balance, month to date, rates, prepay
+  instructions, by-category totals, ledger, past statements by month.
+  Owner page `/platform`: every client's balance / revenue / cost /
+  margin, record a payment, per-client plan, cost rates.
+- Not done: invoices as PDF, card payments, tax, proration of seats,
+  per-tenant Telnyx sub-accounts for cost attribution (costs are computed
+  from rates, not pulled from Telnyx's bill).
+
 ## Carrier: Telnyx
 
 Chosen 4 Nov over Commio. Voice: a jambonz carrier named `Telnyx`

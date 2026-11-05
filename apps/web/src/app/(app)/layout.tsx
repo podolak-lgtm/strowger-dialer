@@ -1,9 +1,12 @@
 import { UserButton } from "@clerk/nextjs";
 import Link from "next/link";
 import { hasRole, requireSession } from "@/lib/auth";
+import { billingStatus } from "@/lib/billing-actions";
+import { BillingBadge } from "@/components/billing-badge";
 
 export default async function AppLayout({ children }: LayoutProps<"/">) {
   const session = await requireSession();
+  const billing = hasRole(session, "SUPERVISOR") ? await billingStatus() : null;
   const nav: Array<{ href: string; label: string; show: boolean }> = [
     { href: "/dashboard", label: "Dashboard", show: true },
     { href: "/agent", label: "Agent", show: hasRole(session, "AGENT", "TEAM_LEADER") },
@@ -23,6 +26,8 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
     { href: "/people", label: "People", show: hasRole(session, "SUPERVISOR") },
     { href: "/teams", label: "Teams & rooms", show: hasRole(session, "SUPERVISOR") },
     { href: "/partner", label: "Partner portal", show: session.roles.includes("AFFILIATE") },
+    { href: "/billing", label: "Billing", show: hasRole(session, "SUPERVISOR") && !session.tenant.isPlatform },
+    { href: "/platform", label: "Platform", show: hasRole(session) && session.tenant.isPlatform },
     { href: "/settings", label: "Settings", show: hasRole(session) },
   ];
   return (
@@ -40,6 +45,7 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
               </Link>
             ))}
         </nav>
+        {hasRole(session, "SUPERVISOR") ? <BillingBadge b={billing} /> : null}
         <div className="mt-4 flex items-center gap-3 border-t border-zinc-800 pt-4">
           <UserButton />
           <div className="min-w-0 text-xs">
