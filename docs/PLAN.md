@@ -360,3 +360,12 @@ numbers call for it.
 6. **Callbacks:** owner agent first, falls to campaign after 30 minutes.
 7. **Closers:** same agent screen; outbound is a checkbox they (or a
    supervisor, per campaign policy) can turn on or off, not hidden.
+
+## Later: the comic theme (owner, 5 Nov)
+
+The landing page tells the Strowger story as a comic (owner's illustrated
+strip at `apps/web/public/strowger-comic.jpg` when present, else the drawn
+SVG strip in `components/strowger-comic.tsx`). The owner wants its colour
+scheme (cream paper `#f6efe0`, ink `#1b1b1f`, red `#c8472b`) available as
+a **theme in Settings** for the whole app later, beside the current dark
+theme.
