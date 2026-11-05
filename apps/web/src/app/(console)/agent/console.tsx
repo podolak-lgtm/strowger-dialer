@@ -162,6 +162,42 @@ function Bar({ label, value, max, from, to }: { label: string; value: number; ma
   );
 }
 
+/** The live transfer's status line: a pulsing dot and a ring timer while it rings, green once connected. */
+function TransferStatus({ transfer, startedAt }: { transfer: LiveTransferView; startedAt: number | null }) {
+  const now = useNow(1000);
+  const secs = startedAt ? Math.max(0, Math.floor((now - startedAt) / 1000)) : null;
+  if (transfer.state === "ringing") {
+    return (
+      <span className="flex flex-wrap items-center gap-2 font-medium text-violet-100">
+        <span className="relative flex h-2.5 w-2.5">
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-violet-300 opacity-75" />
+          <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-violet-300" />
+        </span>
+        {transfer.id === "pending" ? `Calling ${transfer.destinationName}…` : `Ringing ${transfer.destinationName}…`}
+        {secs !== null ? <span className="font-mono text-xs text-violet-300/80">{secs}s of 25</span> : null}
+        <span className="text-xs font-normal text-violet-300/70">The lead hears the ring with you.</span>
+      </span>
+    );
+  }
+  return (
+    <span className="flex items-center gap-2 font-medium text-emerald-200">
+      <span className="h-2.5 w-2.5 rounded-full bg-emerald-400" />
+      {transfer.mode === "WARM" ? `Connected: ${transfer.destinationName} is on with you and the lead. Introduce them, then Leave.` : `${transfer.destinationName} answered. Handing the lead off…`}
+    </span>
+  );
+}
+
+/** Cancel stays greyed for the first 3 s after Dial, so a second click on a slow-looking screen cannot cancel the call it just placed. */
+function CancelTransferButton({ onCancel, disabled, startedAt }: { onCancel: () => void; disabled: boolean; startedAt: number | null }) {
+  const now = useNow(500);
+  const guarded = startedAt !== null && now - startedAt < 3000;
+  return (
+    <button onClick={onCancel} disabled={disabled || guarded} title="Drop the destination; you keep the lead" className="rounded-lg border border-red-400/30 px-3 py-1.5 text-sm text-red-200 hover:bg-red-500/10 disabled:opacity-40">
+      Cancel transfer
+    </button>
+  );
+}
+
 /** Wall clock that re-renders every `everyMs`, for the lead's local time. */
 function useNow(everyMs: number): number {
   const [now, setNow] = useState(() => Date.now());
@@ -406,6 +442,8 @@ export function AgentConsole(props: ConsoleProps) {
   // External transfer in flight on this call, and the dropdown that starts one.
   const [transfer, setTransfer] = useState<LiveTransferView | null>(null);
   const [xferMenu, setXferMenu] = useState(false);
+  /** When the agent clicked Dial on the transfer, for the ring timer and the Cancel guard. */
+  const [xferStartedAt, setXferStartedAt] = useState<number | null>(null);
   /** The agent's cold/warm flip per destination (defaults from the campaign page). */
   const [xferModes, setXferModes] = useState<Record<string, "COLD" | "WARM">>({});
   const [manual, setManual] = useState("");
@@ -873,12 +911,24 @@ export function AgentConsole(props: ConsoleProps) {
       setNotice("Transferred. Disposition your part of the call.");
     });
 
+  /**
+   * Dial a destination. The transfer shows at once ("Calling …" with a ring
+   * timer) instead of waiting for the engine's ringing event: on 5 Nov the
+   * console looked idle for a second, the agent clicked again and hit Cancel.
+   */
   const startTransfer = (d: ConsoleProps["campaigns"][number]["transferDestinations"][number]) =>
     run(async () => {
       if (!callId) return;
-      const r = await transferToDestination(callId, d.id, xferModes[d.id] ?? d.type);
-      if (!r.ok) throw new Error(r.error);
+      const mode = xferModes[d.id] ?? d.type;
       closeXferMenu();
+      setXferStartedAt(Date.now());
+      setTransfer({ id: "pending", state: "ringing", destinationName: d.name, destinationId: d.id, mode, callerIdShown: null, callerIdFallback: false, answeredAt: null, agentLeftAt: null });
+      const r = await transferToDestination(callId, d.id, mode);
+      if (!r.ok) {
+        setTransfer((cur) => (cur?.id === "pending" ? null : cur));
+        throw new Error(r.error);
+      }
+      setTransfer((cur) => (cur?.id === "pending" ? { ...cur, id: r.transferId } : cur));
     });
   const leaveTransfer = () =>
     run(async () => {
@@ -1364,9 +1414,7 @@ export function AgentConsole(props: ConsoleProps) {
                         <div className="rounded-xl border border-violet-400/30 bg-violet-400/10 p-3 text-sm">
                           <div className="flex flex-wrap items-center gap-2">
                             <span className="rounded bg-violet-500/20 px-1.5 text-[10px] uppercase text-violet-200">{transfer.mode === "COLD" ? "cold" : "warm"}</span>
-                            <span className="font-medium text-violet-100">
-                              {transfer.state === "ringing" ? `Ringing ${transfer.destinationName}…` : transfer.mode === "WARM" ? `Connected: ${transfer.destinationName} is on with you and the lead` : `Connected to ${transfer.destinationName}, handing off…`}
-                            </span>
+                            <TransferStatus transfer={transfer} startedAt={xferStartedAt} />
                             {transfer.callerIdShown ? (
                               <span className="rounded-full border border-white/10 px-2 py-0.5 text-[10px] text-zinc-400">
                                 they see {formatPhone(transfer.callerIdShown)}
@@ -1380,9 +1428,7 @@ export function AgentConsole(props: ConsoleProps) {
                               </button>
                             ) : null}
                             {transfer.state === "ringing" || (transfer.mode === "WARM" && transfer.state === "answered") ? (
-                              <button onClick={cancelXfer} disabled={busy} title="Drop the destination; you keep the lead" className="rounded-lg border border-white/15 px-3 py-1.5 text-sm text-zinc-200 hover:bg-white/10 disabled:opacity-40">
-                                Cancel transfer
-                              </button>
+                              <CancelTransferButton onCancel={cancelXfer} disabled={busy || transfer.id === "pending"} startedAt={xferStartedAt} />
                             ) : null}
                           </div>
                         </div>
