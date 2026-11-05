@@ -650,6 +650,34 @@ room, supervisors and admins everything (`floorStats`).
   on the first 12 s; a phrase match (`shared/compliance/screener.ts`)
   redirects the call to `/jambonz/screener`, which plays the message,
   bridges, or hangs up per `Campaign.screenerAction`.
+- **Screener banner for the agent** (owner, 5 Nov: "pop up the thing and
+  say SCREENER, give them a short script, then tell them to shut up and
+  wait"). `/jambonz/transcript` marks the call (`screenerDetected`,
+  `amdResult SCREENER`, `providerData.screenerPhrase/screenerText`) and,
+  if an agent is already on it (preview, or bridged before the phrase
+  landed), emits `call:update` with `screener: true, screenerPhrase` and
+  leaves the call where it is (no redirect once bridged). Otherwise the
+  redirect runs and the AGENT action's `bridgeToReadyAgent` carries the
+  same fields; so do `leadCallAnswered` / `leadCallBridged`
+  (`screenerFields` in `dialer/calls.ts`), so the console gets the flag
+  on whichever event reaches it first. `amd_human_detected` after a
+  screener keeps `amdResult SCREENER`, emits `call:update` with
+  `human: true` and writes a NOTE `LeadEvent` "Screener: the person picked
+  up". Console (`console.tsx`): amber SCREENER banner at the top of the
+  call panel (and above the Script on the assist screen) with
+  `Campaign.screenerScript` (campaign page, next to the screener action;
+  null = `DEFAULT_SCREENER_SCRIPT` in `shared/scripts.ts`) rendered by
+  `renderScript` (`{{agent}}`/`{{agent.firstName}}`, `{{company}}`,
+  `{{first_name}}`/`{{lead.firstName}}`, …, the same renderer the Script
+  panel now uses). Steps: say it → "Said it" click or 5 s → stay quiet
+  (spinner) → "They picked up. Go." on `human: true` or 25 s later as the
+  time fallback (AMD has usually already spoken before the screener is
+  recognised, so there is no reliable human signal yet). "Said it" writes
+  a NOTE `LeadEvent` (`screenerSaidIt`). Reload: `callScreener` restores
+  the banner from the `Call` row. The call ending or a disposition clears
+  it. **Data note**: the National Solar Resolutions campaign still has
+  `screenerAction MESSAGE`; the owner switches it to "Hand the call to an
+  agent" on the campaign page (no migration touches it).
 - The hopper for ratio reuses the eligibility rules; the Redis sorted-set
   hopper is still an optimisation for later, Postgres handles the current
   scale.

@@ -14,6 +14,7 @@ import { assistSuggest, campaignRebuttals, gamesOverview, type GamesOverview, ty
 import { prettyCard } from "@strowger/shared/games";
 import { superviseStart, superviseStop, type SuperviseMode } from "../floor/actions";
 import { formatPhone } from "@strowger/shared/phone";
+import { DEFAULT_SCREENER_SCRIPT, renderScript } from "@strowger/shared/scripts";
 import { io, type Socket } from "socket.io-client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -24,6 +25,8 @@ import {
   upcomingLeads,
   agentLogout,
   agentSetState,
+  callScreener,
+  screenerSaidIt,
   dialLead,
   disposition,
   hangup,
@@ -72,6 +75,8 @@ export interface ConsoleProps {
     wrapUpSeconds: number;
     /** Quick "Callback" is due this many minutes out (60 when 0). */
     callbackOwnerMinutes: number;
+    /** Read to a phone's call screener (SCREENER banner); null = DEFAULT_SCREENER_SCRIPT. */
+    screenerScript: string | null;
     dispositions: Array<{ id: string; code: string; label: string; hotkey: string | null; isCallback: boolean; isSale: boolean; isDnc: boolean }>;
   }>;
   sip: { server: string; realm: string; username: string; password: string; applicationSid: string } | null;
@@ -354,6 +359,9 @@ export function AgentConsole(props: ConsoleProps) {
   const [callId, setCallId] = useState<string | null>(null);
   const [callStatus, setCallStatus] = useState<string>("idle");
   const [callStart, setCallStart] = useState<number | null>(null);
+  /** The live call is a screened one (engine call:update carries screener: true); the banner's step moves say → wait → go. */
+  const [screener, setScreener] = useState<{ phrase: string | null } | null>(null);
+  const [screenerStep, setScreenerStep] = useState<"say" | "wait" | "go">("say");
   const [muted, setMuted] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [notes, setNotes] = useState("");
@@ -390,6 +398,11 @@ export function AgentConsole(props: ConsoleProps) {
   // Dispositioning a live call hangs it up first; the lead leg's "ended" event
   // can then land after the disposition cleared the call. Ignore it for that id.
   const dispositionedRef = useRef<string | null>(null);
+  /** The call on screen, readable from socket handlers that outlive a render. */
+  const callIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    callIdRef.current = callId;
+  }, [callId]);
 
   const timer = useTicker(callStatus !== "idle" && callStatus !== "ended", callStart);
   const now = useNow(30_000);
@@ -468,6 +481,9 @@ export function AgentConsole(props: ConsoleProps) {
         if (cur.currentCallId) {
           setCallId(cur.currentCallId);
           setCallStatus(cur.state === "WRAP_UP" ? "ended" : "bridged");
+          void callScreener(cur.currentCallId).then((info) => {
+            if (info?.screener && info.status !== "ended") setScreener({ phrase: info.screenerPhrase });
+          });
         }
       }
     })();
@@ -520,6 +536,8 @@ export function AgentConsole(props: ConsoleProps) {
         setCallId(null);
         setCallStatus("idle");
         setCallStart(null);
+        setScreener(null);
+        setScreenerStep("say");
       }
     });
     sock.on("text:in", (m: { leadId: string | null; body: string; from: string; action?: string; intent?: string | null }) => {
@@ -528,13 +546,20 @@ export function AgentConsole(props: ConsoleProps) {
       if (m.leadId) void textThread(m.leadId).then(setThread);
       void refreshStats();
     });
-    sock.on("call:update", (u: { callId: string; status: string; leadId?: string; outcome?: string; inbound?: boolean; from?: string | null }) => {
+    sock.on("call:update", (u: { callId: string; status: string; leadId?: string; outcome?: string; inbound?: boolean; from?: string | null; screener?: boolean; screenerPhrase?: string | null; human?: boolean }) => {
       if (u.status === "ended" && u.callId === dispositionedRef.current) {
         void refreshStats();
         return;
       }
+      if (callIdRef.current !== u.callId) {
+        // A new call: whatever the last one was, this one starts clean.
+        setScreener(null);
+        setScreenerStep("say");
+      }
       setCallId(u.callId);
       setCallStatus(u.status);
+      if (u.screener) setScreener((cur) => cur ?? { phrase: u.screenerPhrase ?? null });
+      if (u.human) setScreenerStep("go");
       if (u.inbound) setNotice(`Inbound call${u.from ? ` from ${u.from.replace(/(\d{3})(\d{3})(\d{4})/, "($1) $2-$3")}` : ""}: connected to you.`);
       if (u.leadId) {
         // Ratio mode: the lead arrives with the live call.
@@ -544,6 +569,8 @@ export function AgentConsole(props: ConsoleProps) {
       if (u.status === "ended") {
         setHeld(false);
         setTargets(null);
+        setScreener(null);
+        setScreenerStep("say");
         void refreshStats();
       }
     });
@@ -839,6 +866,8 @@ export function AgentConsole(props: ConsoleProps) {
       setCallStart(null);
       setHeld(false);
       setTargets(null);
+      setScreener(null);
+      setScreenerStep("say");
       setNotes("");
       setCallbackAt("");
       setScheduling(false);
@@ -888,6 +917,62 @@ export function AgentConsole(props: ConsoleProps) {
   const lineUpIdle = (state === "READY" || state === "PAUSED") && Boolean(agent?.agentCallSid);
   const canDialOut = campaign ? campaign.agentMode !== "CLOSER" || (campaign.closersMayDial && campaign.outboundOn) : false;
 
+  // Screener banner steps. "Say it" gives way to "stay quiet" after 5 s (or the Said it click);
+  // "They picked up" comes from the engine (AMD hears a human after the screener) or, failing a
+  // signal, 25 s into the quiet step: by then the screen has played the message and the person
+  // has either picked up or hung up on us (the call:update "ended" clears the banner).
+  useEffect(() => {
+    if (!screener || !onCall) return;
+    if (screenerStep === "say") {
+      const t = setTimeout(() => setScreenerStep("wait"), 5_000);
+      return () => clearTimeout(t);
+    }
+    if (screenerStep === "wait") {
+      const t = setTimeout(() => setScreenerStep("go"), 25_000);
+      return () => clearTimeout(t);
+    }
+  }, [screener, screenerStep, onCall]);
+
+  const saidIt = () => {
+    setScreenerStep("wait");
+    if (callId) void screenerSaidIt(callId);
+  };
+  const screenerLine = renderScript(campaign?.screenerScript || DEFAULT_SCREENER_SCRIPT, { agentName: me.name, company: me.tenant, lead });
+  const screenerBanner =
+    onCall && screener ? (
+      <div className="mb-4 rounded-2xl border-2 border-amber-400 bg-amber-400/15 p-4 shadow-[0_0_32px_rgba(251,191,36,0.35)]" role="alert">
+        <div className="flex items-start justify-between gap-3">
+          <div className="text-4xl font-black tracking-[0.2em] text-amber-300">SCREENER</div>
+          {screener.phrase ? (
+            <div className="max-w-[45%] truncate pt-2 text-xs text-amber-200/70" title={screener.phrase}>
+              heard: “{screener.phrase}”
+            </div>
+          ) : null}
+        </div>
+        {screenerStep === "go" ? (
+          <div className="mt-3 flex items-center gap-3 text-2xl font-bold text-emerald-300">
+            <span className="grid h-8 w-8 place-items-center rounded-full bg-emerald-400 text-base text-emerald-950">✓</span>
+            They picked up. Go.
+          </div>
+        ) : (
+          <>
+            <div className="mt-2 text-sm font-medium text-amber-100">Their phone is screening the call. Say this, then stop talking:</div>
+            <div className="mt-2 rounded-xl bg-black/40 px-4 py-3 text-2xl font-semibold leading-snug text-white">{screenerLine}</div>
+            {screenerStep === "say" ? (
+              <button onClick={saidIt} className="mt-3 rounded-lg bg-amber-400 px-4 py-2 font-semibold text-amber-950 hover:bg-amber-300">
+                Said it
+              </button>
+            ) : (
+              <div className="mt-3 flex items-center gap-3 rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-base text-zinc-100">
+                <span className="h-5 w-5 shrink-0 animate-spin rounded-full border-2 border-white/20 border-t-amber-300" aria-hidden />
+                <span>Now stay quiet. Don&apos;t say anything else until the person picks up. The screen may play your message to them.</span>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    ) : null;
+
   const banner =
     state === "LOGGED_OUT"
       ? { label: "OFFLINE", sub: "Pick a campaign and log in", color: "#8b8f9a" }
@@ -898,7 +983,9 @@ export function AgentConsole(props: ConsoleProps) {
           : state === "PAUSED"
             ? { label: "PAUSED", sub: `${agent?.pauseReason ?? "On break"} · click to resume`, color: "#f5c452" }
             : state === "ON_CALL"
-              ? { label: "ON CALL", sub: callStatus === "dialing" ? "Dialing…" : callStatus === "answered" ? "Answered · connecting" : "Live", color: "#5ab4ff" }
+              ? screener
+                ? { label: "SCREENER", sub: screenerStep === "go" ? "They picked up: go" : screenerStep === "say" ? "Their phone is screening: read the script" : "Stay quiet until they pick up", color: "#fbbf24" }
+                : { label: "ON CALL", sub: callStatus === "dialing" ? "Dialing…" : callStatus === "answered" ? "Answered · connecting" : "Live", color: "#5ab4ff" }
               : { label: "WRAP-UP", sub: "Disposition the call", color: "#c084fc" };
 
   // The banner is the primary Ready/Pause control. ON_CALL and WRAP_UP are not clickable,
@@ -1125,6 +1212,7 @@ export function AgentConsole(props: ConsoleProps) {
               {onCall || wrapUp ? (
                 <>
                 <Panel title={onCall ? `Call in Progress • ${timer}` : "Call ended"} collapsible={false}>
+                  {screenerBanner}
                   <div className="mb-4 flex items-center justify-center gap-4">
                     <Waveform colors={["#22d3ee", "#a855f7"]} />
                   </div>
@@ -1330,16 +1418,11 @@ export function AgentConsole(props: ConsoleProps) {
         ) : (
           <div className="grid gap-4 xl:grid-cols-[1fr_1fr_320px]">
             <div className="space-y-4">
+              {screenerBanner}
               <Panel title="Script" right={lead ? <span className="text-xs text-zinc-500">personalised for {leadName}</span> : null}>
                 {script ? (
                   <div className="max-h-[60vh] space-y-2 overflow-y-auto whitespace-pre-wrap text-sm leading-relaxed text-zinc-200">
-                    {script
-                      .replace(/\{\{\s*first_name\s*\}\}/g, lead?.firstName ?? "there")
-                      .replace(/\{\{\s*last_name\s*\}\}/g, lead?.lastName ?? "")
-                      .replace(/\{\{\s*agent\s*\}\}/g, me.name)
-                      .replace(/\{\{\s*company\s*\}\}/g, me.tenant)
-                      .replace(/\{\{\s*city\s*\}\}/g, lead?.city ?? "your area")
-                      .replace(/\{\{\s*state\s*\}\}/g, lead?.state ?? "")}
+                    {renderScript(script, { agentName: me.name, company: me.tenant, lead })}
                   </div>
                 ) : (
                   <div className="text-sm text-zinc-500">No script for this campaign yet. A supervisor adds one on the campaign page.</div>

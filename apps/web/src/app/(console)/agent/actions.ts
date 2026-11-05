@@ -164,6 +164,24 @@ export async function hangup(callId: string): Promise<{ ok: boolean }> {
   return engine(`/calls/${callId}/hangup`, { method: "POST", body: "{}" });
 }
 
+/** Screener banner on reload: is the agent's current call a screened one, and where is it. */
+export async function callScreener(callId: string): Promise<{ screener: boolean; screenerPhrase: string | null; status: "dialing" | "answered" | "bridged" | "ended" } | null> {
+  const s = await me();
+  const c = await prisma.call.findFirst({ where: { id: callId, tenantId: s.tenant.id, agentId: s.user.id }, select: { screenerDetected: true, providerData: true, answeredAt: true, bridgedAt: true, endedAt: true } });
+  if (!c) return null;
+  const phrase = (c.providerData as { screenerPhrase?: unknown }).screenerPhrase;
+  return { screener: c.screenerDetected, screenerPhrase: typeof phrase === "string" ? phrase : null, status: c.endedAt ? "ended" : c.bridgedAt ? "bridged" : c.answeredAt ? "answered" : "dialing" };
+}
+
+/** The agent clicked "Said it" on the screener banner: a line on the lead's timeline. */
+export async function screenerSaidIt(callId: string): Promise<{ ok: boolean }> {
+  const s = await me();
+  const call = await prisma.call.findFirst({ where: { id: callId, tenantId: s.tenant.id, agentId: s.user.id }, select: { id: true, leadId: true } });
+  if (!call?.leadId) return { ok: false };
+  await prisma.leadEvent.create({ data: { tenantId: s.tenant.id, leadId: call.leadId, kind: "NOTE", actorId: s.user.id, data: { callId: call.id, note: "Screener: agent said the script" } } });
+  return { ok: true };
+}
+
 /** Without `dispositionId` the call is a callback: the engine uses the campaign's callback disposition, creating "Callback" (CB) if the campaign has none. */
 export async function disposition(input: { callId: string; dispositionId?: string; notes?: string; callbackAt?: string; /** Quick callback: due this many minutes from now (computed here, the console render stays pure). */ callbackInMinutes?: number; callbackScope?: "AGENT" | "CAMPAIGN" }): Promise<Ok<object> | Err> {
   const s = await me();

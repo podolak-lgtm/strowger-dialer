@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { SCRIPT_TEMPLATES, rebuttalLines } from "./scripts";
+import { DEFAULT_SCREENER_SCRIPT, SCRIPT_TEMPLATES, rebuttalLines, renderScript } from "./scripts";
 
 const KNOWN = ["first_name", "last_name", "agent", "company", "city", "state"];
 
@@ -24,4 +24,18 @@ test("solar exit fronter is first, names the company and honours stop calling", 
   const lines = rebuttalLines(t).split("\n");
   assert.ok(lines.length >= 4);
   for (const l of lines) assert.match(l, /^[^|]+ \| .+$/);
+});
+
+const vars = { agentName: "Dana", company: "National Solar Resolutions", lead: { firstName: "Pat", lastName: "Lee", city: "Tampa", state: "FL" } };
+
+test("the default screener script reads with the agent, company and lead filled in", () => {
+  assert.equal(renderScript(DEFAULT_SCREENER_SCRIPT, vars), "Hi, this is Dana with National Solar Resolutions returning a call about Pat's solar account. Please pick up.");
+});
+
+test("snake case and dotted variables are the same thing", () => {
+  assert.equal(renderScript("{{first_name}} {{lead.firstName}} {{agent}} {{agent.firstName}} {{ company }}", vars), "Pat Pat Dana Dana National Solar Resolutions");
+});
+
+test("a missing lead falls back to neutral words and unknown keys stay visible", () => {
+  assert.equal(renderScript("Hi {{first_name}} in {{city}} {{nope}}", { ...vars, lead: null }), "Hi there in your area {{nope}}");
 });

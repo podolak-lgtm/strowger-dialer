@@ -1,7 +1,7 @@
 // Placing a call to a lead, and what happens when it ends or is dispositioned.
 import { onDispositioned, onDialed } from "../games";
 import { chargeCallMinutes, outboundAllowed } from "../billing";
-import { prisma, type Campaign, type Lead } from "@strowger/db";
+import { prisma, type Call, type Campaign, type Lead } from "@strowger/db";
 import { toE164 } from "@strowger/shared/phone";
 import { DID_RULES, capForNumber, hourlyCap } from "@strowger/shared/did-hygiene";
 import { config } from "../config";
@@ -191,16 +191,32 @@ export async function leadCallEnded(callId: string, status: string, sipStatus: n
   emitToTenant(call.tenantId, "floor:call", { callId, status: "ended", outcome });
 }
 
+/**
+ * The screener flag as the console wants it on every call:update once a
+ * phone's call screener was heard on the lead leg (jambonz/routes transcript
+ * hook). The console shows the SCREENER banner and the script from this.
+ */
+export function screenerFields(call: Pick<Call, "screenerDetected" | "providerData">): { screener: true; screenerPhrase: string | null } | Record<string, never> {
+  if (!call.screenerDetected) return {};
+  const phrase = (call.providerData as { screenerPhrase?: unknown }).screenerPhrase;
+  return { screener: true, screenerPhrase: typeof phrase === "string" ? phrase : null };
+}
+
+/** The lifecycle word the console keys on, from the call's timestamps. */
+export function callStatusOf(call: Pick<Call, "endedAt" | "bridgedAt" | "answeredAt">): "ended" | "bridged" | "answered" | "dialing" {
+  return call.endedAt ? "ended" : call.bridgedAt ? "bridged" : call.answeredAt ? "answered" : "dialing";
+}
+
 export async function leadCallAnswered(callId: string): Promise<void> {
   const call = await prisma.call.update({ where: { id: callId }, data: { answeredAt: new Date() } });
-  if (call.agentId) emitToAgent(call.agentId, "call:update", { callId, status: "answered" });
+  if (call.agentId) emitToAgent(call.agentId, "call:update", { callId, status: "answered", ...screenerFields(call) });
 }
 
 export async function leadCallBridged(callId: string): Promise<void> {
   const call = await prisma.call.findUnique({ where: { id: callId } });
   if (!call || call.bridgedAt) return;
   await prisma.call.update({ where: { id: callId }, data: { bridgedAt: new Date() } });
-  if (call.agentId) emitToAgent(call.agentId, "call:update", { callId, status: "bridged" });
+  if (call.agentId) emitToAgent(call.agentId, "call:update", { callId, status: "bridged", ...screenerFields(call) });
 }
 
 export interface DispositionInput {
