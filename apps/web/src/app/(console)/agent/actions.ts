@@ -5,6 +5,7 @@
 // trusts the browser.
 import { prisma } from "@strowger/db";
 import { engine } from "@/lib/engine";
+import { requireRight } from "@/lib/rights";
 import { requireRole } from "@/lib/auth";
 
 export type AgentLive = {
@@ -212,11 +213,13 @@ export async function textThread(leadId: string): Promise<TextMessage[]> {
 
 export async function sendText(leadId: string, body: string): Promise<{ ok: true } | { ok: false; error: string }> {
   const s = await me();
+  requireRight(s, "send_text");
   return engine("/sms/send", { method: "POST", body: JSON.stringify({ tenantId: s.tenant.id, userId: s.user.id, leadId, body }) });
 }
 
 export async function leaveVoicemail(callId: string): Promise<{ ok: true } | { ok: false; error: string }> {
   const s = await me();
+  requireRight(s, "voicemail_drop");
   return engine(`/calls/${callId}/voicemail`, { method: "POST", body: JSON.stringify({ userId: s.user.id }) });
 }
 
@@ -284,10 +287,12 @@ export async function transferTargets(campaignId: string | null): Promise<Transf
 
 export async function transferCall(callId: string, toAgentId: string): Promise<{ ok: true } | { ok: false; error: string }> {
   const s = await me();
+  requireRight(s, "transfer");
   return engine(`/calls/${callId}/transfer`, { method: "POST", body: JSON.stringify({ userId: s.user.id, toAgentId }) });
 }
 
 export async function manualDial(phone: string): Promise<{ ok: true; callId: string } | { ok: false; error: string }> {
   const s = await me();
+  requireRight(s, "manual_dial");
   return engine("/calls/manual", { method: "POST", body: JSON.stringify({ tenantId: s.tenant.id, userId: s.user.id, phone }) });
 }

@@ -1,4 +1,5 @@
 // Placing a call to a lead, and what happens when it ends or is dispositioned.
+import { onDispositioned, onDialed } from "../games";
 import { prisma, type Campaign, type Lead } from "@strowger/db";
 import { toE164 } from "@strowger/shared/phone";
 import { DID_RULES, capForNumber, hourlyCap } from "@strowger/shared/did-hygiene";
@@ -109,6 +110,7 @@ export async function dialLeadForAgent(campaign: Campaign, lead: Lead, agentId: 
     } as CreateReq;
     const sid = await jambonz.calls.create(req);
     await redis.set(sidKey(sid), call.id, "EX", 6 * 3600);
+    void onDialed(campaign.tenantId, agentId);
     await prisma.call.update({ where: { id: call.id }, data: { providerCallId: sid } });
     const cadence = await prisma.list.findUnique({ where: { id: lead.listId }, select: { cadence: { select: { dayparts: true } } } });
     await prisma.lead.update({
@@ -236,7 +238,7 @@ export async function dispositionCall(input: DispositionInput): Promise<{ ok: tr
     }
     await prisma.lead.update({
       where: { id: call.lead.id },
-      data: { status, nextDialAt, ownerId: disp.isCallback ? input.actorId : null, scrubStatus: disp.isDnc ? "DNC" : undefined },
+      data: { status, nextDialAt, ownerId: disp.isCallback ? input.actorId : null, lastAgentId: input.actorId, scrubStatus: disp.isDnc ? "DNC" : undefined },
     });
     await prisma.leadEvent.create({ data: { tenantId: call.tenantId, leadId: call.lead.id, kind: "DISPOSITION", actorId: input.actorId, data: { callId: call.id, code: disp.code, notes: input.notes ?? null } } });
   }
@@ -246,6 +248,7 @@ export async function dispositionCall(input: DispositionInput): Promise<{ ok: tr
     await patchAgent(input.actorId, { currentCallId: null, state: agent.agentCallSid ? "READY" : "LOGGED_IN" });
   }
   emitToTenant(call.tenantId, "floor:call", { callId: call.id, status: "dispositioned", code: disp.code });
+  void onDispositioned(call.tenantId, input.actorId, call.id, { isSale: disp.isSale, isContact: disp.isContact });
 
   // CRM push: one delivery per endpoint that subscribes to any of these events.
   const events: WebhookEvent[] = ["disposition", ...(disp.isSale ? (["sale"] as const) : []), ...(disp.isCallback ? (["callback"] as const) : []), ...(disp.isDnc ? (["dnc"] as const) : [])];

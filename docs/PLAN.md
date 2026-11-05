@@ -369,3 +369,12 @@ SVG strip in `components/strowger-comic.tsx`). The owner wants its colour
 scheme (cream paper `#f6efe0`, ink `#1b1b1f`, red `#c8472b`) available as
 a **theme in Settings** for the whole app later, beside the current dark
 theme.
+
+## Gamification (owner, 5 Nov)
+
+Weekly points (10,000 every Monday) agents bet against each other on any
+stat; a poker run where every sale deals a card and the best hand of the
+day or week wins a bonus. Built. The owner wants variety: rotate other games
+(bingo, king of the hill, horse race, boss raid, streaks, mystery box,
+fantasy draft) so it never gets boring. Agent levels 1–8 carry rights; the
+owner may later tie screens to levels.

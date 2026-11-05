@@ -162,3 +162,11 @@ export async function setVoicemailStatus(formData: FormData) {
   await prisma.voicemail.updateMany({ where: { id, tenantId: s.tenant.id }, data: { status } });
   revalidatePath("/voicemails");
 }
+
+/** The agent's own voicemail alert preference and mobile number. */
+export async function saveVoicemailPrefs(formData: FormData) {
+  const s = await requireRole("AGENT", "TEAM_LEADER", "SUPERVISOR");
+  const mobile = String(formData.get("mobilePhone") ?? "").replace(/\D/g, "").replace(/^1(\d{10})$/, "$1") || null;
+  await prisma.user.update({ where: { id: s.user.id }, data: { mobilePhone: mobile, notifyVoicemailSms: formData.get("notifyVoicemailSms") === "on" } });
+  revalidatePath("/voicemails");
+}

@@ -2,7 +2,8 @@ import { prisma } from "@strowger/db";
 import { formatPhone } from "@strowger/shared";
 import { requireRole } from "@/lib/auth";
 import { Badge, Button, Card, Field, PageHeader, Table, Td, inputClass } from "@/components/ui";
-import { addAudioAsset, addCallerIds, deleteAudioAsset, saveFcrProfile, saveGoals, setCallerIdStatus, setCampaignAudio, uploadAudio } from "./actions";
+import { addAudioAsset, addCallerIds, deleteAudioAsset, saveFcrProfile, saveGames, saveGoals, saveLevelRights, setCallerIdStatus, setCampaignAudio, uploadAudio } from "./actions";
+import { AGENT_RIGHTS, LEVELS, rightsForLevel } from "@strowger/shared/games";
 import { storageConfigured } from "@/lib/storage";
 import { runRecordingExportNow, saveRecordingPolicy } from "./recording-actions";
 
@@ -253,6 +254,77 @@ export default async function SettingsPage() {
               </form>
             ))}
           </div>
+        </Card>
+
+        <Card title="Agent levels: what each level may do" className="lg:col-span-2">
+          {(() => {
+            const overrides = ((s.tenant.settings ?? {}) as { levelRights?: Record<string, string[]> }).levelRights ?? null;
+            return (
+              <form action={saveLevelRights} className="space-y-3">
+                <p className="text-xs text-zinc-500">Every agent has a level (People → person). Supervisors and admins always have every right. Team leaders follow their level like any agent.</p>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="text-left text-zinc-500">
+                        <th className="py-1 pr-2">Right</th>
+                        {LEVELS.map((l) => (
+                          <th key={l} className="px-2 py-1 text-center">
+                            L{l}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(Object.keys(AGENT_RIGHTS) as (keyof typeof AGENT_RIGHTS)[]).map((r) => (
+                        <tr key={r} className="border-t border-zinc-800">
+                          <td className="py-1.5 pr-2 text-zinc-300">{AGENT_RIGHTS[r]}</td>
+                          {LEVELS.map((l) => (
+                            <td key={l} className="px-2 py-1.5 text-center">
+                              <input type="checkbox" name={`level${l}`} value={r} defaultChecked={rightsForLevel(l, overrides).has(r)} className="h-4 w-4" />
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <Button type="submit" variant="ghost">
+                  Save levels
+                </Button>
+              </form>
+            );
+          })()}
+        </Card>
+
+        <Card title="Games" className="lg:col-span-2">
+          {(() => {
+            const g = { enabled: true, weeklyPoints: 10000, maxStake: 5000, pokerPeriod: "week", pokerPrize: "", ...(((s.tenant.settings ?? {}) as { games?: Record<string, unknown> }).games ?? {}) } as { enabled: boolean; weeklyPoints: number; maxStake: number; pokerPeriod: string; pokerPrize: string };
+            return (
+              <form action={saveGames} className="flex flex-wrap items-end gap-3 text-sm">
+                <label className="flex items-center gap-2 pb-2 text-zinc-300">
+                  <input type="checkbox" name="enabled" defaultChecked={g.enabled} className="h-4 w-4" /> Games on
+                </label>
+                <Field label="Points every Monday">
+                  <input name="weeklyPoints" type="number" min={0} defaultValue={g.weeklyPoints} className={inputClass} />
+                </Field>
+                <Field label="Max stake per bet">
+                  <input name="maxStake" type="number" min={1} defaultValue={g.maxStake} className={inputClass} />
+                </Field>
+                <Field label="Poker run resets">
+                  <select name="pokerPeriod" defaultValue={g.pokerPeriod} className={inputClass}>
+                    <option value="day">Every day</option>
+                    <option value="week">Every week</option>
+                  </select>
+                </Field>
+                <Field label="Poker prize (shown to agents)">
+                  <input name="pokerPrize" defaultValue={g.pokerPrize} className={inputClass} placeholder="$100 gift card" />
+                </Field>
+                <Button type="submit" variant="ghost">
+                  Save games
+                </Button>
+              </form>
+            );
+          })()}
         </Card>
 
         <Card title="Free Caller Registry profile" className="lg:col-span-2">

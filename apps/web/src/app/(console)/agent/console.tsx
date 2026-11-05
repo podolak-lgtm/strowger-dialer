@@ -9,6 +9,8 @@
 import { createJambonzClient } from "@jambonz/client-sdk-web";
 import { ChatPanel } from "@/components/chat-panel";
 import { myTeams } from "@/lib/chat-actions";
+import { assistSuggest, campaignRebuttals, gamesOverview, type GamesOverview, type Suggestion } from "@/lib/games-actions";
+import { prettyCard } from "@strowger/shared/games";
 import { superviseStart, superviseStop, type SuperviseMode } from "../floor/actions";
 import { formatPhone } from "@strowger/shared/phone";
 import { io, type Socket } from "socket.io-client";
@@ -54,6 +56,8 @@ export interface ConsoleProps {
   me: { id: string; name: string; tenant: string };
   /** TEAM_LEADER gets the My Team panel: members live, listen/whisper/barge, a word in chat. */
   roles: string[];
+  /** From the agent level (lib/rights.ts). Buttons are hidden without the right; the actions refuse too. */
+  rights: string[];
   campaigns: Array<{
     id: string;
     name: string;
@@ -139,7 +143,8 @@ function Bar({ label, value, max, from, to }: { label: string; value: number; ma
 }
 
 export function AgentConsole(props: ConsoleProps) {
-  const { me, campaigns, sip, engineUrl, rtToken, screen, roles } = props;
+  const { me, campaigns, sip, engineUrl, rtToken, screen, roles, rights } = props;
+  const can = (r: string) => rights.includes(r);
   const [campaignId, setCampaignId] = useState<string>(campaigns[0]?.id ?? "");
   const campaign = campaigns.find((c) => c.id === campaignId) ?? null;
   const [agent, setAgent] = useState<AgentLive | null>(null);
@@ -944,6 +949,7 @@ export function AgentConsole(props: ConsoleProps) {
             {/* My team (leaders), chat, sprint, leaderboard */}
             <div className="space-y-4">
               {isLeader && teams.length ? <TeamPanel teams={teams} live={liveAgents} me={me.id} phoneIdle={phone === "registered"} watching={watching} onWatch={watch} onMessage={(id) => setDmWith(id)} /> : null}
+              {onCall ? <AssistPanel campaignId={campaignId} leadId={lead?.id ?? null} compact /> : null}
               <Panel title="Chat">
                 <ChatPanel socket={sock} meId={me.id} openDirectWith={dmWith} height="h-56" />
               </Panel>
@@ -969,15 +975,8 @@ export function AgentConsole(props: ConsoleProps) {
                   <div className="text-sm text-zinc-500">No script for this campaign yet. A supervisor adds one on the campaign page.</div>
                 )}
               </Panel>
-              <Panel title="Agent Assist" defaultOpen={false}>
-                <div className="flex items-center gap-3 text-sm text-zinc-400">
-                  <div className="grid h-12 w-12 place-items-center rounded-2xl bg-gradient-to-br from-cyan-400 to-indigo-500 text-2xl">◉</div>
-                  <div>
-                    <div className="text-zinc-200">Behavioral cues, sentiment and smart suggestions</div>
-                    <div className="text-xs">Need the live transcript, which turns on once the jambonz account has a speech vendor.</div>
-                  </div>
-                </div>
-              </Panel>
+              <AssistPanel campaignId={campaignId} leadId={lead?.id ?? null} />
+              {can("games") ? <GamesPanel meId={me.id} /> : null}
             </div>
 
             <div className="space-y-4">
@@ -1161,6 +1160,106 @@ function TeamPanel({ teams, live, me, phoneIdle, watching, onWatch, onMessage }:
           </ul>
         </div>
       ))}
+    </Panel>
+  );
+}
+
+/** What to say next: the campaign's rebuttal library, and an AI suggestion for whatever the person just said. */
+function AssistPanel({ campaignId, leadId, compact = false }: { campaignId: string; leadId: string | null; compact?: boolean }) {
+  const [rebuttals, setRebuttals] = useState<{ objection: string; response: string }[]>([]);
+  const [open, setOpen] = useState<number | null>(null);
+  const [heard, setHeard] = useState("");
+  const [goal, setGoal] = useState<"sale" | "service">("sale");
+  const [out, setOut] = useState<{ suggestions: Suggestion[]; tone: string } | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (!campaignId) return;
+    const t = setTimeout(() => void campaignRebuttals(campaignId).then(setRebuttals), 0);
+    return () => clearTimeout(t);
+  }, [campaignId]);
+  const ask = async () => {
+    if (!heard.trim() || !campaignId) return;
+    setBusy(true);
+    setErr(null);
+    const r = await assistSuggest(campaignId, leadId, heard, goal);
+    if (r.ok) setOut({ suggestions: r.suggestions, tone: r.tone });
+    else setErr(r.error);
+    setBusy(false);
+  };
+  const filtered = heard.trim().length > 2 ? rebuttals.filter((r) => r.objection.toLowerCase().includes(heard.toLowerCase().trim())) : rebuttals;
+  return (
+    <Panel title="Agent Assist" right={<span className="text-xs text-zinc-500">{rebuttals.length} rebuttals</span>} defaultOpen={!compact}>
+      <div className="mb-2 flex gap-2">
+        <input value={heard} onChange={(e) => setHeard(e.target.value)} onKeyDown={(e) => e.key === "Enter" && void ask()} placeholder="What did they just say?" className="flex-1 rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm placeholder:text-zinc-600" />
+        <select value={goal} onChange={(e) => setGoal(e.target.value as "sale" | "service")} className="rounded-lg border border-white/10 bg-black/30 px-2 text-xs">
+          <option value="sale">sale</option>
+          <option value="service">service</option>
+        </select>
+        <button onClick={() => void ask()} disabled={busy || !heard.trim()} className="rounded-lg bg-gradient-to-br from-cyan-400 to-indigo-500 px-3 py-2 text-sm font-semibold text-white disabled:opacity-40">
+          {busy ? "…" : "Suggest"}
+        </button>
+      </div>
+      {err ? <div className="mb-2 text-xs text-red-300">{err}</div> : null}
+      {out ? (
+        <div className="mb-3 space-y-2">
+          {out.suggestions.map((s, i) => (
+            <div key={i} className="rounded-lg border border-cyan-400/30 bg-cyan-400/10 px-3 py-2 text-sm">
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-cyan-300">
+                {s.title} · {out.tone}
+              </div>
+              <div className="text-zinc-100">&ldquo;{s.say}&rdquo;</div>
+              <div className="mt-0.5 text-xs text-zinc-400">{s.why}</div>
+            </div>
+          ))}
+        </div>
+      ) : null}
+      <div className={`${compact ? "max-h-40" : "max-h-72"} space-y-1 overflow-y-auto text-sm`}>
+        {filtered.map((r, i) => (
+          <button key={i} onClick={() => setOpen(open === i ? null : i)} className="block w-full rounded-lg bg-white/5 px-3 py-1.5 text-left hover:bg-white/10">
+            <div className="text-zinc-300">&ldquo;{r.objection}&rdquo;</div>
+            {open === i ? <div className="mt-1 text-zinc-100">{r.response}</div> : null}
+          </button>
+        ))}
+        {rebuttals.length === 0 ? <div className="text-xs text-zinc-500">No rebuttals on this campaign yet. A supervisor adds them on the campaign page; the Suggest button still works from the script.</div> : null}
+      </div>
+    </Panel>
+  );
+}
+
+function GamesPanel({ meId }: { meId: string }) {
+  const [o, setO] = useState<GamesOverview | null>(null);
+  useEffect(() => {
+    const load = () => void gamesOverview().then(setO).catch(() => undefined);
+    const first = setTimeout(load, 0);
+    const t = setInterval(load, 30_000);
+    return () => {
+      clearTimeout(first);
+      clearInterval(t);
+    };
+  }, []);
+  if (!o || !o.settings.enabled) return null;
+  const mine = o.poker.rows.find((r) => r.userId === meId);
+  const open = o.wagers.filter((w) => w.status === "OPEN" && w.proposerId !== meId && (!w.accepterId || w.accepterId === meId)).length;
+  return (
+    <Panel title="Games" right={<a href="/games" target="_blank" rel="noreferrer" className="text-xs text-sky-300 underline">open</a>} defaultOpen={false}>
+      <div className="flex items-center justify-between text-sm">
+        <span className="text-zinc-400">Points</span>
+        <span className="text-lg font-semibold tabular-nums">{o.points.toLocaleString()}</span>
+      </div>
+      <div className="mt-1 flex items-center justify-between text-sm">
+        <span className="text-zinc-400">Bets waiting for you</span>
+        <span className={open ? "rounded-full bg-fuchsia-500 px-2 text-xs font-bold text-white" : "text-zinc-500"}>{open}</span>
+      </div>
+      <div className="mt-2 text-xs text-zinc-400">Poker run {mine?.hand ? `· ${mine.hand.name}` : ""}</div>
+      <div className="mt-1 flex flex-wrap gap-1">
+        {(mine?.cards ?? []).map((c, i) => (
+          <span key={i} className={`inline-grid h-8 w-6 place-items-center rounded border border-zinc-300 bg-white text-[11px] font-bold ${c[1] === "H" || c[1] === "D" ? "text-red-600" : "text-zinc-900"}`}>
+            {prettyCard(c)}
+          </span>
+        ))}
+        {!mine?.cards.length ? <span className="text-xs text-zinc-500">No cards yet: every sale deals one.</span> : null}
+      </div>
     </Panel>
   );
 }

@@ -9,6 +9,7 @@ import { deliverPending } from "../webhooks/deliver";
 import { nightlyRecordings } from "../recordings/export";
 import { queueTick } from "../inbound/router";
 import { syncPendingOrders } from "../provision";
+import { settlePeriodWagers, weeklyTopUp } from "../games";
 
 interface Job {
   name: string;
@@ -50,6 +51,16 @@ async function dailyReset(): Promise<void> {
   log.info({ today }, "daily counters reset");
 }
 
+/** Monday (UTC) first tick: every agent back to the weekly allowance. */
+async function mondayTopUp(): Promise<void> {
+  const now = new Date();
+  if (now.getUTCDay() !== 1) return;
+  const key = now.toISOString().slice(0, 10);
+  if ((await redis.get("job:weeklyTopUp:last")) === key) return;
+  await weeklyTopUp(now);
+  await redis.set("job:weeklyTopUp:last", key);
+}
+
 const JOBS: Job[] = [
   { name: "scrub", everyMs: 2 * 60_000, run: scrubAllTenants },
   { name: "dailyReset", everyMs: 10 * 60_000, run: dailyReset },
@@ -57,6 +68,8 @@ const JOBS: Job[] = [
   { name: "nightlyRecordings", everyMs: 15 * 60_000, run: nightly },
   { name: "queues", everyMs: 1_000, run: queueTick },
   { name: "numberOrders", everyMs: 3 * 60_000, run: syncPendingOrders },
+  { name: "wagers", everyMs: 15 * 60_000, run: () => settlePeriodWagers() },
+  { name: "weeklyTopUp", everyMs: 10 * 60_000, run: mondayTopUp },
 ];
 
 export function startScheduler(): () => void {

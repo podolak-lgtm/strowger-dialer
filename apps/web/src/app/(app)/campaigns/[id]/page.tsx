@@ -5,7 +5,7 @@ import { requireRole } from "@/lib/auth";
 import { Badge, Button, Card, Field, PageHeader, Table, Td, inputClass } from "@/components/ui";
 import { deleteDialPlan, saveDialPlan, saveDisposition, updateCampaign } from "../actions";
 import { addWebhook, deleteWebhook, testWebhook, toggleWebhook } from "../webhook-actions";
-import { saveScript } from "../script-actions";
+import { saveRebuttals, saveScript } from "../script-actions";
 
 function Check({ name, label, checked }: { name: string; label: string; checked: boolean }) {
   return (
@@ -166,6 +166,7 @@ export default async function CampaignPage({ params }: PageProps<"/campaigns/[id
             <Field label="Spoken script" hint="Variables: {{first_name}}, {{last_name}}, {{company}}, {{callback_number}}, {{agent}}. Needs a speech vendor on the jambonz account; otherwise use a file.">
               <textarea name="voicemailScript" rows={3} defaultValue={c.voicemailScript ?? ""} className={inputClass} placeholder="Hi {{first_name}}, this is {{agent}} with {{company}} returning your request. Call us back at {{callback_number}}." />
             </Field>
+            <Check name="voicemailNotifySms" label="Text the agent when a caller leaves a voicemail in their box (each agent can switch it off for themselves)" checked={c.voicemailNotifySms} />
             <Check name="screenerDetection" label="Detect call-screening services (Google Call Screen and the like)" checked={c.screenerDetection} />
             <Field label="When a screener answers">
               <select name="screenerAction" defaultValue={c.screenerAction} className={inputClass}>
@@ -301,6 +302,24 @@ export default async function CampaignPage({ params }: PageProps<"/campaigns/[id
             </Field>
             <Button type="submit" variant="ghost">
               Save script
+            </Button>
+          </form>
+        </Card>
+
+        <Card title="Agent assist: rebuttals" className="lg:col-span-2">
+          <form action={saveRebuttals} className="space-y-2">
+            <input type="hidden" name="campaignId" value={c.id} />
+            <Field label="Objection | what to say (one per line)" hint="Agents see these on the Assist panel while on a call, and the AI suggestions lean on them first.">
+              <textarea
+                name="rebuttals"
+                rows={8}
+                defaultValue={((c.rebuttals as { objection: string; response: string }[] | null) ?? []).map((r) => `${r.objection} | ${r.response}`).join("\n")}
+                className={`${inputClass} font-mono text-xs`}
+                placeholder={"I'm not interested | Totally fair. Can I ask what you were hoping to find when you filled out the form? If it's not a fit I'll let you go.\nSend me something in writing | Happy to. So I send the right thing, what matters most to you: price or coverage?"}
+              />
+            </Field>
+            <Button type="submit" variant="ghost">
+              Save rebuttals
             </Button>
           </form>
         </Card>

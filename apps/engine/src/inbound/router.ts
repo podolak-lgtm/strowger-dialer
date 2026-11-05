@@ -273,7 +273,9 @@ export async function routeInbound(callSid: string, fromRaw: string, toRaw: stri
     default: {
       // Campaign callback: owner first, then the campaign, then anyone.
       const free = (await listAgents(tenantId)).filter(isFree);
-      const owner = lead?.ownerId ? free.find((a) => a.userId === lead.ownerId) : undefined;
+      // The agent who last spoke to, texted or left a message for this person gets the call back first; then the owner; then whoever has waited longest.
+      const preferredIds = [lead?.lastAgentId, lead?.ownerId].filter((x): x is string => Boolean(x));
+      const owner = preferredIds.map((id) => free.find((a) => a.userId === id)).find(Boolean);
       const onCampaign = campaignId ? free.filter((a) => a.campaignId === campaignId).sort((a, b) => a.since - b.since) : [];
       const agent = owner ?? onCampaign[0] ?? free.sort((a, b) => a.since - b.since)[0];
       if (agent) {
@@ -289,10 +291,13 @@ export async function routeInbound(callSid: string, fromRaw: string, toRaw: stri
         await prisma.callback.create({ data: { tenantId, campaignId, leadId: lead.id, agentId: lead.ownerId ?? null, scope: lead.ownerId ? "AGENT" : "CAMPAIGN", dueAt: new Date(), note: "Called in while nobody was free" } });
         await prisma.lead.update({ where: { id: lead.id }, data: { status: "CALLBACK", nextDialAt: new Date() } });
       }
-      // Take a message in the campaign's box so nothing is lost.
-      const box = campaignId
-        ? await prisma.voicemailBox.upsert({ where: { tenantId_name: { tenantId, name: `${number.campaign?.name ?? "Campaign"} callbacks` } }, create: { tenantId, name: `${number.campaign?.name ?? "Campaign"} callbacks` }, update: {} })
-        : null;
+      // Take a message: in the box of the agent they were dealing with, else the campaign's box, so nothing is lost.
+      const personal = lead?.lastAgentId ?? lead?.ownerId ?? null;
+      const box = personal
+        ? await boxForUser(tenantId, personal)
+        : campaignId
+          ? await prisma.voicemailBox.upsert({ where: { tenantId_name: { tenantId, name: `${number.campaign?.name ?? "Campaign"} callbacks` } }, create: { tenantId, name: `${number.campaign?.name ?? "Campaign"} callbacks` }, update: {} })
+          : null;
       await prisma.call.update({ where: { id: call.id }, data: { outcome: "NO_ANSWER", notes: "Inbound, no agent free" } });
       return box ? voicemailVerbs(box, call.id, fromPhone) : [{ verb: "hangup" }];
     }

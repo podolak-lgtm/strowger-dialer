@@ -50,6 +50,9 @@ model Tenant {
   callerIds      CallerIdNumber[]
   numberOrders   NumberOrder[]
   chatMessages   ChatMessage[]
+  wagers         Wager[]
+  pointsLedger   PointsLedger[]
+  pokerCards     PokerCard[]
   audioAssets    AudioAsset[]
   calls          Call[]
   messages       Message[]
@@ -90,6 +93,14 @@ model User {
   firstName   String?
   lastName    String?
   roles       Role[]   @default([AGENT])
+  /// Agent level 1–8 (owner, 5 Nov): rights per level are tenant settings (`levelRights`).
+  level       Int      @default(1)
+  /// Where to text the agent (voicemail alerts). E.164 digits.
+  mobilePhone String?
+  /// Text me when a voicemail lands in my box (also needs the campaign switch).
+  notifyVoicemailSms Boolean @default(true)
+  /// Game points (bets); topped up weekly from tenant settings.
+  points      Int      @default(0)
   active      Boolean  @default(true)
   /// SIP credentials for the browser softphone. The password is stored
   /// encrypted (AES-GCM under a key derived from ENGINE_INTERNAL_KEY): the
@@ -113,6 +124,10 @@ model User {
   teams           UserTeam[]
   ledTeams        Team[]          @relation("TeamLeader")
   chatSent        ChatMessage[]   @relation("ChatSender")
+  wagersProposed  Wager[]         @relation("WagerProposer")
+  wagersAccepted  Wager[]         @relation("WagerAccepter")
+  pointsLedger    PointsLedger[]
+  pokerCards      PokerCard[]
   supervisedRooms Room[]          @relation("RoomSupervisor")
   campaignAgents  CampaignAgent[]
   agentSessions   AgentSession[]
@@ -253,6 +268,10 @@ model Campaign {
   voicemailScript      String?
   /// Minutes before a lead that reached voicemail is tried again.
   voicemailRetryMinutes Int            @default(240)
+  /// Text the owning agent when a caller leaves them a voicemail (per-agent switch too).
+  voicemailNotifySms Boolean @default(true)
+  /// Agent assist: [{"objection":"…","response":"…"}]
+  rebuttals          Json?
 
   screenerDetection Boolean        @default(true)
   screenerAction    ScreenerAction @default(MESSAGE)
@@ -577,6 +596,8 @@ model Lead {
   redialsCancelledOn DateTime? @db.Date
   owner         User?      @relation("LeadOwner", fields: [ownerId], references: [id])
   ownerId       String?
+  /// The last agent who spoke to, texted or left a message for this lead: a call back goes to them first (owner, 5 Nov).
+  lastAgentId   String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -834,6 +855,68 @@ enum ChatChannel {
   TEAM
   CAMPAIGN
   DIRECT
+}
+
+/// Games (owner, 5 Nov). A bet between two agents on a stat, paid in points.
+model Wager {
+  id          String      @id @default(cuid())
+  tenant      Tenant      @relation(fields: [tenantId], references: [id])
+  tenantId    String
+  proposer    User        @relation("WagerProposer", fields: [proposerId], references: [id])
+  proposerId  String
+  accepter    User?       @relation("WagerAccepter", fields: [accepterId], references: [id])
+  accepterId  String?
+  /// NEXT_SALE, NEXT_CALL, NEXT_CONTACT, MOST_CALLS_TODAY, MOST_CONTACTS_TODAY, MOST_SALES_TODAY, MOST_SALES_WEEK
+  kind        String
+  stake       Int
+  status      WagerStatus @default(OPEN)
+  /// For "most … today/week": the period key the bet settles on (YYYY-MM-DD or YYYY-Www).
+  period      String?
+  winnerId    String?
+  note        String?
+  createdAt   DateTime    @default(now())
+  settledAt   DateTime?
+
+  @@index([tenantId, status, createdAt])
+}
+
+enum WagerStatus {
+  OPEN
+  ACCEPTED
+  SETTLED
+  DECLINED
+  VOID
+}
+
+model PointsLedger {
+  id        String   @id @default(cuid())
+  tenant    Tenant   @relation(fields: [tenantId], references: [id])
+  tenantId  String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+  delta     Int
+  reason    String
+  wagerId   String?
+  createdAt DateTime @default(now())
+
+  @@index([tenantId, userId, createdAt])
+}
+
+/// Poker run: one card per sale; best five-card hand in the period wins.
+model PokerCard {
+  id        String   @id @default(cuid())
+  tenant    Tenant   @relation(fields: [tenantId], references: [id])
+  tenantId  String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+  /// Period key: YYYY-MM-DD (daily run) or YYYY-Www (weekly run).
+  period    String
+  /// e.g. "AS", "TD", "9H", "2C"
+  card      String
+  callId    String?
+  dealtAt   DateTime @default(now())
+
+  @@index([tenantId, period, userId])
 }
 
 model DidScan {

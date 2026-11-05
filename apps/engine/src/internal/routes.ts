@@ -22,6 +22,9 @@ import { assignNumbersToCampaign, createBrand, createTenDlcCampaign, orderNumber
 import type { BrandInput, CampaignInput } from "../provision/telnyx";
 import { registerAtFcr } from "../provision/fcr";
 import { chatHistory, sendChat } from "../chat";
+import { acceptWager, gamesOverview, proposeWager, withdrawWager } from "../games";
+import { suggest } from "../assist";
+import type { WagerKind } from "@strowger/shared/games";
 
 const Ids = z.object({ tenantId: z.string(), userId: z.string() });
 
@@ -141,7 +144,7 @@ export async function registerInternalRoutes(app: FastifyInstance): Promise<void
     if (!from) from = (await prisma.callerIdNumber.findFirst({ where: { tenantId: b.tenantId, smsEnabled: true, status: "ACTIVE", areaCode: lead.phone.slice(0, 3) } }))?.phone ?? (await prisma.callerIdNumber.findFirst({ where: { tenantId: b.tenantId, smsEnabled: true, status: "ACTIVE" } }))?.phone ?? null;
     if (!from) return { ok: false, error: "No SMS-enabled number in the pool" };
     const r = await sendSms({ tenantId: b.tenantId, campaignId: lead.list.campaignId, leadId: lead.id, agentId: b.userId, from, to: lead.phone, body: b.body, purpose: null });
-    if (!lead.assignedCallerId) await prisma.lead.update({ where: { id: lead.id }, data: { assignedCallerId: from } });
+    if (r.ok) await prisma.lead.update({ where: { id: lead.id }, data: { ...(lead.assignedCallerId ? {} : { assignedCallerId: from }), lastAgentId: b.userId } });
     return r.ok ? { ok: true } : { ok: false, error: r.error ?? "Send failed" };
   });
 
@@ -245,6 +248,29 @@ export async function registerInternalRoutes(app: FastifyInstance): Promise<void
       return reply.code(400).send({ error: message });
     }
   };
+  // ---- Games
+  app.get("/internal/games", async (req) => {
+    const q = z.object({ tenantId: z.string(), userId: z.string() }).parse(req.query);
+    return gamesOverview(q.tenantId, q.userId);
+  });
+  app.post("/internal/games/wager", async (req, reply) => {
+    const b = Ids.extend({ action: z.enum(["propose", "accept", "withdraw"]), wagerId: z.string().optional(), accepterId: z.string().nullable().optional(), kind: z.string().optional(), stake: z.number().int().optional(), note: z.string().optional() }).parse(req.body);
+    try {
+      if (b.action === "propose") return { ok: true, wager: await proposeWager(b.tenantId, b.userId, b.accepterId ?? null, b.kind as WagerKind, b.stake ?? 0, b.note) };
+      if (b.action === "accept") return { ok: true, wager: await acceptWager(b.tenantId, b.userId, b.wagerId ?? "") };
+      await withdrawWager(b.tenantId, b.userId, b.wagerId ?? "");
+      return { ok: true };
+    } catch (e) {
+      return reply.code(400).send({ ok: false, error: e instanceof Error ? e.message : String(e) });
+    }
+  });
+
+  // ---- Agent assist
+  app.post("/internal/assist/suggest", async (req) => {
+    const b = z.object({ tenantId: z.string(), campaignId: z.string(), leadId: z.string().nullable(), objection: z.string().min(1).max(600), goal: z.enum(["sale", "service"]).optional() }).parse(req.body);
+    return suggest(b.tenantId, b.campaignId, b.leadId, b.objection, b.goal ?? "sale");
+  });
+
   // ---- Chat
   const Chan = z.object({ tenantId: z.string(), userId: z.string(), channel: z.enum(["EVERYONE", "MANAGERS", "TEAM", "CAMPAIGN", "DIRECT"]), channelId: z.string().nullable() });
   app.post("/internal/chat/send", async (req, reply) => {

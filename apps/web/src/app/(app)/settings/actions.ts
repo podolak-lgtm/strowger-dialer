@@ -112,3 +112,29 @@ export async function saveFcrProfile(formData: FormData) {
   revalidatePath("/settings");
   revalidatePath("/dids");
 }
+
+/** Rights per agent level, a checkbox matrix. */
+export async function saveLevelRights(formData: FormData) {
+  const s = await requireRole("SUPERVISOR");
+  const settings = (s.tenant.settings ?? {}) as Record<string, unknown>;
+  const levelRights: Record<string, string[]> = {};
+  for (let l = 1; l <= 8; l++) levelRights[String(l)] = formData.getAll(`level${l}`).map(String);
+  await prisma.tenant.update({ where: { id: s.tenant.id }, data: { settings: { ...settings, levelRights } } });
+  await prisma.auditLog.create({ data: { tenantId: s.tenant.id, actorId: s.user.id, action: "settings.levelRights", after: levelRights } });
+  revalidatePath("/settings");
+}
+
+export async function saveGames(formData: FormData) {
+  const s = await requireRole("SUPERVISOR");
+  const settings = (s.tenant.settings ?? {}) as Record<string, unknown>;
+  const games = {
+    enabled: formData.get("enabled") === "on",
+    weeklyPoints: Math.max(0, Math.min(1_000_000, Number(formData.get("weeklyPoints")) || 10_000)),
+    maxStake: Math.max(1, Math.min(1_000_000, Number(formData.get("maxStake")) || 5_000)),
+    pokerPeriod: formData.get("pokerPeriod") === "day" ? "day" : "week",
+    pokerPrize: String(formData.get("pokerPrize") ?? "").trim().slice(0, 120),
+  };
+  await prisma.tenant.update({ where: { id: s.tenant.id }, data: { settings: { ...settings, games } } });
+  revalidatePath("/settings");
+  revalidatePath("/games");
+}

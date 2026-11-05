@@ -65,6 +65,7 @@ export async function updateCampaign(formData: FormData) {
     abandonWarnPct: Math.max(0.5, num(formData, "abandonWarnPct", 2.5)),
     abandonTimerMs: Math.max(500, Math.min(2000, num(formData, "abandonTimerMs", 2000))),
     amdEnabled: formData.get("amdEnabled") === "on",
+    voicemailNotifySms: formData.get("voicemailNotifySms") === "on",
     voicemailAction: String(formData.get("voicemailAction") ?? before.voicemailAction) as VoicemailAction,
     voicemailMode: String(formData.get("voicemailMode") ?? before.voicemailMode) as VoicemailMode,
     voicemailScript: String(formData.get("voicemailScript") ?? "").trim() || null,

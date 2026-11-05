@@ -17,3 +17,23 @@ export async function saveScript(formData: FormData) {
   await prisma.auditLog.create({ data: { tenantId: s.tenant.id, actorId: s.user.id, action: "script.save", target: campaignId, after: { version: (last?.version ?? 0) + 1 } } });
   revalidatePath(`/campaigns/${campaignId}`);
 }
+
+/** Rebuttal library: one per line, "objection | what to say". */
+export async function saveRebuttals(formData: FormData) {
+  const s = await requireRole("SUPERVISOR");
+  const campaignId = String(formData.get("campaignId"));
+  const c = await prisma.campaign.findFirst({ where: { id: campaignId, tenantId: s.tenant.id }, select: { id: true } });
+  if (!c) throw new Error("Unknown campaign");
+  const rebuttals = String(formData.get("rebuttals") ?? "")
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .map((l) => {
+      const [objection, ...rest] = l.split("|");
+      return { objection: (objection ?? "").trim(), response: rest.join("|").trim() };
+    })
+    .filter((r) => r.objection && r.response)
+    .slice(0, 200);
+  await prisma.campaign.update({ where: { id: campaignId }, data: { rebuttals } });
+  revalidatePath(`/campaigns/${campaignId}`);
+}

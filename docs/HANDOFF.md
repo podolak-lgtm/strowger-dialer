@@ -148,6 +148,54 @@ ratings, extensions), `/voicemails` (agents see their own; supervisors all).
   VoIP phone could register with the agent's SIP credentials instead,
   but nothing requires it.
 
+## Callbacks go to the agent who touched the lead; voicemail alerts; levels; assist; games (5 Nov)
+
+- **Call-back routing**: `Lead.lastAgentId` is set whenever an agent
+  dispositions a call, sends a text, or leaves a voicemail (`dispositionCall`,
+  `/internal/sms/send`, `agentVoicemailDrop`). The inbound CAMPAIGN route
+  tries `lastAgentId`, then `ownerId`, then the longest-waiting Ready agent on
+  the campaign, then anyone free. Nobody free: a callback is booked and the
+  message goes to the **personal box** of `lastAgentId ?? ownerId`
+  (`boxForUser`), else the campaign box. `ownerId` keeps its hopper meaning
+  (reserved / callback owner) and is untouched by this.
+- **Voicemail alert by text**: `recorder.ts` `alertAgent` texts the box
+  owner's `User.mobilePhone` when `User.notifyVoicemailSms` (Voicemails page,
+  "My preferences") and the call's `Campaign.voicemailNotifySms` (campaign
+  page) are both on; from the first SMS-enabled pool number, purpose
+  `vm_alert`.
+- **Agent levels 1–8**: `User.level` (People → person). Rights
+  (`AGENT_RIGHTS` in `shared/games.ts`: manual dial, send text, transfer,
+  assist screen, Everyone chat, games, leaderboard, voicemail drop, skip
+  lead) default by level (`DEFAULT_LEVEL_RIGHTS`) and are overridden per
+  tenant in Settings → Agent levels (`Tenant.settings.levelRights`).
+  `lib/rights.ts` `rightsOf(session)`: supervisors/room supervisors/admins
+  have everything; team leaders follow their level. Console actions call
+  `requireRight`; the console gets `rights` to hide what it may not do (so
+  far: games). Screens per level is the owner's next idea; the matrix is
+  where that goes.
+- **Agent assist**: `Campaign.rebuttals` (campaign page, "objection | what
+  to say" lines) shown in the console's Assist panel (assist screen; on the
+  main screen while on a call) with a search box; **Suggest** posts what the
+  person said to `/internal/assist/suggest` (`apps/engine/src/assist`,
+  Claude structured output: three things to say, why, a tone cue; goal sale
+  or service) with the script, rebuttals and lead as context. Live
+  transcript-driven cues still wait on a speech vendor.
+- **Games** (`apps/engine/src/games`, rules in `shared/games.ts`, tested):
+  `User.points` topped up to `settings.games.weeklyPoints` (10,000) every
+  Monday UTC by the scheduler; **bets** (`Wager`) between two agents on
+  NEXT_SALE / NEXT_CONTACT / NEXT_CALL (settled by the dialer hooks
+  `onDialed` / `onDispositioned` the moment either party does it) or
+  MOST_CALLS/CONTACTS/SALES_TODAY and MOST_SALES_WEEK (settled by the
+  `wagers` job after the period from `Call` rows; tie = push; open bets past
+  their period are voided and refunded). Stakes are escrowed in
+  `PointsLedger`. **Poker run** (`PokerCard`): every sale deals a card from
+  the agent's remaining deck for the period (day or week, Settings → Games);
+  `bestHand` ranks best five of N; standings on `/games` and the console
+  Games panel. Prize text is display only; paying it is the owner's.
+- Other games the owner asked for ideas on (not built): outcome bingo,
+  king of the hill, horse race, team boss raid, streak multiplier, mystery
+  box, fantasy draft; see the reply of 5 Nov.
+
 ## Carrier: Telnyx
 
 Chosen 4 Nov over Commio. Voice: a jambonz carrier named `Telnyx`

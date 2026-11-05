@@ -2,6 +2,7 @@ import { prisma } from "@strowger/db";
 import { decryptString, mintRealtimeToken } from "@strowger/shared/secrets";
 import { requireRole } from "@/lib/auth";
 import { AgentConsole, type ConsoleProps } from "./console";
+import { rightsOf } from "@/lib/rights";
 
 export default async function AgentPage({ searchParams }: PageProps<"/agent">) {
   const s = await requireRole("AGENT", "TEAM_LEADER", "SUPERVISOR");
@@ -29,6 +30,7 @@ export default async function AgentPage({ searchParams }: PageProps<"/agent">) {
     <AgentConsole
       me={{ id: s.user.id, name: s.user.firstName ?? s.user.email.split("@")[0]!, tenant: s.tenant.name }}
       roles={s.roles}
+      rights={[...rightsOf(s)]}
       campaigns={campaigns}
       sip={
         s.user.sipUsername && sipPassword

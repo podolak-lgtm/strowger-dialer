@@ -42,6 +42,7 @@ export async function agentVoicemailDrop(callId: string, agentId: string): Promi
     return { ok: false, error: e instanceof Error ? e.message : String(e) };
   }
   await prisma.call.update({ where: { id: callId }, data: { amdResult: call.amdResult ?? "MACHINE", outcome: "VOICEMAIL_DROPPED", providerData: { ...(call.providerData as object), agentDrop: true } } });
+  if (call.leadId) await prisma.lead.update({ where: { id: call.leadId }, data: { lastAgentId: agentId } }).catch(() => undefined);
   // Auto-disposition with the campaign's VM code when there is one, so the agent is back to Ready at once.
   const vm = await prisma.disposition.findFirst({ where: { campaignId: call.campaign.id, active: true, OR: [{ code: "VM" }, { code: "VOICEMAIL" }, { label: { contains: "voicemail", mode: "insensitive" } }] } });
   if (vm) {

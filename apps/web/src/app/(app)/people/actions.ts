@@ -56,7 +56,14 @@ export async function updatePerson(formData: FormData) {
   if (target.id === s.user.id && (!active || !roles.includes("ADMIN")) && s.roles.includes("ADMIN")) throw new Error("You cannot remove your own admin access");
   await prisma.user.update({
     where: { id },
-    data: { roles, active, firstName: String(formData.get("firstName") ?? "").trim() || null, lastName: String(formData.get("lastName") ?? "").trim() || null },
+    data: {
+      roles,
+      active,
+      firstName: String(formData.get("firstName") ?? "").trim() || null,
+      lastName: String(formData.get("lastName") ?? "").trim() || null,
+      level: Math.max(1, Math.min(8, Number(formData.get("level")) || target.level)),
+      mobilePhone: String(formData.get("mobilePhone") ?? "").replace(/\D/g, "").replace(/^1(\d{10})$/, "$1") || null,
+    },
   });
   await prisma.auditLog.create({ data: { tenantId: s.tenant.id, actorId: s.user.id, action: "user.update", target: id, before: { roles: target.roles, active: target.active }, after: { roles, active } } });
   revalidatePath(`/people/${id}`);

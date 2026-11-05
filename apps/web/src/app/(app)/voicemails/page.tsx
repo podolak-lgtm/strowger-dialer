@@ -1,8 +1,8 @@
 import { prisma } from "@strowger/db";
 import { formatPhone } from "@strowger/shared";
 import { hasRole, requireRole } from "@/lib/auth";
-import { Badge, Button, Empty, PageHeader, Table, Td } from "@/components/ui";
-import { setVoicemailStatus } from "../inbound/actions";
+import { Badge, Button, Empty, Field, PageHeader, Table, Td, inputClass } from "@/components/ui";
+import { saveVoicemailPrefs, setVoicemailStatus } from "../inbound/actions";
 
 export default async function VoicemailsPage() {
   const s = await requireRole("AGENT", "TEAM_LEADER", "SUPERVISOR");
@@ -16,7 +16,18 @@ export default async function VoicemailsPage() {
 
   return (
     <div>
-      <PageHeader title="Voicemails" subtitle={all ? "Every box in the workspace." : "Messages left in your box."} />
+      <PageHeader title="Voicemails" subtitle={all ? "Every box in the workspace." : "Messages left in your box. A caller who reaches your voicemail is one you spoke to, texted or left a message for: they come back to you first."} />
+      <form action={saveVoicemailPrefs} className="mb-6 flex flex-wrap items-end gap-3 rounded-lg border border-zinc-800 bg-zinc-900 p-4 text-sm">
+        <Field label="My mobile (for alerts)">
+          <input name="mobilePhone" defaultValue={s.user.mobilePhone ?? ""} className={inputClass} placeholder="3055550100" />
+        </Field>
+        <label className="flex items-center gap-2 pb-2 text-zinc-300">
+          <input type="checkbox" name="notifyVoicemailSms" defaultChecked={s.user.notifyVoicemailSms} className="h-4 w-4" /> Text me when I get a voicemail
+        </label>
+        <Button type="submit" variant="ghost">
+          Save
+        </Button>
+      </form>
       {rows.length === 0 ? (
         <Empty>No open voicemails.</Empty>
       ) : (

@@ -45,6 +45,20 @@ export default async function PersonPage({ params, searchParams }: PageProps<"/p
                 <input name="lastName" defaultValue={p.lastName ?? ""} className={inputClass} />
               </Field>
             </div>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Agent level (1–8)" hint="Rights per level are set under Settings → Agent levels.">
+                <select name="level" defaultValue={String(p.level)} className={inputClass}>
+                  {[1, 2, 3, 4, 5, 6, 7, 8].map((l) => (
+                    <option key={l} value={l}>
+                      Level {l}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Mobile (voicemail alerts by text)">
+                <input name="mobilePhone" defaultValue={p.mobilePhone ?? ""} className={inputClass} placeholder="3055550100" />
+              </Field>
+            </div>
             <fieldset className="space-y-1 text-sm">
               <legend className="text-zinc-300">Roles</legend>
               {ROLES.map((r) => (

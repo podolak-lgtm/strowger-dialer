@@ -13,7 +13,8 @@
     "./secrets": "./src/secrets.ts",
     "./cadence": "./src/cadence.ts",
     "./sms": "./src/sms.ts",
-    "./did-hygiene": "./src/did-hygiene.ts"
+    "./did-hygiene": "./src/did-hygiene.ts",
+    "./games": "./src/games.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

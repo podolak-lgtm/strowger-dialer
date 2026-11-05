@@ -9,6 +9,22 @@ import websocket from "@fastify/websocket";
 import { config } from "../config";
 import { log } from "../log";
 import { emitToAgent, emitToTenant } from "../realtime";
+import { sendSms } from "../sms/provider";
+import { formatPhone } from "@strowger/shared/phone";
+
+/** Text the box owner that a voicemail landed, when both they and the campaign want it. */
+async function alertAgent(tenantId: string, userId: string, callId: string | null, fromPhone: string, durationSec: number): Promise<void> {
+  try {
+    const [user, call] = await Promise.all([prisma.user.findFirst({ where: { id: userId, tenantId }, select: { mobilePhone: true, notifyVoicemailSms: true } }), callId ? prisma.call.findUnique({ where: { id: callId }, select: { campaignId: true, campaign: { select: { voicemailNotifySms: true } } } }) : null]);
+    if (!user?.mobilePhone || !user.notifyVoicemailSms) return;
+    if (call?.campaign && !call.campaign.voicemailNotifySms) return;
+    const from = (await prisma.callerIdNumber.findFirst({ where: { tenantId, smsEnabled: true, status: "ACTIVE" }, select: { phone: true } }))?.phone;
+    if (!from) return;
+    await sendSms({ tenantId, campaignId: call?.campaignId ?? null, leadId: null, agentId: userId, from, to: user.mobilePhone, body: `Strowger: new voicemail from ${formatPhone(fromPhone)} (${durationSec}s). Listen at ${config.WEB_PUBLIC_URL}/voicemails`, purpose: "vm_alert" });
+  } catch (e) {
+    log.warn({ err: e, userId }, "voicemail alert text failed");
+  }
+}
 
 const s3 = config.S3_ENDPOINT && config.S3_BUCKET ? new S3Client({ endpoint: config.S3_ENDPOINT, region: config.S3_REGION || "auto", forcePathStyle: true, credentials: { accessKeyId: config.S3_ACCESS_KEY_ID ?? "", secretAccessKey: config.S3_SECRET_ACCESS_KEY ?? "" } }) : null;
 
@@ -78,4 +94,5 @@ async function finish(vmId: string, pcm: Buffer, sampleRate: number): Promise<vo
   const payload = { voicemailId: vmId, boxId: vm.boxId, from: vm.fromPhone, durationSec };
   if (vm.box.ownerId) emitToAgent(vm.box.ownerId, "voicemail:new", payload);
   emitToTenant(vm.tenantId, "floor:voicemail", payload);
+  if (vm.box.ownerId) void alertAgent(vm.tenantId, vm.box.ownerId, vm.callId, vm.fromPhone, durationSec);
 }
