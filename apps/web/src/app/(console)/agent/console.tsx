@@ -359,7 +359,7 @@ export function AgentConsole(props: ConsoleProps) {
       client.on("registered", () => setPhone((p) => (p === "in-room" ? p : "registered")));
       client.on("registrationFailed", (e: Error) => {
         setPhone("error");
-        setPhoneError(e.message);
+        setPhoneError(`${e.message} (registering ${sip.username}${@sip.realm || "(no realm)"} via ${sip.server})`);
       });
       client.on("disconnected", () => setPhone("off"));
       client.on("error", (e: Error) => setPhoneError(e.message));
@@ -373,7 +373,7 @@ export function AgentConsole(props: ConsoleProps) {
       setPhone("registered");
     } catch (e) {
       setPhone("error");
-      setPhoneError(e instanceof Error ? e.message : String(e));
+      setPhoneError(`${e instanceof Error ? e.message : String(e)} (connecting to ${sip.server})`);
     }
   }, [sip, me.name]);
 
