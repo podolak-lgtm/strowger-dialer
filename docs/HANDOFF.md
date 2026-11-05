@@ -180,6 +180,19 @@ ratings, extensions), `/voicemails` (agents see their own; supervisors all).
   Claude structured output: three things to say, why, a tone cue; goal sale
   or service) with the script, rebuttals and lead as context. Live
   transcript-driven cues still wait on a speech vendor.
+- **Script templates** (owner, 5 Nov): `packages/shared/src/scripts.ts`
+  exports `SCRIPT_TEMPLATES` (`{ key, name, body, rebuttals }`), tested.
+  First entry is the National Solar Resolutions "Solar Exit" fronter
+  (opener, recording disclosure, five qualifying questions, empathy
+  lines, inline rebuttals, warm-transfer bridge, voicemail), written with
+  the console's `{{variables}}`. The campaign page's "Agent script" and
+  "Agent assist: rebuttals" cards use `TemplateTextarea`
+  (`campaigns/[id]/template-textarea.tsx`, client): a "Load a template"
+  select + button fills the textarea (confirming before it overwrites
+  text); nothing is stored until the card's Save. The rebuttal card's
+  placeholder is the first template's rebuttals in line format. Add a
+  template by appending to the array; the test checks keys are unique
+  and only known variables are used.
 - **Games** (`apps/engine/src/games`, rules in `shared/games.ts`, tested):
   `User.points` topped up to `settings.games.weeklyPoints` (10,000) every
   Monday UTC by the scheduler; **bets** (`Wager`) between two agents on
