@@ -5,6 +5,7 @@ import { encryptString, randomPassword } from "@strowger/shared/secrets";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { requireRole } from "@/lib/auth";
+import { clerkClient } from "@clerk/nextjs/server";
 
 const ROLE_VALUES: Role[] = ["ADMIN", "SUPERVISOR", "ROOM_SUPERVISOR", "TEAM_LEADER", "AGENT", "AFFILIATE"];
 
@@ -119,4 +120,27 @@ export async function setCampaignAssignment(formData: FormData) {
     });
   }
   revalidatePath(`/people/${userId}`);
+}
+
+/**
+ * Email a Clerk invitation so the person can create their sign-in. Without it
+ * the sign-in form says "Couldn't find your account": a Strowger person row is
+ * not a login until they sign up with that exact email.
+ */
+export async function sendSignInInvite(formData: FormData) {
+  const s = await requireRole("SUPERVISOR");
+  const id = String(formData.get("id"));
+  const target = await prisma.user.findFirst({ where: { id, tenantId: s.tenant.id } });
+  if (!target) throw new Error("Unknown person");
+  const base = process.env.NEXT_PUBLIC_APP_URL ?? "https://strowger.crossbar.digital";
+  let msg: string;
+  try {
+    const client = await clerkClient();
+    await client.invitations.createInvitation({ emailAddress: target.email, redirectUrl: `${base}/sign-up`, ignoreExisting: true, expiresInDays: 14 });
+    msg = `Invitation emailed to ${target.email}. The link lets them create their sign-in; they then land on their agent screen.`;
+    await prisma.auditLog.create({ data: { tenantId: s.tenant.id, actorId: s.user.id, action: "user.invite.email", target: id } });
+  } catch (e) {
+    msg = `Could not email the invitation: ${e instanceof Error ? e.message : String(e)}. They can still use "Sign up" on the sign-in page with ${target.email}.`;
+  }
+  redirect(`/people/${id}?msg=${encodeURIComponent(msg)}`);
 }

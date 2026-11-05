@@ -3,12 +3,12 @@ import { ROLES } from "@strowger/shared";
 import { notFound } from "next/navigation";
 import { hasRole, requireRole } from "@/lib/auth";
 import { Badge, Button, Card, Field, Notice, PageHeader, inputClass } from "@/components/ui";
-import { resetSipPassword, setCampaignAssignment, setUserAffiliate, updatePerson } from "../actions";
+import { resetSipPassword, sendSignInInvite, setCampaignAssignment, setUserAffiliate, updatePerson } from "../actions";
 
 export default async function PersonPage({ params, searchParams }: PageProps<"/people/[id]">) {
   const s = await requireRole("SUPERVISOR");
   const { id } = await params;
-  const { sip } = await searchParams;
+  const { sip, msg } = await searchParams;
   const [p, campaigns, affiliates] = await Promise.all([
     prisma.user.findFirst({ where: { id, tenantId: s.tenant.id }, include: { campaignAgents: true } }),
     prisma.campaign.findMany({ where: { tenantId: s.tenant.id, status: { not: "ARCHIVED" } }, orderBy: { name: "asc" } }),
@@ -21,6 +21,22 @@ export default async function PersonPage({ params, searchParams }: PageProps<"/p
   return (
     <div>
       <PageHeader title={p.firstName || p.lastName ? `${p.firstName ?? ""} ${p.lastName ?? ""}`.trim() : p.email} subtitle={p.email} />
+      {typeof msg === "string" && msg ? <Notice kind="ok">{msg}</Notice> : null}
+      {!p.clerkUserId ? (
+        <Notice kind="warn">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <span>
+              Not signed in yet. A person here is not a login until they create one with <b>{p.email}</b>: email them an invitation, or have them use &ldquo;Sign up&rdquo; on the sign-in page with that exact address.
+            </span>
+            <form action={sendSignInInvite}>
+              <input type="hidden" name="id" value={p.id} />
+              <Button type="submit" variant="ghost">
+                Email sign-in invitation
+              </Button>
+            </form>
+          </div>
+        </Notice>
+      ) : null}
 
       {shownSip ? (
         <Notice kind="warn">
