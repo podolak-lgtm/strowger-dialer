@@ -406,7 +406,12 @@ through the agent's own socket events (`agent:state.reservedLeadId`,
 `strowger.twoScreen`) opens the assist window on Log in; the open happens
 inside the click so browsers allow it, under the window name
 `strowger-assist` so there is only ever one. Scripts are versioned
-(`Script`), edited on the campaign page.
+(`Script`), edited on the campaign page. When the softphone fails to
+register, the "phone error" badge and the "Softphone error: …" banner text
+are buttons: a click drops the existing JsSIP client and calls
+`connectPhone()` again (badge reads "registering…" meanwhile); the console
+also retries once by itself 10 s after a failure, then leaves it to the
+click. The error text keeps the user, realm and server.
 
 ## Voicemail, recordings, DID hygiene (owner, 4 Nov)
 

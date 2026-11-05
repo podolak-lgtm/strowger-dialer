@@ -183,6 +183,8 @@ export function AgentConsole(props: ConsoleProps) {
 
   const clientRef = useRef<JambonzClient | null>(null);
   const roomCallRef = useRef<JambonzCall | null>(null);
+  // One automatic re-register after a failure; after that the "phone error" badge / banner is the retry.
+  const phoneAutoRetriedRef = useRef(false);
   const socketRef = useRef<Socket | null>(null);
 
   const timer = useTicker(callStatus !== "idle" && callStatus !== "ended", callStart);
@@ -356,7 +358,10 @@ export function AgentConsole(props: ConsoleProps) {
     setPhoneError(null);
     try {
       const client = createJambonzClient({ server: sip.server, username: sip.username, password: sip.password, realm: sip.realm || undefined, displayName: me.name });
-      client.on("registered", () => setPhone((p) => (p === "in-room" ? p : "registered")));
+      client.on("registered", () => {
+        phoneAutoRetriedRef.current = false;
+        setPhone((p) => (p === "in-room" ? p : "registered"));
+      });
       client.on("registrationFailed", (e: Error) => {
         setPhone("error");
         setPhoneError(`${e.message} (registering ${sip.username}@${sip.realm || "(no realm)"} via ${sip.server})`);
@@ -370,12 +375,22 @@ export function AgentConsole(props: ConsoleProps) {
       });
       await client.connect();
       clientRef.current = client;
+      phoneAutoRetriedRef.current = false;
       setPhone("registered");
     } catch (e) {
       setPhone("error");
       setPhoneError(`${e instanceof Error ? e.message : String(e)} (registering ${sip.username}@${sip.realm || "(no realm)"} via ${sip.server})`);
     }
   }, [sip, me.name]);
+
+  // Tear down whatever client exists (a failed registration may still hold one) and register afresh.
+  const retryPhone = useCallback(() => {
+    if (!sip) return;
+    clientRef.current?.disconnect();
+    clientRef.current = null;
+    setPhoneError(null);
+    void connectPhone();
+  }, [sip, connectPhone]);
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -385,8 +400,17 @@ export function AgentConsole(props: ConsoleProps) {
       clearTimeout(t);
       clientRef.current?.disconnect();
       clientRef.current = null;
+      phoneAutoRetriedRef.current = false;
     };
   }, [sip, connectPhone]);
+
+  // After a registration failure retry once, 10 s later; further retries are the agent's click.
+  useEffect(() => {
+    if (phone !== "error" || phoneAutoRetriedRef.current) return;
+    phoneAutoRetriedRef.current = true;
+    const t = setTimeout(retryPhone, 10_000);
+    return () => clearTimeout(t);
+  }, [phone, retryPhone]);
 
   const raiseLine = useCallback(async () => {
     const client = clientRef.current;
@@ -599,7 +623,7 @@ export function AgentConsole(props: ConsoleProps) {
     state === "LOGGED_OUT"
       ? { label: "OFFLINE", sub: "Pick a campaign and log in", color: "#8b8f9a" }
       : state === "LOGGED_IN"
-        ? { label: "LOGGED IN", sub: phone === "registered" ? "Click Ready to bring your line up" : phone === "connecting" ? "Registering softphone…" : phone === "error" ? `Softphone error: ${phoneError}` : "Softphone offline", color: "#f5c452" }
+        ? { label: "LOGGED IN", sub: phone === "registered" ? "Click Ready to bring your line up" : phone === "connecting" ? "Registering softphone…" : phone === "error" ? <button type="button" onClick={retryPhone} title="Click to re-register the softphone" className="text-left text-red-300 underline decoration-dotted underline-offset-2 hover:text-red-200">Softphone error: {phoneError} · click to retry</button> : "Softphone offline", color: "#f5c452" }
         : state === "READY"
           ? { label: "READY", sub: campaign?.dialMode === "PREVIEW" ? "Preview mode · pull the next lead when you are" : "Waiting for Live Call", color: "#3ddc97" }
           : state === "PAUSED"
@@ -649,9 +673,15 @@ export function AgentConsole(props: ConsoleProps) {
                 </option>
               ))}
             </select>
-            <span className={`rounded-full px-2 py-0.5 text-xs ${phone === "in-room" ? "bg-emerald-500/20 text-emerald-300" : phone === "registered" ? "bg-sky-500/20 text-sky-300" : phone === "error" ? "bg-red-500/20 text-red-300" : "bg-white/10 text-zinc-400"}`}>
-              {sip ? (phone === "in-room" ? "line up" : phone === "registered" ? "phone registered" : phone === "connecting" ? "registering…" : phone === "error" ? "phone error" : "phone offline") : "no softphone line issued"}
-            </span>
+            {sip && phone === "error" ? (
+              <button type="button" onClick={retryPhone} title={`${phoneError ?? "Softphone error"} — click to retry`} className="rounded-full bg-red-500/20 px-2 py-0.5 text-xs text-red-300 hover:bg-red-500/30">
+                phone error · retry
+              </button>
+            ) : (
+              <span className={`rounded-full px-2 py-0.5 text-xs ${phone === "in-room" ? "bg-emerald-500/20 text-emerald-300" : phone === "registered" ? "bg-sky-500/20 text-sky-300" : "bg-white/10 text-zinc-400"}`}>
+                {sip ? (phone === "in-room" ? "line up" : phone === "registered" ? "phone registered" : phone === "connecting" ? "registering…" : "phone offline") : "no softphone line issued"}
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-2">
             {billing && !billing.isPlatform && (billing.suspended || billing.critical || billing.low) ? (
