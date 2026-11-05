@@ -138,3 +138,12 @@ export async function saveGames(formData: FormData) {
   revalidatePath("/settings");
   revalidatePath("/games");
 }
+
+export async function saveTexting(formData: FormData) {
+  const s = await requireRole("SUPERVISOR");
+  const settings = (s.tenant.settings ?? {}) as Record<string, unknown>;
+  const textingEnabled = formData.get("textingEnabled") === "on";
+  await prisma.tenant.update({ where: { id: s.tenant.id }, data: { settings: { ...settings, textingEnabled } } });
+  await prisma.auditLog.create({ data: { tenantId: s.tenant.id, actorId: s.user.id, action: "settings.texting", after: { textingEnabled } } });
+  revalidatePath("/settings");
+}

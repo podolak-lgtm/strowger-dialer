@@ -77,6 +77,14 @@ export function smsProvider(): SmsProvider {
 
 /** Send and record. `from` and `to` are ten digits. */
 export async function sendSms(input: { tenantId: string; campaignId: string | null; leadId: string | null; agentId?: string | null; from: string; to: string; body: string; purpose: string | null }): Promise<SmsResult> {
+  // Workspace kill switch (owner, 5 Nov: no texting on the first test day). Opt-out confirmations still go out: carriers require them.
+  if (input.purpose !== "stop_confirm" && input.purpose !== "help_reply") {
+    const t = await prisma.tenant.findUnique({ where: { id: input.tenantId }, select: { settings: true } });
+    if (((t?.settings ?? {}) as { textingEnabled?: boolean }).textingEnabled === false) {
+      await prisma.message.create({ data: { tenantId: input.tenantId, campaignId: input.campaignId, leadId: input.leadId, agentId: input.agentId ?? null, direction: "OUTBOUND", fromPhone: input.from, toPhone: input.to, body: input.body, provider: "off", purpose: input.purpose, status: "FAILED", error: "Texting is switched off in Settings" } });
+      return { ok: false, error: "Texting is switched off in Settings" };
+    }
+  }
   const p = smsProvider();
   const row = await prisma.message.create({
     data: { tenantId: input.tenantId, campaignId: input.campaignId, leadId: input.leadId, agentId: input.agentId ?? null, direction: "OUTBOUND", fromPhone: input.from, toPhone: input.to, body: input.body, provider: p.name, purpose: input.purpose, status: "QUEUED" },

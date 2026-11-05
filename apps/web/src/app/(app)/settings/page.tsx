@@ -2,7 +2,7 @@ import { prisma } from "@strowger/db";
 import { formatPhone } from "@strowger/shared";
 import { requireRole } from "@/lib/auth";
 import { Badge, Button, Card, Field, PageHeader, Table, Td, inputClass } from "@/components/ui";
-import { addAudioAsset, addCallerIds, deleteAudioAsset, saveFcrProfile, saveGames, saveGoals, saveLevelRights, setCallerIdStatus, setCampaignAudio, uploadAudio } from "./actions";
+import { addAudioAsset, addCallerIds, deleteAudioAsset, saveFcrProfile, saveGames, saveGoals, saveLevelRights, saveTexting, setCallerIdStatus, setCampaignAudio, uploadAudio } from "./actions";
 import { AGENT_RIGHTS, LEVELS, rightsForLevel } from "@strowger/shared/games";
 import { storageConfigured } from "@/lib/storage";
 import { runRecordingExportNow, saveRecordingPolicy } from "./recording-actions";
@@ -143,6 +143,18 @@ export default async function SettingsPage() {
           ) : (
             <p className="text-sm text-zinc-500">No numbers yet. Without one, campaigns need a fixed caller ID.</p>
           )}
+        </Card>
+
+        <Card title="Texting" className="lg:col-span-2">
+          <form action={saveTexting} className="flex flex-wrap items-center gap-4 text-sm">
+            <label className="flex items-center gap-2 text-zinc-300">
+              <input type="checkbox" name="textingEnabled" defaultChecked={((s.tenant.settings ?? {}) as { textingEnabled?: boolean }).textingEnabled !== false} className="h-4 w-4" /> Outbound texting on
+            </label>
+            <span className="text-xs text-zinc-500">Off = no pre-call, missed-call, agent or alert texts leave the system (they are logged as not sent). STOP and HELP confirmations still go out; carriers require them.</span>
+            <Button type="submit" variant="ghost">
+              Save
+            </Button>
+          </form>
         </Card>
 
         <Card title="Daily goals per agent" className="lg:col-span-2">
