@@ -1,5 +1,5 @@
 import { prisma } from "@strowger/db";
-import { requireRole } from "@/lib/auth";
+import { requireClientWorkspace } from "@/lib/auth";
 import { Badge, Button, Card, Field, PageHeader, Table, Td, inputClass } from "@/components/ui";
 import { assignPerson, createRoom, createTeam, deleteRoom, deleteTeam, updateRoom, updateTeam } from "./actions";
 
@@ -8,7 +8,7 @@ function nameOf(u: { firstName: string | null; lastName: string | null; email: s
 }
 
 export default async function TeamsPage() {
-  const s = await requireRole("SUPERVISOR");
+  const s = await requireClientWorkspace("SUPERVISOR");
   const [rooms, teams, people] = await Promise.all([
     prisma.room.findMany({ where: { tenantId: s.tenant.id }, orderBy: { name: "asc" }, include: { supervisor: true, members: true, teams: { select: { id: true, name: true } } } }),
     prisma.team.findMany({ where: { tenantId: s.tenant.id }, orderBy: { name: "asc" }, include: { leader: true, room: true, members: true } }),

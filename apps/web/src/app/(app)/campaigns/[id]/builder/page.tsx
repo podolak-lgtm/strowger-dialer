@@ -1,11 +1,11 @@
 import { prisma } from "@strowger/db";
 import { parseAllowedHours } from "@strowger/shared/compliance";
 import { notFound } from "next/navigation";
-import { requireRole } from "@/lib/auth";
+import { requireClientWorkspace } from "@/lib/auth";
 import { Builder } from "./builder";
 
 export default async function BuilderPage({ params }: PageProps<"/campaigns/[id]/builder">) {
-  const s = await requireRole("SUPERVISOR");
+  const s = await requireClientWorkspace("SUPERVISOR");
   const { id } = await params;
   const [c, cadences, unattached] = await Promise.all([
     prisma.campaign.findFirst({

@@ -111,7 +111,11 @@ export async function openWorkspace(formData: FormData) {
   const t = await prisma.tenant.findUnique({ where: { id: tenantId } });
   if (!t) throw new Error("Unknown workspace");
   (await cookies()).set("strowger_ws", tenantId, { httpOnly: true, sameSite: "lax", path: "/", maxAge: 12 * 3600 });
-  await prisma.auditLog.create({ data: { tenantId, actorId: s.user.id, action: "workspace.enter" } });
+  await Promise.all([
+    prisma.auditLog.create({ data: { tenantId, actorId: s.user.id, action: "workspace.enter" } }),
+    // Remembered so /platform can offer "Continue in <client>" next sign-in.
+    prisma.user.update({ where: { id: s.user.id }, data: { lastWorkspaceId: tenantId } }),
+  ]);
   redirect("/dashboard");
 }
 

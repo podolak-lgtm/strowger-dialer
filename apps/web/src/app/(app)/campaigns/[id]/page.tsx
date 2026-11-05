@@ -1,7 +1,7 @@
 import { prisma } from "@strowger/db";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { requireRole } from "@/lib/auth";
+import { requireClientWorkspace } from "@/lib/auth";
 import { Badge, Button, Card, Field, PageHeader, Table, Td, inputClass } from "@/components/ui";
 import { deleteDialPlan, saveDialPlan, saveDisposition, updateCampaign } from "../actions";
 import { addWebhook, deleteWebhook, testWebhook, toggleWebhook } from "../webhook-actions";
@@ -19,7 +19,7 @@ function Check({ name, label, checked }: { name: string; label: string; checked:
 }
 
 export default async function CampaignPage({ params }: PageProps<"/campaigns/[id]">) {
-  const s = await requireRole("SUPERVISOR");
+  const s = await requireClientWorkspace("SUPERVISOR");
   const { id } = await params;
   const c = await prisma.campaign.findFirst({
     where: { id, tenantId: s.tenant.id },

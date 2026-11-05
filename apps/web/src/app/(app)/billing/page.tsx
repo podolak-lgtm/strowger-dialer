@@ -1,4 +1,4 @@
-import { requireRole } from "@/lib/auth";
+import { requireClientWorkspace } from "@/lib/auth";
 import { billingOverview } from "@/lib/billing-actions";
 import { money } from "@/components/billing-badge";
 import { Badge, Card, Notice, PageHeader, Table, Td } from "@/components/ui";
@@ -8,7 +8,7 @@ const cents = (c: number) => money(c);
 const rate = (millicents: number) => `${(millicents / 1000).toFixed(millicents % 1000 === 0 ? 0 : 2)}¢`;
 
 export default async function BillingPage({ searchParams }: PageProps<"/billing">) {
-  const s = await requireRole("SUPERVISOR");
+  const s = await requireClientWorkspace("SUPERVISOR");
   const sp = await searchParams;
   const period = typeof sp.period === "string" ? sp.period : undefined;
   const o = await billingOverview(period);

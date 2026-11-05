@@ -1,10 +1,10 @@
 import { prisma } from "@strowger/db";
-import { requireRole } from "@/lib/auth";
+import { requireClientWorkspace } from "@/lib/auth";
 import { Button, Card, Field, PageHeader, inputClass } from "@/components/ui";
 import { deleteSkill, saveSkill, setAgentSkill, setExtension } from "../inbound/actions";
 
 export default async function SkillsPage() {
-  const s = await requireRole("SUPERVISOR");
+  const s = await requireClientWorkspace("SUPERVISOR");
   const [skills, people] = await Promise.all([
     prisma.skill.findMany({ where: { tenantId: s.tenant.id }, orderBy: { name: "asc" } }),
     prisma.user.findMany({ where: { tenantId: s.tenant.id, active: true, roles: { hasSome: ["AGENT", "TEAM_LEADER", "SUPERVISOR"] } }, orderBy: [{ firstName: "asc" }, { email: "asc" }], include: { skills: true } }),

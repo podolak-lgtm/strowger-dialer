@@ -272,6 +272,23 @@ billed and sees `/platform`.
   only this campaign with their voicemail box and game rows; cadence
   profiles and audio copied by name; system DNC copied). Agents who also
   work other campaigns stay and are dropped from the moved campaign.
+- **Bare platform vs. inside a client** (owner, 5 Nov: opened Campaigns in
+  the platform workspace, saw a blank page, thought the app broke). The
+  platform tenant holds no campaigns, so with no client opened
+  (`isBarePlatform(session)` in `lib/auth.ts`: `tenant.isPlatform` and no
+  `actingFrom`) the `(app)` layout shows only Platform, People and
+  Settings plus a "pick a client" note, and every campaign-scoped page
+  (dashboard, campaigns, lists, leads, numbers, dids, inbound, cadences,
+  affiliates, compliance, voicemails, games, reports, teams, skills,
+  billing, partner, and their `[id]` pages) calls `requireClientWorkspace`
+  instead of `requireRole` / `requireSession`, which redirects to
+  `/platform?pick=1` there. Inside a client (`actingFrom` set) a
+  full-width sky band sits above the nav and content with the client's
+  name, its balance badge and "Back to platform"; the sidebar shows the
+  client name with "via <platform>". `openWorkspace` also stores
+  `User.lastWorkspaceId` (migration `last_workspace`) so `/platform`
+  offers "Continue in <client>" (the remembered one, else the only one);
+  it never enters a client silently. Non-platform tenants are untouched.
 - **NSR split** (migration `nsr_workspace`, 5 Nov): the original workspace
   became the client "National Solar Resolutions" (everything in it stayed:
   numbers, campaign, agents, carrier ids, settings) and the owner's admin

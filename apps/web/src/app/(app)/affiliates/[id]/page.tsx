@@ -1,12 +1,12 @@
 import { prisma } from "@strowger/db";
 import { LEAD_FIELDS, LEAD_FIELD_LABELS, POST_REQUIRED_FIELDS } from "@strowger/shared";
 import { notFound } from "next/navigation";
-import { requireRole } from "@/lib/auth";
+import { requireClientWorkspace } from "@/lib/auth";
 import { Badge, Button, Card, Field, Notice, PageHeader, inputClass } from "@/components/ui";
 import { rotateAffiliateKey, saveFieldMapping, setAffiliateActive, setDefaultList } from "../actions";
 
 export default async function AffiliatePage({ params, searchParams }: PageProps<"/affiliates/[id]">) {
-  const s = await requireRole("SUPERVISOR");
+  const s = await requireClientWorkspace("SUPERVISOR");
   const { id } = await params;
   const { key } = await searchParams;
   const a = await prisma.affiliate.findFirst({

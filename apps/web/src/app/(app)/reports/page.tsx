@@ -1,5 +1,5 @@
 import { prisma } from "@strowger/db";
-import { requireRole } from "@/lib/auth";
+import { requireClientWorkspace } from "@/lib/auth";
 import { Button, Card, Field, PageHeader, Table, Td, inputClass } from "@/components/ui";
 import { byAgent, byDisposition, callRows, parseRange, summarize } from "@/lib/reports";
 
@@ -7,7 +7,7 @@ const hm = (sec: number) => `${Math.floor(sec / 3600)}h ${String(Math.floor((sec
 const day = (d: Date) => d.toISOString().slice(0, 10);
 
 export default async function ReportsPage({ searchParams }: PageProps<"/reports">) {
-  const s = await requireRole("SUPERVISOR", "ROOM_SUPERVISOR", "TEAM_LEADER");
+  const s = await requireClientWorkspace("SUPERVISOR", "ROOM_SUPERVISOR", "TEAM_LEADER");
   const q = await searchParams;
   const range = parseRange(s.tenant.id, q);
   const [rows, campaigns] = await Promise.all([callRows(range), prisma.campaign.findMany({ where: { tenantId: s.tenant.id }, orderBy: { name: "asc" }, select: { id: true, name: true } })]);

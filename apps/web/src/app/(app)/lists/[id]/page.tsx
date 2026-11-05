@@ -1,14 +1,14 @@
 import { prisma } from "@strowger/db";
 import { formatPhone } from "@strowger/shared";
 import { notFound } from "next/navigation";
-import { requireRole } from "@/lib/auth";
+import { requireClientWorkspace } from "@/lib/auth";
 import { Badge, Button, Card, Field, PageHeader, Table, Td, inputClass } from "@/components/ui";
 import { updateList } from "../actions";
 import { rememberedMappings } from "../import-actions";
 import { UploadWizard } from "./upload-wizard";
 
 export default async function ListPage({ params }: PageProps<"/lists/[id]">) {
-  const s = await requireRole("SUPERVISOR");
+  const s = await requireClientWorkspace("SUPERVISOR");
   const { id } = await params;
   const [list, campaigns, remembered, cadences] = await Promise.all([
     prisma.list.findFirst({

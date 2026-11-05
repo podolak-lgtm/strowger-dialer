@@ -1,11 +1,11 @@
 import { prisma } from "@strowger/db";
 import Link from "next/link";
-import { requireRole } from "@/lib/auth";
+import { requireClientWorkspace } from "@/lib/auth";
 import { Badge, Button, Card, Empty, Field, PageHeader, Table, Td, inputClass } from "@/components/ui";
 import { createAffiliate } from "./actions";
 
 export default async function AffiliatesPage() {
-  const s = await requireRole("SUPERVISOR");
+  const s = await requireClientWorkspace("SUPERVISOR");
   const affiliates = await prisma.affiliate.findMany({
     where: { tenantId: s.tenant.id },
     orderBy: { createdAt: "desc" },

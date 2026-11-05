@@ -1,12 +1,12 @@
 import { prisma } from "@strowger/db";
 import { parseDayparts } from "@strowger/shared/cadence";
 import { notFound } from "next/navigation";
-import { requireRole } from "@/lib/auth";
+import { requireClientWorkspace } from "@/lib/auth";
 import { Button, Card, Field, PageHeader, inputClass } from "@/components/ui";
 import { deleteCadence, saveCadence } from "../actions";
 
 export default async function CadencePage({ params }: PageProps<"/cadences/[id]">) {
-  const s = await requireRole("SUPERVISOR");
+  const s = await requireClientWorkspace("SUPERVISOR");
   const { id } = await params;
   const isNew = id === "new";
   const c = isNew ? null : await prisma.cadenceProfile.findFirst({ where: { id, tenantId: s.tenant.id } });

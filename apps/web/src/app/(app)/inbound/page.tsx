@@ -1,7 +1,7 @@
 import { prisma } from "@strowger/db";
 import { formatPhone } from "@strowger/shared";
 import Link from "next/link";
-import { requireRole } from "@/lib/auth";
+import { requireClientWorkspace } from "@/lib/auth";
 import { Badge, Button, Card, Field, PageHeader, Table, inputClass } from "@/components/ui";
 import { deleteBox, deleteIvr, deleteQueue, saveBox, saveIvr, saveQueue, setNumberRoute } from "./actions";
 
@@ -10,7 +10,7 @@ type IvrOption = { digit: string; label?: string; action: string; targetId?: str
 type Req = { skillId: string; minLevel: number };
 
 export default async function InboundPage() {
-  const s = await requireRole("SUPERVISOR");
+  const s = await requireClientWorkspace("SUPERVISOR");
   const t = s.tenant.id;
   const [numbers, ivrs, queues, boxes, skills, people, campaigns, audio] = await Promise.all([
     prisma.callerIdNumber.findMany({ where: { tenantId: t }, orderBy: { phone: "asc" }, include: { ivr: true, queue: true, routeUser: true, campaign: true } }),
