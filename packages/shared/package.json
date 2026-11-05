@@ -14,7 +14,8 @@
     "./cadence": "./src/cadence.ts",
     "./sms": "./src/sms.ts",
     "./did-hygiene": "./src/did-hygiene.ts",
-    "./games": "./src/games.ts"
+    "./games": "./src/games.ts",
+    "./scripts": "./src/scripts.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
