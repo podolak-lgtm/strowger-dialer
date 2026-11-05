@@ -27,6 +27,11 @@ function Att({ a }: { a: string | null }) {
   return <span className={`inline-grid h-6 w-6 place-items-center rounded text-xs font-bold ${t}`}>{a ?? "–"}</span>;
 }
 
+/** Within the last six hours. */
+function isRecent(iso: string): boolean {
+  return Date.now() - new Date(iso).getTime() < 6 * 3600_000;
+}
+
 function ago(d: Date | null): string {
   if (!d) return "never";
   const m = Math.round((Date.now() - d.getTime()) / 60_000);
@@ -62,7 +67,7 @@ export default async function DidsPage({ searchParams }: PageProps<"/dids">) {
   const vendor = provider().name;
   const unregistered = all.filter((n) => !n.registeredAt).length;
   const fcrRun = await registryProgress();
-  const showRun = fcrRun && (fcrRun.state === "running" || Date.now() - new Date(fcrRun.finishedAt ?? fcrRun.startedAt).getTime() < 6 * 3600_000);
+  const showRun = fcrRun && (fcrRun.state === "running" || isRecent(fcrRun.finishedAt ?? fcrRun.startedAt));
   const resting = all.filter((n) => n.restUntil && n.restUntil > new Date()).length;
   const dialsToday = all.reduce((n, x) => n + x.usedToday, 0);
   const shortToday = all.reduce((n, x) => n + x.shortCallsToday, 0);
