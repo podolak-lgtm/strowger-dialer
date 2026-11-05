@@ -667,8 +667,10 @@ export function AgentConsole(props: ConsoleProps) {
   }, [isLeader]);
 
   // Softphone: register once; the nailed-up leg is raised when the agent goes Ready.
+  // Only the main window owns the phone (5 Nov: the assist pop-up raised its own line, the engine hung up the main
+  // window's, and the pop-up's audio was blocked by the browser, so calls went silent).
   const connectPhone = useCallback(async () => {
-    if (!sip || clientRef.current) return;
+    if (!sip || clientRef.current || screen !== "main") return;
     setPhone("connecting");
     setPhoneError(null);
     try {
@@ -696,7 +698,7 @@ export function AgentConsole(props: ConsoleProps) {
       setPhone("error");
       setPhoneError(`${e instanceof Error ? e.message : String(e)} (registering ${sip.username}@${sip.realm || "(no realm)"} via ${sip.server})`);
     }
-  }, [sip, me.name]);
+  }, [sip, me.name, screen]);
 
   // Tear down whatever client exists (a failed registration may still hold one) and register afresh.
   const retryPhone = useCallback(() => {
@@ -729,6 +731,7 @@ export function AgentConsole(props: ConsoleProps) {
 
   const raiseLine = useCallback(async () => {
     const client = clientRef.current;
+    if (screen !== "main") throw new Error("Go Ready from the main console window: this window has no phone");
     if (!client || !sip) throw new Error("Softphone is not registered");
     if (roomCallRef.current) return;
     const call = sip.applicationSid ? client.callApplication(sip.applicationSid) : client.call("ready");
@@ -744,7 +747,7 @@ export function AgentConsole(props: ConsoleProps) {
       setNotice(`Line failed: ${e.reason ?? e.code ?? "unknown"}`);
     });
     call.on("mute", (m: boolean) => setMuted(m));
-  }, [sip]);
+  }, [sip, screen]);
 
   const dropLine = useCallback(() => {
     roomCallRef.current?.hangup();
