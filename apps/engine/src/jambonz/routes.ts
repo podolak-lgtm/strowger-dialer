@@ -166,6 +166,16 @@ export async function registerJambonzRoutes(app: FastifyInstance): Promise<void>
       log.info({ userId }, "agent softphone called in without a session");
       return [{ verb: "hangup" }];
     }
+    // One line per agent. A second tab or device calling in replaces the
+    // first; two legs in the same room play each other's microphone back
+    // (5 Nov: "I'm hearing myself" while Paused, two registrations a second apart).
+    if (live.agentCallSid && live.agentCallSid !== b.call_sid) {
+      log.info({ userId, oldSid: live.agentCallSid, newSid: b.call_sid }, "agent line replaced; hanging up the older leg");
+      await redis.del(`agentsid:${live.agentCallSid}`);
+      await jambonz.calls.update(live.agentCallSid, { call_status: "completed" }).catch((e) => log.warn({ err: e, userId }, "older agent leg hangup failed"));
+      // Let the old room end before the new leg starts a fresh one.
+      await new Promise((r) => setTimeout(r, 500));
+    }
     await patchAgent(userId, { agentCallSid: b.call_sid, state: live.state === "PAUSED" ? "PAUSED" : "READY" });
     await redis.set(`agentsid:${b.call_sid}`, userId, "EX", 24 * 3600);
     return [
@@ -356,7 +366,9 @@ export async function registerJambonzRoutes(app: FastifyInstance): Promise<void>
     if (q.callId && b.event === "join") await leadCallBridged(q.callId);
     if (q.agentId && b.event === "end") {
       const live = await getAgent(q.agentId);
-      if (live) await patchAgent(q.agentId, { agentCallSid: null, state: live.currentCallId ? "WRAP_UP" : "LOGGED_IN" });
+      // A room ending for a leg that was already replaced says nothing about the current line.
+      const stale = Boolean(live?.agentCallSid && b.call_sid && b.call_sid !== live.agentCallSid);
+      if (live && !stale) await patchAgent(q.agentId, { agentCallSid: null, state: live.currentCallId ? "WRAP_UP" : "LOGGED_IN" });
     }
     return reply.send({});
   });

@@ -606,6 +606,12 @@ room, supervisors and admins everything (`floorStats`).
   AMD hook's reply **replaces** the current verb, so a machine verdict →
   the campaign's voicemail action even after the join. (Until 5 Nov the
   call was parked on a pause for the verdict; see the voicemail note above.)
+- **One line per agent.** When a softphone calls in for a user whose
+  `agentCallSid` is another live leg, `agentLegVerbs` hangs the older leg
+  up first (a second tab or device in the same room plays the shared
+  microphone back: "hearing myself" while Paused, 5 Nov). The room-`end`
+  event for a replaced leg is ignored when its `call_sid` is not the
+  current line.
 - The conference, conference-exit and call-status hooks log their bodies
   (`"conference event"`, `"conference exit for a lead leg"`, `"call
   status"`): the first place to read when a call has no audio.
