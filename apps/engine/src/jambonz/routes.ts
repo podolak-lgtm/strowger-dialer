@@ -351,7 +351,8 @@ export async function registerJambonzRoutes(app: FastifyInstance): Promise<void>
   // ── Conference status (join/leave) ──────────────────────────────────────
   app.post("/jambonz/conf", async (req, reply) => {
     const q = req.query as { callId?: string; agentId?: string; tenantId?: string };
-    const b = req.body as { event?: string; members?: number };
+    const b = req.body as { event?: string; members?: number; conference_sid?: string; call_sid?: string; call_status?: string };
+    log.info({ query: q, event: b.event, members: b.members, callSid: b.call_sid, callStatus: b.call_status }, "conference event");
     if (q.callId && b.event === "join") await leadCallBridged(q.callId);
     if (q.agentId && b.event === "end") {
       const live = await getAgent(q.agentId);
@@ -360,7 +361,12 @@ export async function registerJambonzRoutes(app: FastifyInstance): Promise<void>
     return reply.send({});
   });
 
-  app.post("/jambonz/conf-exit", async (_req, reply) => reply.send([{ verb: "hangup" }]));
+  app.post("/jambonz/conf-exit", async (req, reply) => {
+    const q = req.query as { callId?: string };
+    const b = req.body as { call_sid?: string; call_status?: string; reason?: string; conference_sid?: string };
+    log.info({ query: q, callSid: b.call_sid, callStatus: b.call_status, reason: b.reason }, "conference exit for a lead leg");
+    return reply.send([{ verb: "hangup" }]);
+  });
 
   // ── Inbound center hooks ────────────────────────────────────────────────
   app.post("/jambonz/ivr", async (req, reply) => {
@@ -417,6 +423,7 @@ export async function registerJambonzRoutes(app: FastifyInstance): Promise<void>
     const tag = (b.customerData ?? {}) as { kind?: string; callId?: string };
     const callId = tag.kind === "lead" ? tag.callId : await callIdForSid(b.call_sid);
     const status = b.call_status ?? "";
+    log.info({ callId, kind: tag.kind, callSid: b.call_sid, status, sipStatus: b.sip_status, duration: b.duration, direction: b.direction }, "call status");
     if (callId) {
       if (status === "ringing" || status === "early-media") {
         await prisma.call.updateMany({ where: { id: callId, ringingAt: null }, data: { ringingAt: new Date() } });
