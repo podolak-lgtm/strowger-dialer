@@ -341,7 +341,12 @@ export default async function SettingsPage() {
 
         <Card title="Free Caller Registry profile" className="lg:col-span-2">
           {(() => {
-            const f = ((s.tenant.settings ?? {}) as { fcr?: Record<string, string | { feedbackId?: string; at?: string; count?: number }> }).fcr ?? {};
+            const saved = ((s.tenant.settings ?? {}) as { fcr?: Record<string, string | { feedbackId?: string; at?: string; count?: number }> }).fcr ?? {};
+            // Owner, 5 Nov: the first business on the platform. Pre-filled so the owner only presses Save.
+            const seed: Record<string, string> = /national solar/i.test(s.tenant.name)
+              ? { contactEmail: "numbers@crossbar.digital", companyName: "National Solar Resolutions", address1: "75 South Broadway", address2: "4th Floor", city: "White Plains", state: "NY", zip: "10601", website: "https://nationalsolarresolutions.com", contactPhone: "8336770003", category: "telemarketing", callCount: "10001" }
+              : {};
+            const f = { ...seed, ...saved };
             const v = (k: string) => (typeof f[k] === "string" ? (f[k] as string) : "");
             const last = f.lastSubmission as { feedbackId?: string; at?: string; count?: number } | undefined;
             return (
