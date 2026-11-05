@@ -79,10 +79,18 @@ export async function registerJambonzRoutes(app: FastifyInstance): Promise<void>
 
   app.addHook("onRequest", async (req, reply) => {
     if (!req.url.startsWith("/jambonz/")) return;
+    if (req.url.startsWith("/jambonz/alerts")) return; // account alerts: logged, never acted on, signed with a different key
     if (!signatureOk(req)) {
       log.warn({ url: req.url }, "jambonz webhook signature rejected");
       reply.code(401).send({ error: "bad signature" });
     }
+  });
+
+  // ── Account alerts (jambonz portal → Settings → Alert notifications → JSON webhook) ──
+  // Every alert the portal shows (rejected registrations, webhook failures, carrier trouble) lands in the engine log.
+  app.post("/jambonz/alerts", async (req, reply) => {
+    log.warn({ alert: req.body }, "jambonz alert");
+    return reply.send({ ok: true });
   });
 
   // ── Registration ────────────────────────────────────────────────────────
