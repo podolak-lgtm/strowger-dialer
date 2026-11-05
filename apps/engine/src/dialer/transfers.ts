@@ -169,6 +169,8 @@ export async function transferLegVerbs(transferId: string): Promise<Verb[]> {
   const verbs: Verb[] = [];
   // Only the destination hears this: it is on its own leg, not yet in any room.
   if (whisper) verbs.push({ verb: "say", text: whisper });
+  // jambonz skips a `say` silently when the account has no text-to-speech vendor (5 Nov: "she did not hear the whisper").
+  log.info({ transferId: t.id, mode: t.kind, whisper: whisper ?? null, whisperOn: t.destination.whisperOn }, "transfer leg answered: whisper then join");
   if (t.kind === "COLD") {
     verbs.push({
       verb: "conference",
