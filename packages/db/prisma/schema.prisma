@@ -1164,6 +1164,14 @@ model PlatformRates {
   telnyxBalanceCents        Int?
   telnyxBalanceAt           DateTime?
   telnyxSyncedAt            DateTime?
+  /// Shared costs (fixed monthly with no client, and unmatched vendor usage) are split across clients by this: MINUTES | SEATS.
+  costAllocation            String    @default("MINUTES")
+  /// Also spread vendor usage that matched no client (AMD, conference legs, unmatched records) by the same rule.
+  allocateUnattributed      Boolean   @default(true)
+  /// A client whose margin % is under this shows red on /platform.
+  marginFloorPct            Int       @default(40)
+  /// Text to speech (Cartesia through jambonz) per 1,000 characters spoken, our cost.
+  ttsCostMillicentsPerKChar Int       @default(4000)
   /// Referral commission, percent of the referred client's paid usage (owner, 6 Nov: 5%).
   referralPct               Decimal   @default(5.00) @db.Decimal(5, 2)
   trialDays                 Int       @default(7)
@@ -1244,11 +1252,19 @@ model VendorUsage {
   /// sip-trunking, messaging, amd, conference, ai.classify, ai.assist, …
   kind           String
   quantity       Decimal  @default(1) @db.Decimal(14, 4)
+  /// Rounded to the cent for old readers; costMillicents is the figure every total uses.
   costCents      Int
+  /// What we paid in thousandths of a cent, so a fraction-of-a-cent AI request is not lost.
+  costMillicents Int      @default(0)
+  /// api = pulled from the vendor's records; usage = counted per event (tokens, minutes, characters) × a list price or rate;
+  /// estimate = our rate until the vendor's record is matched (replaced then); fixed = a monthly cost entered on /platform.
+  source         String   @default("usage")
   day            String
+  /// Telnyx record id, or our own key for rows we write (est:call:<id>, did:<numberId>:<YYYY-MM>, fixed:<id>:<YYYY-MM>).
   vendorRecordId String?
   refId          String?
   createdAt      DateTime @default(now())
+  updatedAt      DateTime @default(now()) @updatedAt
 
   @@unique([vendor, vendorRecordId])
   @@index([vendor, day])
@@ -1963,4 +1979,45 @@ model AuditLog {
   createdAt DateTime @default(now())
 
   @@index([tenantId, createdAt])
+}
+
+/// A cost with no usable API (Railway, Clerk, the jambonz.cloud plan, a scrub subscription, 10DLC fees), entered on /platform.
+/// Written into VendorUsage once per month it covers (source "fixed"); with a tenant it is that client's, else shared.
+model VendorFixedCost {
+  id           String   @id @default(cuid())
+  /// The client this belongs to; null = shared, allocated across clients by PlatformRates.costAllocation.
+  tenantId     String?
+  vendor       String
+  /// subscription, hosting, auth, 10dlc, …
+  kind         String   @default("subscription")
+  label        String
+  amountCents  Int
+  /// MONTHLY (every month from startPeriod to endPeriod) | ONCE (startPeriod only).
+  cadence      String   @default("MONTHLY")
+  startPeriod  String
+  endPeriod    String?
+  note         String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([vendor])
+}
+
+/// A vendor account: its balance (from the API where there is one, else entered), when it was read, and the warning line.
+model VendorAccount {
+  vendor          String    @id
+  balanceCents    Int?
+  /// api | manual
+  balanceSource   String?
+  balanceAt       DateTime?
+  lowBalanceCents Int?
+  usageSyncedAt   DateTime?
+  /// What the vendor's own report says for the current month (Anthropic cost report, jambonz upcoming invoice), for reconciliation.
+  reportedPeriod  String?
+  reportedCents   Int?
+  reportedAt      DateTime?
+  lastError       String?
+  lastErrorAt     DateTime?
+  note            String?
+  updatedAt       DateTime  @updatedAt
 }

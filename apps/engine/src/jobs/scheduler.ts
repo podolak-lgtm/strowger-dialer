@@ -12,9 +12,8 @@ import { syncPendingOrders } from "../provision";
 import { idlePoolCheck, restoreRestedNumbers } from "../provision/plan";
 import { endExpiredRuns, settlePeriodWagers, weeklyTopUp } from "../games";
 import { chargeAllDids, suspendOverdue } from "../billing";
-import { syncTelnyxCosts } from "../billing/vendor";
+import { syncVendorBalances, syncVendorUsage } from "../billing/vendor";
 import { endLapsedReferrers, monthlyReferralCredits, trialTick } from "../referrals";
-import { config } from "../config";
 
 interface Job {
   name: string;
@@ -82,6 +81,14 @@ async function dailyIdlePool(): Promise<void> {
   await redis.set("job:idlePool:last", today);
 }
 
+/** Once a day: vendor balances and the vendors' own month totals (Telnyx, jambonz, the Anthropic cost report). */
+async function dailyVendorBalances(): Promise<void> {
+  const today = new Date().toISOString().slice(0, 10);
+  if ((await redis.get("job:vendorBalances:last")) === today) return;
+  await syncVendorBalances();
+  await redis.set("job:vendorBalances:last", today);
+}
+
 /** First tick of each month: referral credits for the month before (idempotent per relationship and month). */
 async function monthlyReferrals(): Promise<void> {
   const key = new Date().toISOString().slice(0, 7);
@@ -115,7 +122,9 @@ const JOBS: Job[] = [
   { name: "referralCredits", everyMs: 30 * 60_000, run: monthlyReferrals },
   { name: "referralLapse", everyMs: 60 * 60_000, run: dailyReferralLapse },
   { name: "trials", everyMs: 15 * 60_000, run: () => trialTick() },
-  { name: "telnyxCosts", everyMs: 60 * 60_000, run: () => (config.TELNYX_API_KEY ? syncTelnyxCosts("last_2_days") : Promise.resolve()) },
+  // Hourly: Telnyx detail records, number rental, fixed costs into the month (every pull keyed by vendor record id).
+  { name: "vendorUsage", everyMs: 60 * 60_000, run: () => syncVendorUsage("last_2_days") },
+  { name: "vendorBalances", everyMs: 60 * 60_000, run: dailyVendorBalances },
 ];
 
 export function startScheduler(): () => void {

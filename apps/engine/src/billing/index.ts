@@ -6,7 +6,7 @@ import { prisma, type BillingCategory, type BillingKind, type Prisma } from "@st
 import { inTrial } from "@strowger/shared/referrals";
 import { estimateAiTokens, type AiTurn } from "@strowger/shared/inbound";
 import { minutesOf } from "@strowger/shared/assist";
-import { recordAiUsage } from "./vendor";
+import { estimateCallCost, estimateMessageCost, keepUsage, recordAiUsage } from "./vendor";
 import { log } from "../log";
 import { emitToTenant } from "../realtime";
 import { lowBalanceEmail, suspendedEmail } from "../email";
@@ -169,15 +169,18 @@ export async function chargeSeatIfNew(tenantId: string, userId: string): Promise
 
 /** Talk time on a call, by the second at the per-minute rate; our cost from the platform rates. */
 export async function chargeCallMinutes(callId: string): Promise<void> {
-  const call = await prisma.call.findUnique({ where: { id: callId }, select: { tenantId: true, direction: true, answeredAt: true, endedAt: true } });
+  const call = await prisma.call.findUnique({ where: { id: callId }, select: { tenantId: true, direction: true, answeredAt: true, endedAt: true, vendorRecordId: true } });
   if (!call?.answeredAt || !call.endedAt) return;
-  const t = await prisma.tenant.findUnique({ where: { id: call.tenantId }, select: { isPlatform: true } });
-  if (!t || t.isPlatform) return;
   const seconds = Math.max(0, (call.endedAt.getTime() - call.answeredAt.getTime()) / 1000);
   if (seconds < 1) return;
   const minutes = Math.round((seconds / 60) * 10000) / 10000;
-  const [a, r] = await Promise.all([ensureAccount(call.tenantId), rates()]);
+  const r = await rates();
   const costPerMin = call.direction === "INBOUND" ? r.telnyxInMillicentsPerMin : r.telnyxOutMillicentsPerMin;
+  // Our cost at the rate until Telnyx's record is matched (the platform's own test calls cost us too).
+  if (!call.vendorRecordId) await estimateCallCost(callId, call.tenantId, minutes, minutes * costPerMin);
+  const t = await prisma.tenant.findUnique({ where: { id: call.tenantId }, select: { isPlatform: true } });
+  if (!t || t.isPlatform) return;
+  const a = await ensureAccount(call.tenantId);
   await charge({ tenantId: call.tenantId, category: "MINUTES", quantity: minutes, unitMillicents: a.perMinuteMillicents, costCents: Math.round((minutes * costPerMin) / 1000), note: `${call.direction === "INBOUND" ? "Inbound" : call.direction === "TRANSFER" ? "Transfer leg" : "Outbound"} call, ${Math.round(seconds)} s`, refId: callId });
 }
 
@@ -195,13 +198,12 @@ export async function chargeAiMinutes(callId: string, systemChars: number): Prom
   const minutes = Math.round((call.aiSeconds / 60) * 10000) / 10000;
   const [a, r, t] = await Promise.all([ensureAccount(call.tenantId), rates(), prisma.tenant.findUnique({ where: { id: call.tenantId }, select: { isPlatform: true } })]);
   const costCents = Math.round((minutes * r.aiMinuteCostMillicents) / 1000);
-  const day = new Date().toISOString().slice(0, 10);
-  await prisma.vendorUsage.create({ data: { vendor: "jambonz", kind: "ai.minutes", quantity: minutes, costCents, day, tenantId: call.tenantId, refId: callId } }).catch((e) => log.warn({ err: e }, "ai minutes usage record failed"));
+  await keepUsage({ vendor: "jambonz", kind: "ai.minutes", recordId: `ai:${callId}`, quantity: minutes, millicents: minutes * r.aiMinuteCostMillicents, tenantId: call.tenantId, refId: callId, source: "usage" }).catch((e) => log.warn({ err: e }, "ai minutes usage record failed"));
   const turns = ((call.aiTranscript as Array<{ role: "caller" | "ai"; text: string }> | null) ?? []).map((x) => ({ ...x, at: 0 })) as AiTurn[];
   const tokens = estimateAiTokens(systemChars, turns);
   const vendor = call.queue?.aiLlmVendor ?? "anthropic";
   if (vendor === "anthropic") await recordAiUsage(call.tenantId, "ai.voice", call.queue?.aiModel ?? "claude-sonnet-5-5", tokens, callId);
-  else await prisma.vendorUsage.create({ data: { vendor, kind: "ai.voice", quantity: tokens.input_tokens + tokens.output_tokens, costCents: 0, day, tenantId: call.tenantId, refId: callId } }).catch(() => undefined);
+  else await keepUsage({ vendor, kind: "ai.voice", quantity: tokens.input_tokens + tokens.output_tokens, millicents: 0, tenantId: call.tenantId, refId: callId, source: "usage" }).catch(() => undefined);
   if (t?.isPlatform) return;
   await charge({ tenantId: call.tenantId, category: "AI", quantity: minutes, unitMillicents: a.aiMinutePriceMillicents, costCents, note: `AI answer, ${call.aiSeconds} s`, refId: callId });
 }
@@ -217,15 +219,13 @@ export async function chargeAiMinutes(callId: string, systemChars: number): Prom
  */
 export async function chargeTranscription(i: { callId: string; tenantId: string; vendor: string; leadSeconds: number; agentSeconds: number; assistCalls: number }): Promise<void> {
   const [a, r, t] = await Promise.all([ensureAccount(i.tenantId), rates(), prisma.tenant.findUnique({ where: { id: i.tenantId }, select: { isPlatform: true } })]);
-  const day = new Date().toISOString().slice(0, 10);
   const legs: Array<[string, number]> = [["stt.lead", i.leadSeconds], ["stt.agent", i.agentSeconds]];
   let costCents = 0;
   for (const [kind, seconds] of legs) {
     if (seconds <= 0) continue;
     const minutes = minutesOf(seconds);
-    const cost = Math.round((minutes * r.sttMinuteCostMillicents) / 1000);
-    costCents += cost;
-    await prisma.vendorUsage.create({ data: { vendor: i.vendor, kind, quantity: minutes, costCents: cost, day, tenantId: i.tenantId, refId: i.callId } }).catch((e) => log.warn({ err: e }, "stt usage record failed"));
+    costCents += Math.round((minutes * r.sttMinuteCostMillicents) / 1000);
+    await keepUsage({ vendor: i.vendor, kind, recordId: `${kind}:${i.callId}`, quantity: minutes, millicents: minutes * r.sttMinuteCostMillicents, tenantId: i.tenantId, refId: i.callId, source: "usage" }).catch((e) => log.warn({ err: e }, "stt usage record failed"));
   }
   if (t?.isPlatform) return;
   const callMinutes = minutesOf(i.leadSeconds);
@@ -235,9 +235,12 @@ export async function chargeTranscription(i: { callId: string; tenantId: string;
 
 /** A number's monthly fee: our cost plus the markup. Once per number per month. */
 export async function chargeDidMonthly(tenantId: string, numberId: string, phone: string): Promise<void> {
+  const p = period();
+  // Our cost: the holder's (pool numbers included), platform or not. recordNumberCosts catches any missed hourly.
+  const rr = await rates();
+  await keepUsage({ vendor: "telnyx", kind: "number", recordId: `did:${numberId}:${p}`, millicents: rr.didMonthlyCents * 1000, day: `${p}-01`, tenantId, refId: numberId, source: "usage" }).catch((e) => log.warn({ err: e }, "number cost record failed"));
   const t = await prisma.tenant.findUnique({ where: { id: tenantId }, select: { isPlatform: true } });
   if (!t || t.isPlatform) return;
-  const p = period();
   if (await prisma.billingEntry.findFirst({ where: { tenantId, category: "DID", period: p, refId: numberId } })) return;
   const [a, r] = await Promise.all([ensureAccount(tenantId), rates()]);
   const price = Math.round(r.didMonthlyCents * (1 + a.didMarkupPct / 100));
@@ -252,16 +255,20 @@ export async function chargeAllDids(): Promise<void> {
 
 export async function chargeScrub(tenantId: string, records: number): Promise<void> {
   if (records <= 0) return;
+  const r = await rates();
+  await keepUsage({ vendor: "subscriberverify", kind: "scrub", quantity: records, millicents: records * r.scrubCostMillicents, tenantId, source: "usage" }).catch((e) => log.warn({ err: e }, "scrub cost record failed"));
   const t = await prisma.tenant.findUnique({ where: { id: tenantId }, select: { isPlatform: true } });
   if (!t || t.isPlatform) return;
-  const [a, r] = await Promise.all([ensureAccount(tenantId), rates()]);
+  const a = await ensureAccount(tenantId);
   await charge({ tenantId, category: "SCRUB", quantity: records, unitMillicents: r.scrubCostMillicents + a.scrubMarginMillicents, costCents: Math.round((records * r.scrubCostMillicents) / 1000), note: `Litigator / DNC scrub, ${records} records` });
 }
 
 export async function chargeSms(tenantId: string, messageId: string, segments = 1): Promise<void> {
+  const r = await rates();
+  await estimateMessageCost(messageId, tenantId, segments, segments * r.smsCostMillicents);
   const t = await prisma.tenant.findUnique({ where: { id: tenantId }, select: { isPlatform: true } });
   if (!t || t.isPlatform) return;
-  const [a, r] = await Promise.all([ensureAccount(tenantId), rates()]);
+  const a = await ensureAccount(tenantId);
   await charge({ tenantId, category: "SMS", quantity: segments, unitMillicents: a.smsPriceMillicents, costCents: Math.round((segments * r.smsCostMillicents) / 1000), note: "Text message", refId: messageId });
 }
 

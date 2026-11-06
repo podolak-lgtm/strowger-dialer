@@ -40,6 +40,8 @@ export const config = readEnv({
   JAMBONZ_SBC_FQDN: z.string().optional(),
   /** AI read of inbound text replies (opt-out intent, callback requests). Unset = keyword matching only. */
   ANTHROPIC_API_KEY: z.string().optional(),
+  /** Admin API key (sk-ant-admin…) for the month's cost report on /platform. Optional: per-request costs are recorded without it. */
+  ANTHROPIC_ADMIN_KEY: z.string().optional(),
   SMS_AI_MODEL: z.string().default("claude-opus-5-5"),
   /** Below this confidence an AI-detected opt-out is flagged for review, not applied. */
   SMS_AI_OPT_OUT_THRESHOLD: z.coerce.number().min(0).max(1).default(0.8),
