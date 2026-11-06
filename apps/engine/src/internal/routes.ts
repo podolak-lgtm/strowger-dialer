@@ -35,7 +35,8 @@ import { config } from "../config";
 import { billingOverview, billingStatus, chargeSeatIfNew, outboundAllowed, platformOverview, rates, recordPayment, trialSeatRefusal } from "../billing";
 import { changeAttribution, endReferral, referralsForTenant, referralsPlatform, runReferralCredits, saveReferralSettings, setReferrerOverride, signup, signupOffer } from "../referrals";
 import { log } from "../log";
-import { syncTelnyxCosts, vendorSpend } from "../billing/vendor";
+import { saveVendorAccount, syncAllVendors, vendorSpend } from "../billing/vendor";
+import { deleteFixedCost, platformAccounting, saveAccountingSettings, saveFixedCost } from "../billing/accounting";
 import { createWorkspace, moveCampaign } from "../workspaces";
 import { clampOutcomesPerCard, parsePokerRule, type WagerKind } from "@strowger/shared/games";
 
@@ -397,10 +398,35 @@ export async function registerInternalRoutes(app: FastifyInstance): Promise<void
   app.post("/internal/billing/vendor/sync", async (req, reply) => {
     const b = z.object({ dateRange: z.string().optional() }).parse(req.body ?? {});
     try {
-      return { ok: true, ...(await syncTelnyxCosts(b.dateRange ?? "last_3_days")) };
+      return { ok: true, ...(await syncAllVendors(b.dateRange ?? "last_7_days")) };
     } catch (e) {
       return reply.code(400).send({ ok: false, error: e instanceof Error ? e.message : String(e) });
     }
+  });
+  // ---- Accounting (owner, 6 Nov): P&L per client, vendor spend, balances, fixed costs
+  const period = z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/);
+  app.get("/internal/billing/accounting", async (req) => platformAccounting(z.object({ period: period.optional() }).parse(req.query).period));
+  app.post("/internal/billing/fixed-costs", async (req, reply) => {
+    const b = z.object({ id: z.string().nullable().optional(), tenantId: z.string().nullable(), vendor: z.string().min(1).max(40), kind: z.string().max(40), label: z.string().min(1).max(120), amountCents: z.number().int().min(0).max(100_000_000), cadence: z.enum(["MONTHLY", "ONCE"]), startPeriod: period, endPeriod: period.nullable(), note: z.string().max(500).nullable() }).parse(req.body);
+    try {
+      return { ok: true, id: await saveFixedCost(b) };
+    } catch (e) {
+      return reply.code(400).send({ ok: false, error: e instanceof Error ? e.message : String(e) });
+    }
+  });
+  app.post("/internal/billing/fixed-costs/delete", async (req) => {
+    await deleteFixedCost(z.object({ id: z.string() }).parse(req.body).id);
+    return { ok: true };
+  });
+  app.post("/internal/billing/accounting/settings", async (req) => {
+    const b = z.object({ costAllocation: z.enum(["MINUTES", "SEATS"]), allocateUnattributed: z.boolean(), marginFloorPct: z.number().int().min(0).max(100), ttsCostMillicentsPerKChar: z.number().int().min(0).max(1_000_000) }).parse(req.body);
+    await saveAccountingSettings(b);
+    return { ok: true };
+  });
+  app.post("/internal/billing/vendor-account", async (req) => {
+    const b = z.object({ vendor: z.string().min(1).max(40), lowBalanceCents: z.number().int().min(0).nullable(), balanceCents: z.number().int().nullable().optional() }).parse(req.body);
+    await saveVendorAccount(b);
+    return { ok: true };
   });
   app.post("/internal/workspaces", async (req, reply) => {
     const b = z.object({ name: z.string().min(2).max(80), adminEmail: z.string().email().nullable() }).parse(req.body);

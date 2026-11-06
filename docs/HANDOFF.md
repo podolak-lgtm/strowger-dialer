@@ -743,6 +743,88 @@ billed and sees `/platform`.
   until 6 Nov) into `VendorUsage` with the tenant. The scrub has no price API: rate only. `/platform` shows
   the Telnyx balance, vendor spend by kind, unattributed total, and a
   "pull last 7 days" button (`/internal/billing/vendor/sync`).
+- **Accounting (owner, 6 Nov: "make sure all the APIs are grabbing
+  everything … I'd like to know by client if we're profitable and that our
+  margins are good")**. Superseded parts of the bullet above: the balance
+  moved to `VendorAccount`, the job is now two jobs, and every cost (not only
+  Telnyx and AI) is in `VendorUsage`.
+  - **One cost model**: `VendorUsage` (migration `vendor_accounting`) has
+    `costMillicents` (the figure every total uses; `costCents` kept rounded
+    for old readers; an AI classification is a hundredth of a cent and used
+    to round to 0), `source` and `updatedAt`. Sources: **api** (the vendor's
+    records), **usage** (counted per event × list price or our rate),
+    **estimate** (a call or text at our rate until its Telnyx record
+    matches; `est:call:<id>` / `est:msg:<id>`, deleted on match, so no double
+    count), **fixed** (entered on /platform). Every write goes through
+    `keepUsage` keyed by (vendor, vendorRecordId); our own keys:
+    `did:<numberId>:<YYYY-MM>`, `fixed:<costId>:<YYYY-MM>`,
+    `invoice:<YYYY-MM>`, `ai:<callId>`, `stt.lead:<callId>`. The migration
+    back-filled estimates, number rental and scrubs from `BillingEntry`.
+  - **Each vendor's source**: Telnyx calls / texts / AMD, conferences,
+    call control, recordings, media, STT/TTS, WebRTC = API (detail records,
+    hourly), balance = API (`/v2/balance`, daily); numbers = usage (one row
+    per Telnyx number per month at `didMonthlyCents`, to the tenant holding
+    it, pool numbers included, `recordNumberCosts` hourly and at
+    provisioning); 10DLC and Number Reputation fees = fixed, per client.
+    jambonz.cloud plan = fixed, unless `GET /v1/Invoices` (the api-server's
+    Stripe upcoming-invoice route) answers for our key and no jambonz fixed
+    cost is entered, then the invoice is the month's cost (source api);
+    `GET /v1/Accounts/:sid` gives the plan name. **Neither jambonz call has
+    been seen working with our key**: the error, if any, shows on /platform →
+    Balances. AI answer speech = usage (`aiMinuteCostMillicents`). Anthropic =
+    usage per request (unchanged prices); with `ANTHROPIC_ADMIN_KEY` the
+    Admin API cost report (`/v1/organizations/cost_report`, legacy Usage and
+    Cost API, cents as decimal strings) gives Anthropic's own month total,
+    shown for reconciliation only (it may include other usage on the same
+    org). No API exposes Anthropic credit balance. Cartesia TTS = usage:
+    an `onSend` hook on `/jambonz/*` counts the characters in each reply's
+    `say` verbs (`spokenChars`), priced at `ttsCostMillicentsPerKChar`
+    (default 4¢ / 1,000; jambonz caches repeated prompts so it errs high; set
+    0 if a flat Cartesia plan is entered as a fixed cost instead). Live
+    transcription STT = usage (`sttMinuteCostMillicents`). SubscriberVerify =
+    usage (records × `scrubCostMillicents`). Railway, Clerk, Vercel = fixed.
+    The Free Caller Registry is free.
+  - **Fixed costs**: `VendorFixedCost` (vendor, kind, label, amount, MONTHLY
+    or ONCE, start/end month, optional tenant). `materialiseFixedCosts`
+    writes one row per month covered up to the current month (on save and
+    hourly, so a new month appears by itself) and removes rows for months no
+    longer covered or deleted costs. Seeded at $0 (not counted): jambonz
+    plan, Railway, Clerk, Cartesia plan; the owner fills in the amounts.
+  - **Attribution and allocation**: per call / text / number / AI request /
+    STT / TTS / scrub to the call's or message's tenant; a fixed cost with a
+    tenant is that client's. Shared = fixed costs with no tenant, and (when
+    `allocateUnattributed`, default on) vendor usage that matched no tenant.
+    **Rule**: `PlatformRates.costAllocation` MINUTES (default: billed talk
+    minutes in the month) or SEATS (seats billed in the month; trial clients
+    have none); largest-remainder split in `@strowger/shared/accounting`
+    (`allocate`, `buildPnl`, tested); a client with no weight carries
+    nothing, and what nobody carries is shown as "not carried by any client".
+    The platform tenant's own costs (test calls, its numbers) are shown as
+    its own line, never spread.
+  - **Revenue** = the month's `BillingEntry` CHARGE total per client (what
+    they were charged; trial usage included, flagged "trial").
+  - **/platform** is tabs (`?tab=`): **Accounting** (top row revenue, cost =
+    every vendor row in the month, gross margin, margin %; Profit by client,
+    sortable client table `platform/pnl-table.tsx`, red under
+    `marginFloorPct` (40) or a loss with no revenue; vendor table by vendor,
+    kind and source for the month and the one before, "Sync now" =
+    `/internal/billing/vendor/sync` = usage for 7 days + balances; Vendor
+    balances with the last sync, any error, a warning line per vendor, and a
+    typed balance for vendors with no balance API), **Clients** (balances,
+    payments, open, new workspace, move campaign), **Costs** (fixed costs,
+    allocation rule, margin floor, TTS rate, fallback rates), **Plans**,
+    **Referrals**. A month picker (`?period=YYYY-MM`) sits beside the tabs;
+    a low vendor balance warns on every tab. CSV: `/api/platform/export?
+    what=clients|vendors&period=` (platform admins only; formula-safe).
+    Engine: `GET /internal/billing/accounting`, `POST
+    /internal/billing/fixed-costs`(`/delete`), `/accounting/settings`,
+    `/vendor-account`.
+  - **Jobs**: `vendorUsage` hourly (Telnyx records for 2 days, number
+    rental, fixed costs), `vendorBalances` daily (Telnyx balance, jambonz,
+    Anthropic report). A vendor that fails records `lastError` and does not
+    stop the others. Not done: Railway's GraphQL usage API (needs a Railway
+    token on the engine; fixed for now), Telnyx invoices for number fees
+    (numbers use the rate), referral credits as a cost line.
 - **Client workspaces** (`apps/engine/src/workspaces`): `/platform` creates
   a workspace (tenant + billing account + optional admin user by email),
   **Open** sets the `strowger_ws` cookie so a platform admin works inside

@@ -23,7 +23,8 @@
     "./referrals": "./src/referrals.ts",
     "./nav": "./src/nav.ts",
     "./inbound": "./src/inbound/index.ts",
-    "./assist": "./src/assist/index.ts"
+    "./assist": "./src/assist/index.ts",
+    "./accounting": "./src/accounting.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

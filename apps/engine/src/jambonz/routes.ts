@@ -12,6 +12,8 @@
 // offer, the survey) may speak with `say` (inbound/common.ts), and they go
 // quiet when jambonz reports a speech failure.
 import { createHmac, timingSafeEqual } from "node:crypto";
+import { spokenChars } from "@strowger/shared/accounting";
+import { recordTts } from "../billing/vendor";
 import { prisma } from "@strowger/db";
 import { decryptString, sipDigestMatches } from "@strowger/shared/secrets";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
@@ -83,6 +85,19 @@ export async function registerJambonzRoutes(app: FastifyInstance): Promise<void>
     } catch (e) {
       done(e as Error, undefined);
     }
+  });
+
+  // Text to speech is billed by the character (Cartesia through jambonz) and jambonz reports none back: count what each hook reply asks it to say.
+  app.addHook("onSend", async (req, reply, payload) => {
+    if (!req.url.startsWith("/jambonz/") || reply.statusCode !== 200 || typeof payload !== "string" || !payload.includes('"say"')) return payload;
+    try {
+      const chars = spokenChars(JSON.parse(payload));
+      const sid = (req.body as { call_sid?: string } | undefined)?.call_sid;
+      if (chars > 0) void recordTts(sid, chars).catch((e) => log.warn({ err: e }, "tts usage record failed"));
+    } catch {
+      // not JSON verbs
+    }
+    return payload;
   });
 
   app.addHook("onRequest", async (req, reply) => {
