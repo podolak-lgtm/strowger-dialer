@@ -791,6 +791,35 @@ export function AgentConsole(props: ConsoleProps) {
     roomCallRef.current = null;
   }, []);
 
+  // A reload or a closed tab kills this browser's half of the line, but the engine still holds the old
+  // leg as the agent's line, so the next call joins a room nobody hears (6 Nov: "I couldn't hear him").
+  // Hang the leg up as the page goes away, and on load raise a fresh line whenever the engine says the
+  // agent has one this page does not own (the engine hangs up the stale leg when the new one joins).
+  useEffect(() => {
+    if (screen !== "main") return;
+    const bye = () => roomCallRef.current?.hangup();
+    window.addEventListener("pagehide", bye);
+    return () => window.removeEventListener("pagehide", bye);
+  }, [screen]);
+  const reraisedRef = useRef(false);
+  useEffect(() => {
+    if (screen !== "main" || phone !== "registered" || roomCallRef.current || reraisedRef.current) return;
+    if (!agent?.agentCallSid || !["READY", "PAUSED", "ON_CALL", "WRAP_UP"].includes(agent.state)) return;
+    reraisedRef.current = true;
+    // Mid-call, a fresh line would end the old room and drop the lead: say so instead of reconnecting.
+    if (agent.state === "ON_CALL" || agent.state === "WRAP_UP") {
+      const t = setTimeout(() => setNotice("The page reloaded, so your headset is no longer on this call. Disposition it, then click Ready to reconnect."), 0);
+      return () => clearTimeout(t);
+    }
+    const t = setTimeout(() => {
+      setNotice("Reconnecting your line after the page reload…");
+      raiseLine()
+        .then(() => setNotice("Line reconnected."))
+        .catch((e: unknown) => setNotice(`Line not reconnected: ${e instanceof Error ? e.message : String(e)}. Click Ready.`));
+    }, 0);
+    return () => clearTimeout(t);
+  }, [screen, phone, agent?.agentCallSid, agent?.state, raiseLine]);
+
   // Actions
   const run = async (fn: () => Promise<void>) => {
     setBusy(true);

@@ -969,6 +969,15 @@ room, supervisors and admins everything (`floorStats`).
   AMD hook's reply **replaces** the current verb, so a machine verdict →
   the campaign's voicemail action even after the join. (Until 5 Nov the
   call was parked on a pause for the verdict; see the voicemail note above.)
+- **A reload leaves a ghost line** (6 Nov, "I couldn't hear him"): the
+  browser's half of the nailed-up leg dies with the page, but the engine
+  still holds the old `agentCallSid`, so the next lead joins a room nobody
+  hears. The console now hangs the leg up on `pagehide`, and once the
+  softphone registers it raises a fresh line by itself when the engine
+  says the agent is READY or PAUSED with a line this page does not own
+  (the engine's one-line rule hangs up the stale leg). ON_CALL or WRAP_UP
+  shows a notice instead, since a new line would end the room and drop the
+  lead.
 - **Only the main console window has a phone.** The two-screen assist
   window (`/agent?screen=assist`) neither registers the softphone nor
   raises the line; Ready there says to use the main window. Until 5 Nov
