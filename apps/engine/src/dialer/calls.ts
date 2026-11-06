@@ -189,7 +189,7 @@ export async function leadCallEnded(callId: string, status: string, sipStatus: n
   if (call.agentId && !agentLeft) {
     const agent = await getAgent(call.agentId);
     if (agent && agent.currentCallId === callId) {
-      await patchAgent(call.agentId, { state: agent.agentCallSid ? "WRAP_UP" : "LOGGED_IN" });
+      await patchAgent(call.agentId, { state: "WRAP_UP" });
     }
     emitToAgent(call.agentId, "call:update", { callId, status: "ended", outcome });
   }
@@ -291,8 +291,13 @@ export async function dispositionCall(input: DispositionInput): Promise<{ ok: tr
 
   const agent = await getAgent(input.actorId);
   if (agent && agent.currentCallId === call.id) {
-    if (input.keepWrapUp) await patchAgent(input.actorId, { state: agent.agentCallSid ? "WRAP_UP" : "LOGGED_IN" });
-    else await patchAgent(input.actorId, { currentCallId: null, state: agent.agentCallSid ? "READY" : "LOGGED_IN" });
+    if (input.keepWrapUp) await patchAgent(input.actorId, { state: "WRAP_UP" });
+    else {
+      // Back to Ready only when the agent was Ready before the call. A call they dialled by hand (from Paused, or
+      // from Ready, which pauses them) returns them to Paused, so the dialer never starts calling behind them.
+      const paused = agent.afterCall === "PAUSED" || !agent.agentCallSid;
+      await patchAgent(input.actorId, { currentCallId: null, afterCall: null, state: paused ? "PAUSED" : "READY", pauseReason: paused ? (agent.agentCallSid ? (agent.pauseReason ?? "Manual dial") : "Line dropped") : null });
+    }
   }
   emitToTenant(call.tenantId, "floor:call", { callId: call.id, status: "dispositioned", code: disp.code });
   void onDispositioned(call.tenantId, call.campaign.id, input.actorId, call.id, { isSale: disp.isSale, isContact: disp.isContact, code: disp.code });

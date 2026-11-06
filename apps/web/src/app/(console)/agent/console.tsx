@@ -854,12 +854,12 @@ export function AgentConsole(props: ConsoleProps) {
   const goReady = () =>
     run(async () => {
       if (!agent) throw new Error("Log in first");
+      // Ask for Ready first: with the line already up the agent is Ready now; without it the engine makes them
+      // Ready the moment the line joins. Agents log in paused (owner, 6 Nov), so the line alone never readies them.
+      const r = await agentSetState("READY");
+      if (!r.ok) throw new Error(r.error);
+      setAgent(r.agent);
       await raiseLine();
-      // The engine flips to READY when the leg joins the room; nudge in case it was paused.
-      if (agent.agentCallSid) {
-        const r = await agentSetState("READY");
-        if (!r.ok) throw new Error(r.error);
-      }
     });
 
   const pause = (reason: string) =>
@@ -1201,7 +1201,7 @@ export function AgentConsole(props: ConsoleProps) {
         : state === "READY"
           ? { label: "READY", sub: `${campaign?.dialMode === "PREVIEW" ? "Preview mode · pull the next lead when you are" : "Waiting for Live Call"} · click to pause`, color: "#3ddc97" }
           : state === "PAUSED"
-            ? { label: "PAUSED", sub: `${agent?.pauseReason ?? "On break"} · click to resume`, color: "#f5c452" }
+            ? { label: "PAUSED", sub: `${agent?.pauseReason ?? "On break"} · ${agent?.agentCallSid ? "click to go Ready" : phone === "registered" ? "click to bring your line up and go Ready" : phone === "connecting" ? "registering softphone…" : "softphone offline"}`, color: "#f5c452" }
             : state === "ON_CALL"
               ? screener
                 ? { label: "SCREENER", sub: screenerStep === "go" ? "They picked up: go" : screenerStep === "say" ? "Their phone is screening: read the script" : "Stay quiet until they pick up", color: "#fbbf24" }

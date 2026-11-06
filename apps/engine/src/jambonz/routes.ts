@@ -181,7 +181,10 @@ export async function registerJambonzRoutes(app: FastifyInstance): Promise<void>
       // Let the old room end before the new leg starts a fresh one.
       await new Promise((r) => setTimeout(r, 500));
     }
-    await patchAgent(userId, { agentCallSid: b.call_sid, state: live.state === "PAUSED" ? "PAUSED" : "READY" });
+    // The line joining makes the agent READY only when they asked for it; otherwise they keep their state
+    // (paused stays paused, a replaced line mid-call stays on the call).
+    const kept = live.state === "READY" || live.state === "ON_CALL" || live.state === "WRAP_UP" || live.state === "PAUSED" ? live.state : "PAUSED";
+    await patchAgent(userId, { agentCallSid: b.call_sid, state: live.readyOnLine ? "READY" : kept, readyOnLine: false, ...(live.readyOnLine ? { pauseReason: null } : kept === "PAUSED" && !live.pauseReason ? { pauseReason: "Not ready yet" } : {}) });
     await redis.set(`agentsid:${b.call_sid}`, userId, "EX", 24 * 3600);
     return [
       {
@@ -386,7 +389,7 @@ export async function registerJambonzRoutes(app: FastifyInstance): Promise<void>
       const live = await getAgent(q.agentId);
       // A room ending for a leg that was already replaced says nothing about the current line.
       const stale = Boolean(live?.agentCallSid && b.call_sid && b.call_sid !== live.agentCallSid);
-      if (live && !stale) await patchAgent(q.agentId, { agentCallSid: null, state: live.currentCallId ? "WRAP_UP" : "LOGGED_IN" });
+      if (live && !stale) await patchAgent(q.agentId, { agentCallSid: null, ...(live.currentCallId ? { state: "WRAP_UP" as const } : { state: "PAUSED" as const, pauseReason: "Line dropped" }) });
     }
     return reply.send({});
   });
@@ -493,7 +496,7 @@ export async function registerJambonzRoutes(app: FastifyInstance): Promise<void>
       if (userId) {
         const live = await getAgent(userId);
         if (live && live.agentCallSid === b.call_sid) {
-          await patchAgent(userId, { agentCallSid: null, state: live.currentCallId ? "WRAP_UP" : "LOGGED_IN" });
+          await patchAgent(userId, { agentCallSid: null, ...(live.currentCallId ? { state: "WRAP_UP" as const } : { state: "PAUSED" as const, pauseReason: "Line dropped" }) });
         }
         await redis.del(`agentsid:${b.call_sid}`);
       }

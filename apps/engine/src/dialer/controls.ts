@@ -115,9 +115,13 @@ export async function manualDial(tenantId: string, agentId: string, raw: string)
   } else {
     await prisma.lead.update({ where: { id: lead.id }, data: { status: "DIALING", ownerId: agentId } });
   }
-  await patchAgent(agentId, { reservedLeadId: lead.id });
+  // A manual dial takes the agent out of the dialer's pool first (owner, 6 Nov: "make sure when they're manually
+  // dialing, the system's not outbound dialing at the same time"): Ready becomes Paused (Manual dial), and the
+  // disposition returns them to Paused, not Ready.
+  const wasReady = live.state === "READY";
+  await patchAgent(agentId, { reservedLeadId: lead.id, afterCall: "PAUSED", ...(wasReady ? { state: "PAUSED" as const, pauseReason: "Manual dial" } : {}) });
   const r = await dialLeadForAgent(campaign, lead, agentId);
-  if (!r.ok) await patchAgent(agentId, { reservedLeadId: null });
+  if (!r.ok) await patchAgent(agentId, { reservedLeadId: null, afterCall: null, ...(wasReady ? { state: "READY" as const, pauseReason: null } : {}) });
   return r;
 }
 

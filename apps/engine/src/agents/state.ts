@@ -17,6 +17,10 @@ export interface AgentLive {
   reservedLeadId: string | null;
   pauseReason: string | null;
   since: number;
+  /** Ready was asked for before the line was up: the line joining makes the agent READY (owner, 6 Nov: log in paused, then go Ready). */
+  readyOnLine?: boolean;
+  /** Where the agent goes after dispositioning the current call: PAUSED for a call they dialled by hand (owner, 6 Nov). */
+  afterCall?: "PAUSED" | null;
 }
 
 const key = (userId: string) => `agent:${userId}`;

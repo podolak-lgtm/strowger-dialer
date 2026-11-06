@@ -70,11 +70,15 @@ export async function registerInternalRoutes(app: FastifyInstance): Promise<void
       userId,
       campaignId,
       sessionId: session.id,
-      state: existing?.agentCallSid ? "READY" : "LOGGED_IN",
+      // Owner, 6 Nov: an agent logs in paused and goes Ready on purpose; nothing dials for them before that.
+      // A re-login mid-call keeps the call's state.
+      state: existing?.currentCallId && (existing.state === "ON_CALL" || existing.state === "WRAP_UP") ? existing.state : "PAUSED",
       agentCallSid: existing?.agentCallSid ?? null,
       currentCallId: existing?.currentCallId ?? null,
       reservedLeadId: null,
-      pauseReason: null,
+      pauseReason: existing?.currentCallId ? (existing.pauseReason ?? null) : "Not ready yet",
+      readyOnLine: false,
+      afterCall: existing?.currentCallId ? (existing.afterCall ?? null) : null,
       since: Date.now(),
     });
     return { ok: true, agent: live };
@@ -89,9 +93,13 @@ export async function registerInternalRoutes(app: FastifyInstance): Promise<void
     const { userId, state, reason } = Ids.extend({ state: z.enum(["READY", "PAUSED"]), reason: z.string().optional() }).parse(req.body);
     const live = await getAgent(userId);
     if (!live) return { ok: false, error: "Not logged in" };
-    if (state === "READY" && !live.agentCallSid) return { ok: false, error: "Phone line is not up yet" };
     if (live.state === "ON_CALL") return { ok: false, error: "On a call" };
-    const next = await patchAgent(userId, { state, pauseReason: state === "PAUSED" ? (reason ?? "Break") : null });
+    // Ready with no line yet: stay as you are and go Ready the moment the line joins (the console raises it next).
+    if (state === "READY" && !live.agentCallSid) {
+      const next = await patchAgent(userId, { readyOnLine: true });
+      return { ok: true, agent: next };
+    }
+    const next = await patchAgent(userId, { state, pauseReason: state === "PAUSED" ? (reason ?? "Break") : null, readyOnLine: false });
     return { ok: true, agent: next };
   });
 

@@ -985,6 +985,16 @@ room, supervisors and admins everything (`floorStats`).
   AMD hook's reply **replaces** the current verb, so a machine verdict →
   the campaign's voicemail action even after the join. (Until 5 Nov the
   call was parked on a pause for the verdict; see the voicemail note above.)
+- **Agent states (owner, 6 Nov)**: log in → **PAUSED** ("Not ready yet");
+  the agent goes Ready on purpose, pauses with a reason, and nothing dials
+  for them otherwise. Ready with no line sets `AgentLive.readyOnLine`, and
+  the line joining (`agentLegVerbs`) makes them READY; without that flag the
+  line keeps their state (paused stays paused). A **manual dial** pauses a
+  Ready agent first ("Manual dial") and sets `afterCall: "PAUSED"`; the
+  disposition returns them to PAUSED, never READY, so the pacer (which only
+  counts READY agents off a call: `readyAgents`) never dials behind a hand
+  dial. A dropped line is PAUSED ("Line dropped"); LOGGED_IN is no longer
+  set. The console asks for READY before raising the line.
 - **A reload leaves a ghost line** (6 Nov, "I couldn't hear him"): the
   browser's half of the nailed-up leg dies with the page, but the engine
   still holds the old `agentCallSid`, so the next lead joins a room nobody
