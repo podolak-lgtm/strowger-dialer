@@ -89,6 +89,18 @@ export default async function BillingPage({ searchParams }: PageProps<"/billing"
                   <td className="py-2 text-right tabular-nums">{rate(b.rates.aiMinutePriceMillicents)} / minute</td>
                 </tr>
               ) : null}
+              {b.rates.transcriptMinutePriceMillicents ? (
+                <tr>
+                  <td className="py-2 text-zinc-400">Live transcription, per transcribed call minute</td>
+                  <td className="py-2 text-right tabular-nums">{rate(b.rates.transcriptMinutePriceMillicents)} / minute</td>
+                </tr>
+              ) : null}
+              {b.rates.assistCallPriceMillicents ? (
+                <tr>
+                  <td className="py-2 text-zinc-400">Live assist, per suggested line</td>
+                  <td className="py-2 text-right tabular-nums">{rate(b.rates.assistCallPriceMillicents)} each</td>
+                </tr>
+              ) : null}
             </tbody>
           </table>
           <p className="mt-3 text-xs text-zinc-500">Supervisors and admins are free: only agents who log in to the dialer count as seats.</p>

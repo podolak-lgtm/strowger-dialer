@@ -92,7 +92,7 @@ export async function ringUser(tenantId: string, userId: string, callId: string,
   const call = await prisma.call.findUnique({ where: { id: callId } });
   if (live && isFree(live)) {
     await claimAgent(live, callId, call?.leadId ?? null, { direct: true, from: fromPhone });
-    return joinAgentVerbs(callId, tenantId, userId);
+    return await joinAgentVerbs(callId, tenantId, userId);
   }
   const box = await boxForUser(tenantId, userId);
   return voicemailVerbs(box, callId, fromPhone);
@@ -144,7 +144,7 @@ export async function routeInbound(callSid: string, fromRaw: string, toRaw: stri
           const d = await audio(number.campaign.disclosureAudioId);
           if (d) verbs.push({ verb: "play", url: d });
         }
-        return [...verbs, ...joinAgentVerbs(call.id, tenantId, agent.userId)];
+        return [...verbs, ...(await joinAgentVerbs(call.id, tenantId, agent.userId))];
       }
       if (lead && campaignId) {
         await prisma.callback.create({ data: { tenantId, campaignId, leadId: lead.id, agentId: lead.ownerId ?? null, scope: lead.ownerId ? "AGENT" : "CAMPAIGN", dueAt: new Date(), note: "Called in while nobody was free" } });

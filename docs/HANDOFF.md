@@ -535,7 +535,8 @@ speaking with no `TTS_VOICE` set.
   person said to `/internal/assist/suggest` (`apps/engine/src/assist`,
   Claude structured output: three things to say, why, a tone cue; goal sale
   or service) with the script, rebuttals and lead as context. Live
-  transcript-driven cues still wait on a speech vendor.
+  transcript-driven cues are built (6 Nov): see "Live transcription and
+  agent assist".
 - **Script templates** (owner, 5 Nov): `packages/shared/src/scripts.ts`
   exports `SCRIPT_TEMPLATES` (`{ key, name, body, rebuttals }`), tested.
   First entry is the National Solar Resolutions "Solar Exit" fronter
@@ -736,9 +737,10 @@ billed and sees `/platform`.
   `VendorUsage` (unique on vendor + record id, so re-pulls are idempotent);
   matched calls/texts get `vendorCostCents` and their `BillingEntry`
   `costCents` is replaced with `costSource: "telnyx"`. AI requests
-  (classify, assist) are costed from `res.usage` at Opus 5.5 list price
-  ($4/$20 per MTok, cache read $0.20, write $5) into `VendorUsage` with
-  the tenant. The scrub has no price API: rate only. `/platform` shows
+  (classify, assist) are costed from `res.usage` at the model's list price
+  (Opus 5.5 $4/$20 per MTok, cache read $0.20, write $5; Sonnet 5.5 $2/$10;
+  Haiku 5.5 $0.10/$0.50; the Sonnet and Haiku rows read $3/$15 and $1/$5
+  until 6 Nov) into `VendorUsage` with the tenant. The scrub has no price API: rate only. `/platform` shows
   the Telnyx balance, vendor spend by kind, unattributed total, and a
   "pull last 7 days" button (`/internal/billing/vendor/sync`).
 - **Client workspaces** (`apps/engine/src/workspaces`): `/platform` creates
@@ -1425,6 +1427,228 @@ effect (React Compiler rule). The left panel is now a compact summary
 (name, phone, local time, Dial/Skip); Call Dispositions now lives under
 the call controls (above). On the assist screen the current-lead row in
 Lead Queue expands (`CollapsibleLeadCard`) to the same editor.
+
+## Live transcription and agent assist (6 Nov)
+
+Both sides of a call transcribed live, coaching from what the customer says,
+compliance checks on what the agent says, and an after-call summary.
+**Built and checked offline against a fake jambonz; not yet on a live call.
+Everything is off by default and calls are unchanged while it is off.**
+Engine `apps/engine/src/assist/live.ts` (legs, hooks, state, compliance,
+debounce) and `assist/coach.ts` (Claude); pure rules in
+`packages/shared/src/assist/` (`match.ts` rebuttal matcher, `script.ts`
+script steps, `live.ts` transcript caps, limits, readiness, notes; tested)
+and `packages/shared/src/compliance/live-call.ts` (rules as data, tested).
+Migration `20261107010000_live_transcription_assist`.
+
+- **Legs (decision).** A Strowger call is two jambonz calls in one room
+  (`agent-<userId>`): the lead's leg and the agent's nailed-up leg. Each is
+  transcribed on its own with `channel: 1` (the leg's own voice) and labelled
+  by leg: CUSTOMER from the lead's, AGENT from the agent's. Dual-channel on
+  one leg was not used: jambonz's channel 2 on a conference member is what
+  that member hears, i.e. the room's mix (the agent, plus a barging
+  supervisor and a warm-transfer destination), and a leg carries one
+  background transcribe. Two legs is simpler and labels itself.
+  - **Lead leg**: `config.transcribe` (`interim: true`, `punctuation`,
+    `channel: 1`, the account's STT vendor, `SCREENER_STT_LANGUAGE`) in the
+    verbs that answer it: `leadAnsweredVerbs` (outbound, from the answer, so
+    the first "hello?" is there) and `joinAgentVerbs` (inbound bridge, queue
+    callbacks; now async). Hook `/jambonz/transcript?callId=&leg=lead`.
+    **Screener detection shares it**: when live transcription is on for the
+    call, its `config` replaces the screener-only one and the same hook runs
+    the screener check on finals in the first 12 s (interim results are
+    skipped there); with it off the screener path is exactly as before.
+  - **Agent leg**: REST cannot start a transcription on a live call (only
+    `transcribe_status: pause | resume`, SDK `rest-*.d.ts`), and the agent's
+    leg is up all session. So `agentLegVerbs` prepends `config.transcribe`
+    (hook `/jambonz/transcript?agentId=&leg=agent`) **only when the
+    workspace has transcription on somewhere** (an active campaign or a
+    queue, 60 s cache) and the account can do it; 3 s later it is paused
+    (`transcribe_status: pause`). `leadCallBridged` → `liveCallBridged`
+    resumes it for a transcribed call (`ltxa:<userId>` = the call it feeds),
+    and `finish` pauses it when the lead leaves or the agent leaves. An
+    agent whose line came up before the switch was turned on has no agent
+    side until their next log in; the console says so
+    (`transcript:status.message`). A result from an agent's leg with no call
+    to feed is paused again (`ltxorphan:<sid>`); at the 40th such result
+    `ltx:pause-broken` is set for 24 h and new agent lines start without
+    transcription (logged as an error) so a pause that does not work cannot
+    bill an idle line all day.
+  - **Transfers**: external transfer Leave / cold auto-drop and the in-dialer
+    closer transfer call `liveAgentLeft`: both sides stop (the lead's with
+    `transcribe_status: pause` on its leg: nobody watches it after the agent
+    leaves), the call is finished (summary, costs). While the agent is still
+    in a warm three-way the lead keeps being transcribed; the destination's
+    voice is not. A supervisor's barge is not transcribed either (their leg
+    has none). Takeover: the agent's leg ends with its transcription; the
+    lead's goes on to the call's new owner (the supervisor watches it).
+- **Gate.** Campaign `transcriptionOn` (outbound, and inbound calls routed
+  to a campaign), or Queue `transcriptionOn` for calls a queue hands to an
+  agent (the queue's campaign supplies phrases, model and limits;
+  defaults without one), **and** `transcriptionReady()`: jambonz configured
+  and a speech-to-text vendor on the account, read with the AI answer's
+  `speechCreds()` (`GET /v1/Accounts/{sid}/SpeechCredentials`,
+  `use_for_stt`, cached 5 minutes) through `transcriptionReadiness` in
+  shared: `SCREENER_STT_VENDOR` when set (it must be on the account), else
+  Deepgram, else the first STT vendor. Not ready at call time = no verbs,
+  a warning in the log, the call goes on. `GET /internal/assist/readiness`
+  serves the web.
+- **State**: Redis `ltx:<callId>` (settings snapshot, script steps, leg
+  times, disclosure, assist budget; 6 h), `ltxt:<callId>` (finals, last
+  400), `ltxleg:<userId>` (the agent leg carrying a transcription),
+  `ltxa:<userId>`, `ltxorphan:<sid>`, `ltx:pause-broken`. Debounce timers
+  are in the engine process (one engine).
+- **Results.** Interim → `transcript:partial`, final → `transcript:final`
+  `{callId, agentId, speaker, text, at}` to `agent:<agentId>` and to every
+  supervisor listening to that agent (Redis set `watchers:<agentId>`,
+  kept by `supervise/index.ts` on start / stop / leg end; team leaders'
+  monitoring is the same supervision). Finals go to `Call.transcript` (JSON
+  `[{speaker, text, at}]`, capped by `appendTurn`: 400 turns, 60,000
+  characters, 2,000 per turn, oldest dropped).
+- **Console** (`components/live-call.tsx`, `useLiveCall`): the "Communication
+  & Live Transcript" box on the main screen is the live panel when the call
+  is transcribed (otherwise "Live transcription is off for this call"):
+  compliance banners, the assist cards, the chat-style transcript (customer
+  left in cyan, agent right in violet as "You", interim words grey and
+  italic until the final replaces them, follows the live end; scrolled up
+  shows "Jump to live ↓"), the script checklist. The assist screen gets a
+  "Live call" panel above the Script (transcript left, cards and checklist
+  right). A reload or a late start reads the finals so far
+  (`lib/live-call-actions.ts` `liveCallState`: the agent's own call, or
+  any call in the workspace for managers). **Floor**: while a supervisor
+  listens / whispers / barges, "Active Call Monitoring" shows the watched
+  agent's live transcript (and compliance banners); "Call Supervision
+  Console" lists the floor's live compliance alerts (`floor:compliance`).
+- **Live assist** (`liveAssistOn`; needs transcription; queue
+  `liveAssistOn` for queue calls). On each CUSTOMER final, debounced
+  `ASSIST_DEBOUNCE_MS` 1.2 s (later finals within it are joined), skipping
+  fillers (`isFiller`: under 3 words or only "yeah / okay / uh huh"…):
+  1. `matchRebuttal` against `Campaign.rebuttals` (stemmed content-word
+     overlap, the objection's exact words inside the utterance = 1, order
+     bonus, negations kept; threshold 0.6) → `assist:rebuttal`, the green
+     "Say this" card, at once, and no AI call.
+  2. Otherwise, within `assistAllowed` (at most one every
+     `assistMinGapSeconds` 8 and `assistMaxPerCall` 40 per call, clamped
+     2–120 and 0–200; one in flight per call), `suggestNextLine`: Claude
+     (`assistModel`, default `claude-haiku-5-5`, effort low) with structured
+     output `{lines: 1–2, tone}`, **streamed**: `assist:suggestion`
+     `thinking` → `streaming` (the lines as written, `partialLines` on the
+     partial JSON) → `done` | `failed`, the blue "Suggested next line" card
+     with the tone chip. System prompt (cacheable): the fixed rules (never
+     invent facts, prices, savings, dates, guarantees or promises; only the
+     script, the library or what the customer said; no pressure; a stop
+     request is honoured; never the campaign's banned phrases), the script
+     and the rebuttals; user turn: the lead (name, city, state, lead type,
+     notes) and the last 12 turns. Usage → `recordAiUsage` `ai.live_assist`
+     with the real counts; `Call.assistCalls` counts them.
+  3. Script progress: `scriptSteps` splits the latest `Script` (Markdown
+     `#`, `== HEADINGS ==`, ALL CAPS, `[Name]` or a short line ending in
+     ":" start a step; numbered or bulleted lines are a step each; else
+     blank-line paragraphs; up to 30 steps, 12 key words each, template
+     variables removed); `coverSteps` ticks a step when the AGENT has said
+     half of its key words (all of a one- or two-word step), in any order.
+     `assist:script {steps, covered, next}` on bridge and when it changes;
+     the checklist highlights the next step.
+- **Compliance on the transcript** (`compliance/live-call.ts`,
+  `LIVE_CALL_RULES`):
+  - `disclosure_missing` (critical): when `spokenDisclosureRequired`
+    (campaign page, off by default) and no `disclosurePhrases` (default
+    recorded, recording, quality and training, monitored, transcribed;
+    whole words) is heard in the agent's speech within
+    `DISCLOSURE_WINDOW_SECONDS` (30 s) of the join, the red pulsing banner
+    "Give the recording disclosure now"; it clears when heard later
+    (`compliance:clear`). Not checked when the campaign plays its
+    disclosure file before the join (`disclosureOn` + audio: the file is
+    the disclosure) or when the agent's side is not transcribed
+    (`disclosureState` "unknown": never an alert it cannot back).
+  - `banned_phrase` (warning): every `bannedPhrases` hit in the agent's
+    speech (new campaigns' column default and the tab's "Use the suggested
+    list": guaranteed, free, no cost, risk-free), minus
+    `BANNED_PHRASE_EXCEPTIONS` ("feel free", "toll-free", "are you free",
+    "can't guarantee"…). Amber line on the console.
+  - Each alert is appended to `Call.complianceAlerts` (last 50), a NOTE
+    `LeadEvent` "Compliance: …", `compliance:alert` to the agent and
+    watchers, and `floor:compliance` to the tenant.
+  - **Two-party consent**: recording a call needs every party's consent in
+    the all-party states (`ALL_PARTY_CONSENT_STATES`: CA, DE, FL, IL, MD,
+    MA, MI, MT, NV, NH, OR, PA, WA; listed on the tab; to be confirmed by
+    counsel like the state rules). Live transcription is a recording of the
+    words for this purpose: a campaign dialling those states with
+    transcription on should play the disclosure file or require the spoken
+    disclosure. Nothing blocks a dial on it today.
+- **After the call** (`finish`, on `leadCallEnded` or the agent leaving):
+  the legs' seconds go to `Call.sttLeadSeconds` / `sttAgentSeconds`, costs
+  are charged, then with `postCallSummaryOn` and/or `suggestDispositionOn`
+  one Claude call (`summarizeCall`, the campaign's assist model,
+  structured `{summary, disposition_code, reason}`, `ai.call_summary`
+  usage) on the whole transcript (needs 2 turns). Summary: 3–5 sentences,
+  stored on `Call.aiSummary` (an AI-answer call keeps its note first:
+  "…\n\nCall: …") and appended to `Lead.notes` as "AI summary (6 Nov 2026
+  14:05 UTC): …" (`aiSummaryNote`) with a NOTE event. The console's notes
+  box takes the block in without losing what is being typed, and
+  `updateLead` runs `keepAiSummaries` so an autosave from a box loaded
+  before the summary never drops it (consequence: an AI summary block
+  stays: deleted or edited in the console box, the stored block comes back
+  on the next autosave; the agent's own text around it is theirs).
+  Suggested disposition: the code matched to an active disposition of the
+  campaign (`pickSuggestedDisposition`) → `Call.suggestedDisposition`
+  `{dispositionId, code, label, reason}` and `call:summary` to the agent:
+  in wrap-up a cyan line "Suggested: Not interested · reason" with
+  "Confirm" and a ring on that button. Nothing is submitted until the
+  agent clicks.
+- **Settings.** Campaign page → new tab **Transcription & assist**
+  (`tab-assist.tsx`, through the one Save; the keys are ordinary campaign
+  settings in `campaign-form.ts` `parseAssistSettings`, phrase lists edited
+  one per line): transcription on/off, after-call summary, suggested
+  disposition, live assist on/off, model (Haiku 5.5 default, Sonnet 5.5,
+  Opus 5.5), seconds between AI lines, AI lines per call, spoken disclosure
+  required, disclosure phrases, banned phrases. The tab shows the account's
+  STT vendor or what is missing. `/inbound` → Queues → "Live transcription
+  and assist": transcribe calls, live assist. **Refusal**: switching
+  transcription on (or assist on with it) asks the engine first; without
+  an STT vendor Save returns the error on the tab ("Transcription was not
+  switched on. The jambonz account has no speech-to-text vendor… In
+  jambonz: Account → Speech services → Add speech service → a
+  speech-to-text vendor such as Deepgram…, tick "Use for speech-to-text".
+  Then save again."), the draft kept; the queue form saves the rest and
+  says the same. Assist without `ANTHROPIC_API_KEY` is refused the same way.
+- **Costs** (`chargeTranscription`): each leg's minutes as `VendorUsage`
+  (vendor = the STT vendor, kinds `stt.lead`, `stt.agent`, tenant
+  attributed) at `PlatformRates.sttMinuteCostMillicents` (/platform "Live
+  transcription, ¢ per leg-minute", 0 until the owner enters it). The
+  client pays, category `AI`, `BillingAccount.transcriptMinutePriceMillicents`
+  per transcribed call minute (the lead leg's time, by the second) and
+  `assistCallPriceMillicents` per AI suggestion, charged once per call at
+  the end so fractions of a cent are not lost per request (/platform plan
+  fields, shown on /billing when set; both default 0). LLM tokens: real
+  counts per request via `recordAiUsage`. The screener-only transcription
+  (transcription off) is not charged, as before.
+- **Not verified live — the first-call checklist**:
+  1. The agent's line comes up with the `config.transcribe` before the
+     conference (engine log; the agent hears nothing different), and the
+     3 s `transcribe_status: pause` is accepted (no "transcribe_status
+     update failed" warning). Speak while Ready and idle: no
+     `transcript:final` reaches the console, and the log does not show
+     "agent transcription result between calls" repeatedly.
+  2. On the bridge the `resume` lands and the agent's words arrive as AGENT,
+     the lead's as CUSTOMER, **not mixed** (`channel: 1` is the leg's own
+     voice; if the agent's words also show as CUSTOMER, the lead leg is
+     transcribing the room mix: try removing `channel` from
+     `transcribeVerb`).
+  3. Interim results arrive (`is_final: false`) and the final replaces the
+     grey text; Deepgram's latency is under a second or two.
+  4. A screener on a transcribed campaign is still detected (the hook's
+     screener check on finals).
+  5. Hang up: both `pause`s are sent once, `Call.transcript` and the
+     seconds are written, `VendorUsage` `stt.*` rows appear.
+  6. With assist on and a key: say a library objection → green card at
+     once; say something else → blue card streams within ~2 s; a summary
+     lands in the lead's notes and the suggested disposition in wrap-up.
+  7. A warm transfer: Leave stops both sides; the lead and destination
+     keep talking.
+  8. A supervisor listening sees the same transcript on the floor.
+  The STT vendor's per-minute price goes into /platform before the first
+  client is billed.
 
 ## Voicemail, recordings, DID hygiene (owner, 4 Nov)
 

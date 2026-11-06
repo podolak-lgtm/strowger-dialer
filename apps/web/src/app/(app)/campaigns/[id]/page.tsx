@@ -1,3 +1,4 @@
+import { transcriptionReadiness } from "@/lib/assist-readiness";
 import { prisma } from "@strowger/db";
 import { campaignTab, type CampaignDraft } from "@strowger/shared/campaign-draft";
 import { CAMPAIGN_SETTING_KEYS, rebuttalsText } from "@strowger/shared/campaign-form";
@@ -51,7 +52,9 @@ export default async function CampaignPage({ params, searchParams }: PageProps<"
   const abandonRate = answered30 ? (abandoned30 / answered30) * 100 : 0;
 
   const str = (v: unknown) => (v === null || v === undefined ? "" : String(v));
-  const settings = Object.fromEntries(CAMPAIGN_SETTING_KEYS.map((k) => [k, typeof c[k] === "boolean" ? c[k] : str(c[k])])) as CampaignDraft["settings"];
+  // Phrase lists (String[]) are edited one per line.
+  const settings = Object.fromEntries(CAMPAIGN_SETTING_KEYS.map((k) => [k, typeof c[k] === "boolean" ? c[k] : Array.isArray(c[k]) ? (c[k] as string[]).join("\n") : str(c[k])])) as CampaignDraft["settings"];
+  const sttReady = await transcriptionReadiness();
   const snapshot: CampaignDraft = {
     settings,
     lists: c.lists.map((l) => l.id),
@@ -75,6 +78,7 @@ export default async function CampaignPage({ params, searchParams }: PageProps<"
       abandon: { text: `${abandonRate.toFixed(2)}% (${abandoned30}/${answered30})`, tone: abandonRate >= Number(c.abandonCapPct) ? "red" : abandonRate >= Number(c.abandonWarnPct) ? "amber" : "green" },
     },
     snapshot,
+    sttReady,
     initialTab: campaignTab(tab),
     lists: tenantLists.map((l) => ({ id: l.id, name: l.name, priority: l.priority, totalLeads: l.totalLeads, dialableLeads: l.dialableLeads, status: l.status, elsewhere: l.campaignId && l.campaignId !== c.id ? (l.campaign?.name ?? "another campaign") : null })),
     webhookInfo: Object.fromEntries(c.webhooks.map((w) => [w.id, { secretPrefix: w.secret.slice(0, 12), last: w.deliveries[0] ? { status: w.deliveries[0].status, error: w.deliveries[0].lastError } : null }])),

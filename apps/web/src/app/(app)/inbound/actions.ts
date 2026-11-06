@@ -6,6 +6,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { requireRole } from "@/lib/auth";
 import { engine } from "@/lib/engine";
+import { transcriptionRefusal } from "@/lib/assist-readiness";
 
 export type AiReadiness = { ok: boolean; problems: string[]; stt: string | null; tts: string | null };
 
@@ -181,6 +182,9 @@ export async function saveQueue(formData: FormData) {
     // Survey
     surveyEnabled: on(formData, "surveyEnabled"),
     surveyAudioId: opt(formData, "surveyAudioId"),
+    // Live transcription and assist (assist/live.ts in the engine)
+    transcriptionOn: on(formData, "transcriptionOn"),
+    liveAssistOn: on(formData, "liveAssistOn"),
     // AI answer
     aiEnabled: on(formData, "aiEnabled"),
     aiMode: (AI_MODES.includes(str(formData, "aiMode") as (typeof AI_MODES)[number]) ? str(formData, "aiMode") : "FIRST") as QueueAiMode,
@@ -206,13 +210,25 @@ export async function saveQueue(formData: FormData) {
     const r = await aiReadiness({ stt: data.aiSttVendor, tts: data.aiTtsVendor, llm: data.aiLlmVendor });
     if (!r?.ok) {
       data.aiEnabled = false;
-      aiRefused = r ? r.problems.join(" ") : "The engine did not answer, so the jambonz account could not be checked.";
+      aiRefused = `The AI answer was not turned on. ${r ? r.problems.join(" ") : "The engine did not answer, so the jambonz account could not be checked."}`;
+    }
+  }
+  // Live transcription likewise: only with a speech-to-text vendor on the account.
+  if (data.transcriptionOn) {
+    const before = id ? await prisma.queue.findFirst({ where: { id, tenantId: s.tenant.id }, select: { transcriptionOn: true, liveAssistOn: true } }) : null;
+    if (!before?.transcriptionOn || (data.liveAssistOn && !before.liveAssistOn)) {
+      const refusal = await transcriptionRefusal({ assist: data.liveAssistOn });
+      if (refusal) {
+        data.transcriptionOn = before?.transcriptionOn ?? false;
+        data.liveAssistOn = before?.liveAssistOn ?? false;
+        aiRefused = [aiRefused, `Transcription was not switched on. ${refusal}`].filter(Boolean).join(" ");
+      }
     }
   }
   if (id) await prisma.queue.updateMany({ where: { id, tenantId: s.tenant.id }, data });
   else await prisma.queue.create({ data });
   revalidatePath("/inbound");
-  if (aiRefused) redirect(`/inbound?msg=${encodeURIComponent(`${name}: saved, but the AI answer was not turned on. ${aiRefused}`)}&kind=error#queues`);
+  if (aiRefused) redirect(`/inbound?msg=${encodeURIComponent(`${name}: saved, but not everything was turned on. ${aiRefused}`)}&kind=error#queues`);
 }
 
 export async function deleteQueue(formData: FormData) {

@@ -30,6 +30,8 @@ import { applyDidPlan, loadDidPlan } from "../provision/plan";
 import { chatHistory, sendChat } from "../chat";
 import { acceptWager, announceCampaignBets, declineWager, endPokerRun, gamesOverview, proposeWager, setCampaignBets, startPokerRun, withdrawWager } from "../games";
 import { suggest } from "../assist";
+import { transcriptionReady } from "../assist/live";
+import { config } from "../config";
 import { billingOverview, billingStatus, chargeSeatIfNew, outboundAllowed, platformOverview, rates, recordPayment, trialSeatRefusal } from "../billing";
 import { changeAttribution, endReferral, referralsForTenant, referralsPlatform, runReferralCredits, saveReferralSettings, setReferrerOverride, signup, signupOffer } from "../referrals";
 import { log } from "../log";
@@ -334,13 +336,13 @@ export async function registerInternalRoutes(app: FastifyInstance): Promise<void
     }
   });
   app.post("/internal/billing/plan", async (req) => {
-    const b = z.object({ tenantId: z.string(), seatMonthlyCents: z.number().int().min(0), perMinuteMillicents: z.number().int().min(0), didMarkupPct: z.number().int().min(0), scrubMarginMillicents: z.number().int().min(0), smsPriceMillicents: z.number().int().min(0), aiMinutePriceMillicents: z.number().int().min(0).default(0), lowBalanceCents: z.number().int().min(0), graceDays: z.number().int().min(0).max(60) }).parse(req.body);
+    const b = z.object({ tenantId: z.string(), seatMonthlyCents: z.number().int().min(0), perMinuteMillicents: z.number().int().min(0), didMarkupPct: z.number().int().min(0), scrubMarginMillicents: z.number().int().min(0), smsPriceMillicents: z.number().int().min(0), aiMinutePriceMillicents: z.number().int().min(0).default(0), transcriptMinutePriceMillicents: z.number().int().min(0).default(0), assistCallPriceMillicents: z.number().int().min(0).default(0), lowBalanceCents: z.number().int().min(0), graceDays: z.number().int().min(0).max(60) }).parse(req.body);
     const { tenantId, ...plan } = b;
     await prisma.billingAccount.upsert({ where: { tenantId }, create: { tenantId, ...plan }, update: plan });
     return { ok: true };
   });
   app.post("/internal/billing/rates", async (req) => {
-    const b = z.object({ telnyxOutMillicentsPerMin: z.number().int().min(0), telnyxInMillicentsPerMin: z.number().int().min(0), didMonthlyCents: z.number().int().min(0), scrubCostMillicents: z.number().int().min(0), smsCostMillicents: z.number().int().min(0), aiMinuteCostMillicents: z.number().int().min(0).default(0), prepayInstructions: z.string().max(2000).nullable() }).parse(req.body);
+    const b = z.object({ telnyxOutMillicentsPerMin: z.number().int().min(0), telnyxInMillicentsPerMin: z.number().int().min(0), didMonthlyCents: z.number().int().min(0), scrubCostMillicents: z.number().int().min(0), smsCostMillicents: z.number().int().min(0), aiMinuteCostMillicents: z.number().int().min(0).default(0), sttMinuteCostMillicents: z.number().int().min(0).default(0), prepayInstructions: z.string().max(2000).nullable() }).parse(req.body);
     await rates();
     await prisma.platformRates.update({ where: { id: "default" }, data: b });
     return { ok: true };
@@ -478,6 +480,11 @@ export async function registerInternalRoutes(app: FastifyInstance): Promise<void
   });
 
   // ---- Agent assist
+  // Live transcription (assist/live.ts): may a campaign or queue switch it on? The campaign page and queue form ask before saving.
+  app.get("/internal/assist/readiness", async () => {
+    const r = await transcriptionReady();
+    return { ...r, anthropic: Boolean(config.ANTHROPIC_API_KEY) };
+  });
   app.post("/internal/assist/suggest", async (req) => {
     const b = z.object({ tenantId: z.string(), campaignId: z.string(), leadId: z.string().nullable(), objection: z.string().min(1).max(600), goal: z.enum(["sale", "service"]).optional() }).parse(req.body);
     return suggest(b.tenantId, b.campaignId, b.leadId, b.objection, b.goal ?? "sale");

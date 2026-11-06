@@ -93,6 +93,29 @@ and says what is missing):
    jambonz.cloud has it). Make one test call before putting a live line on
    it.
 
+## 8. Live transcription and agent assist (optional)
+
+Before a campaign's "Transcribe calls live" (campaign page → Transcription &
+assist) or a queue's "transcribe calls" can be ticked (Strowger refuses it
+and says what is missing):
+
+1. Account → Speech services → Add speech service → a **speech-to-text**
+   vendor such as **Deepgram** (best for phone audio; Google, Microsoft or
+   AssemblyAI also work), paste its API key and tick **"Use for
+   speech-to-text"**. The same vendor serves screener detection and the AI
+   answer. If `SCREENER_STT_VENDOR` is set on the engine, that vendor must be
+   the one added here.
+2. Nothing else in jambonz: transcription runs on the existing application
+   (a `config.transcribe` on each leg, results posted to
+   `https://<engine>/jambonz/transcript`). The agent's side starts with the
+   agent's next log in after the switch is turned on.
+3. For live assist and the after-call summary the engine needs
+   `ANTHROPIC_API_KEY`.
+4. Enter the speech-to-text vendor's per-minute price on /platform ("Live
+   transcription, ¢ per leg-minute") so the costs are right. Make one test
+   call before switching it on for a live campaign (HANDOFF "Live
+   transcription and agent assist" has the checklist).
+
 ## Variables, by service
 
 Engine: `JAMBONZ_API_URL` (default `https://api.jambonz.cloud`),

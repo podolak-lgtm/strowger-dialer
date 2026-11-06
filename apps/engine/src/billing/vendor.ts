@@ -184,8 +184,10 @@ export async function syncTelnyxCosts(dateRange = "last_3_days"): Promise<{ call
 // ---- AI (Anthropic) usage at list price. Claude Opus 5.5: $4 / MTok in, $20 / MTok out, cache read $0.20, cache write $5.
 const AI_PRICE_MICROCENTS_PER_TOKEN: Record<string, { input: number; output: number; cacheRead: number; cacheWrite: number }> = {
   "claude-opus-5-5": { input: 400, output: 2000, cacheRead: 20, cacheWrite: 500 },
-  "claude-sonnet-5-5": { input: 300, output: 1500, cacheRead: 30, cacheWrite: 375 },
-  "claude-haiku-5-5": { input: 100, output: 500, cacheRead: 10, cacheWrite: 125 },
+  // List prices checked 6 Nov (claude-api skill): Sonnet 5.5 $2 / $10 per MTok (cache read $0.20), Haiku 5.5 $0.10 / $0.50.
+  // Cache writes taken as 1.25 × input. Until 6 Nov these two rows read $3 / $15 and $1 / $5.
+  "claude-sonnet-5-5": { input: 200, output: 1000, cacheRead: 20, cacheWrite: 250 },
+  "claude-haiku-5-5": { input: 10, output: 50, cacheRead: 1, cacheWrite: 13 },
 };
 
 export async function recordAiUsage(tenantId: string | null, kind: string, model: string, usage: { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number | null; cache_creation_input_tokens?: number | null }, refId?: string): Promise<void> {

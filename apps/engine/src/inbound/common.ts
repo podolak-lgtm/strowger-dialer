@@ -1,6 +1,7 @@
 // Pieces every inbound path shares: audio lookups, the join into an agent's
 // room, claiming an agent, voicemail boxes, IVR menus, and the spoken
 // prompts (text to speech, with a fallback to silence when it is down).
+import { liveLeadVerbs } from "../assist/live";
 import { prisma, type Ivr, type VoicemailBox } from "@strowger/db";
 import { patchAgent, type AgentLive } from "../agents/state";
 import { config } from "../config";
@@ -63,9 +64,12 @@ export function isFree(a: AgentLive): boolean {
   return a.state === "READY" && Boolean(a.agentCallSid) && !a.currentCallId && !a.reservedLeadId;
 }
 
-/** Conference-join verbs for an inbound caller into an agent's room. */
-export function joinAgentVerbs(callId: string, tenantId: string, agentId: string): Verbs {
+/** Conference-join verbs for an inbound caller into an agent's room (with the live transcription first, when the queue or campaign has it on). */
+export async function joinAgentVerbs(callId: string, tenantId: string, agentId: string): Promise<Verbs> {
+  const call = await prisma.call.findUnique({ where: { id: callId }, select: { id: true, tenantId: true, agentId: true, campaignId: true, queueId: true } });
+  const live = call ? await liveLeadVerbs({ ...call, agentId: call.agentId ?? agentId }) : [];
   return [
+    ...live,
     { verb: "conference", name: agentRoom(agentId), memberTag: "lead", startConferenceOnEnter: false, endConferenceOnExit: false, beep: false, statusHook: hookUrl("/jambonz/conf", { callId, tenantId }), statusEvents: ["join", "leave"], actionHook: hookUrl("/jambonz/conf-exit", { callId }) },
     { verb: "hangup" },
   ];

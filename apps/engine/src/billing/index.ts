@@ -5,6 +5,7 @@
 import { prisma, type BillingCategory, type BillingKind, type Prisma } from "@strowger/db";
 import { inTrial } from "@strowger/shared/referrals";
 import { estimateAiTokens, type AiTurn } from "@strowger/shared/inbound";
+import { minutesOf } from "@strowger/shared/assist";
 import { recordAiUsage } from "./vendor";
 import { log } from "../log";
 import { emitToTenant } from "../realtime";
@@ -205,6 +206,33 @@ export async function chargeAiMinutes(callId: string, systemChars: number): Prom
   await charge({ tenantId: call.tenantId, category: "AI", quantity: minutes, unitMillicents: a.aiMinutePriceMillicents, costCents, note: `AI answer, ${call.aiSeconds} s`, refId: callId });
 }
 
+/**
+ * Live transcription and assist on one call (assist/live.ts): the speech-to-text
+ * minutes of each leg as vendor usage at `sttMinuteCostMillicents` (0 until the
+ * owner enters the jambonz / STT vendor rate on /platform), and the client's
+ * optional prices: `transcriptMinutePriceMillicents` per transcribed call
+ * minute (the lead leg's time, by the second) and `assistCallPriceMillicents`
+ * per AI suggestion. Both default 0 = not charged. LLM tokens are recorded per
+ * request by recordAiUsage with the real counts.
+ */
+export async function chargeTranscription(i: { callId: string; tenantId: string; vendor: string; leadSeconds: number; agentSeconds: number; assistCalls: number }): Promise<void> {
+  const [a, r, t] = await Promise.all([ensureAccount(i.tenantId), rates(), prisma.tenant.findUnique({ where: { id: i.tenantId }, select: { isPlatform: true } })]);
+  const day = new Date().toISOString().slice(0, 10);
+  const legs: Array<[string, number]> = [["stt.lead", i.leadSeconds], ["stt.agent", i.agentSeconds]];
+  let costCents = 0;
+  for (const [kind, seconds] of legs) {
+    if (seconds <= 0) continue;
+    const minutes = minutesOf(seconds);
+    const cost = Math.round((minutes * r.sttMinuteCostMillicents) / 1000);
+    costCents += cost;
+    await prisma.vendorUsage.create({ data: { vendor: i.vendor, kind, quantity: minutes, costCents: cost, day, tenantId: i.tenantId, refId: i.callId } }).catch((e) => log.warn({ err: e }, "stt usage record failed"));
+  }
+  if (t?.isPlatform) return;
+  const callMinutes = minutesOf(i.leadSeconds);
+  if (callMinutes > 0) await charge({ tenantId: i.tenantId, category: "AI", quantity: callMinutes, unitMillicents: a.transcriptMinutePriceMillicents, costCents, note: `Live transcription, ${i.leadSeconds} s`, refId: i.callId });
+  if (i.assistCalls > 0) await charge({ tenantId: i.tenantId, category: "AI", quantity: i.assistCalls, unitMillicents: a.assistCallPriceMillicents, note: `Live assist, ${i.assistCalls} suggestion${i.assistCalls === 1 ? "" : "s"}`, refId: i.callId });
+}
+
 /** A number's monthly fee: our cost plus the markup. Once per number per month. */
 export async function chargeDidMonthly(tenantId: string, numberId: string, phone: string): Promise<void> {
   const t = await prisma.tenant.findUnique({ where: { id: tenantId }, select: { isPlatform: true } });
@@ -262,7 +290,7 @@ export async function billingStatus(tenantId: string) {
     zeroSince: a.zeroSince?.toISOString() ?? null,
     dailyAvgCents: Math.round(dailyAvg),
     runwayDays,
-    rates: { seatMonthlyCents: a.seatMonthlyCents, perMinuteMillicents: a.perMinuteMillicents, didMarkupPct: a.didMarkupPct, scrubMarginMillicents: a.scrubMarginMillicents, smsPriceMillicents: a.smsPriceMillicents, aiMinutePriceMillicents: a.aiMinutePriceMillicents },
+    rates: { seatMonthlyCents: a.seatMonthlyCents, perMinuteMillicents: a.perMinuteMillicents, didMarkupPct: a.didMarkupPct, scrubMarginMillicents: a.scrubMarginMillicents, smsPriceMillicents: a.smsPriceMillicents, aiMinutePriceMillicents: a.aiMinutePriceMillicents, transcriptMinutePriceMillicents: a.transcriptMinutePriceMillicents, assistCallPriceMillicents: a.assistCallPriceMillicents },
   };
 }
 
@@ -300,7 +328,7 @@ export async function platformOverview(p = period()) {
       const seat = seats.find((x) => x.tenantId === t.id);
       const revenue = -(s?._sum.amountCents ?? 0);
       const cost = s?._sum.costCents ?? 0;
-      return { id: t.id, name: t.name, slug: t.slug, users: t._count.users, seats: seat?._count._all ?? 0, balanceCents: t.billing?.balanceCents ?? 0, suspended: t.billing?.suspended ?? false, lowBalanceCents: t.billing?.lowBalanceCents ?? 20000, revenueCents: revenue, costCents: cost, marginCents: revenue - cost, plan: t.billing ? { seatMonthlyCents: t.billing.seatMonthlyCents, perMinuteMillicents: t.billing.perMinuteMillicents, didMarkupPct: t.billing.didMarkupPct, scrubMarginMillicents: t.billing.scrubMarginMillicents, smsPriceMillicents: t.billing.smsPriceMillicents, aiMinutePriceMillicents: t.billing.aiMinutePriceMillicents, lowBalanceCents: t.billing.lowBalanceCents, graceDays: t.billing.graceDays } : null };
+      return { id: t.id, name: t.name, slug: t.slug, users: t._count.users, seats: seat?._count._all ?? 0, balanceCents: t.billing?.balanceCents ?? 0, suspended: t.billing?.suspended ?? false, lowBalanceCents: t.billing?.lowBalanceCents ?? 20000, revenueCents: revenue, costCents: cost, marginCents: revenue - cost, plan: t.billing ? { seatMonthlyCents: t.billing.seatMonthlyCents, perMinuteMillicents: t.billing.perMinuteMillicents, didMarkupPct: t.billing.didMarkupPct, scrubMarginMillicents: t.billing.scrubMarginMillicents, smsPriceMillicents: t.billing.smsPriceMillicents, aiMinutePriceMillicents: t.billing.aiMinutePriceMillicents, transcriptMinutePriceMillicents: t.billing.transcriptMinutePriceMillicents, assistCallPriceMillicents: t.billing.assistCallPriceMillicents, lowBalanceCents: t.billing.lowBalanceCents, graceDays: t.billing.graceDays } : null };
     }),
   };
 }

@@ -3,6 +3,7 @@
 // The agent console talks to the engine through these. Each one authorises
 // the signed-in user and forwards tenantId + userId, so the engine never
 // trusts the browser.
+import { keepAiSummaries } from "@strowger/shared/assist";
 import { prisma } from "@strowger/db";
 import { engine } from "@/lib/engine";
 import { requireRight } from "@/lib/rights";
@@ -245,7 +246,8 @@ export async function updateLead(leadId: string, data: LeadEdit & { notes?: stri
     patch[f] = to;
   }
   if (data.notes !== undefined) {
-    const to = data.notes.trim() || null;
+    // The engine may have appended an AI summary after this box was loaded: never drop it (shared/assist/live.ts).
+    const to = keepAiSummaries(lead.notes, data.notes).trim() || null;
     if (to !== lead.notes) {
       changes.notes = { from: lead.notes, to };
       patch.notes = to;

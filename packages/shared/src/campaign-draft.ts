@@ -11,6 +11,7 @@ export const CAMPAIGN_TABS = [
   { key: "compliance", label: "Compliance" },
   { key: "voicemail", label: "Voicemail & screeners" },
   { key: "script", label: "Script & rebuttals" },
+  { key: "assist", label: "Transcription & assist" },
   { key: "transfers", label: "Transfers" },
   { key: "dispositions", label: "Dispositions" },
   { key: "crm", label: "CRM push" },
@@ -54,6 +55,16 @@ export const SETTING_TAB: Record<CampaignSettingKey, CampaignTab> = {
   screenerDetection: "voicemail",
   screenerAction: "voicemail",
   screenerScript: "voicemail",
+  transcriptionOn: "assist",
+  liveAssistOn: "assist",
+  assistModel: "assist",
+  assistMinGapSeconds: "assist",
+  assistMaxPerCall: "assist",
+  spokenDisclosureRequired: "assist",
+  disclosurePhrases: "assist",
+  bannedPhrases: "assist",
+  postCallSummaryOn: "assist",
+  suggestDispositionOn: "assist",
 };
 
 export type SettingsDraft = Record<CampaignSettingKey, string | boolean>;
@@ -128,6 +139,7 @@ export function tabSlice(d: CampaignDraft, tab: CampaignTab): unknown {
     case "dialing":
     case "compliance":
     case "voicemail":
+    case "assist":
       return settings;
     case "lists":
       return { lists: [...d.lists].sort(), dialPlans: d.dialPlans };

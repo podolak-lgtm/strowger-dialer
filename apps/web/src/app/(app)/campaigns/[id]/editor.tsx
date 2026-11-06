@@ -19,6 +19,8 @@ import { ComplianceTab, DialingTab, VoicemailTab, type PinnedNumber } from "./ta
 import { CrmTab, DispositionsTab, ListsTab, type ListInfo, type WebhookInfo } from "./tab-rows";
 import { TransfersTab, type CopySource, type TransferPanel } from "./tab-transfers";
 import { GamesTab, ScriptTab, type RunView, type ScriptVersion } from "./tab-script-games";
+import { AssistTab } from "./tab-assist";
+import type { TranscriptionReadiness } from "@/lib/assist-readiness";
 
 const LEAVE_MESSAGE = "You have unsaved changes on this campaign. Leave without saving?";
 
@@ -26,6 +28,8 @@ export interface EditorProps {
   campaignId: string;
   header: { name: string; status: string; mode: string; agents: number; abandon: { text: string; tone: "green" | "amber" | "red" } };
   snapshot: CampaignDraft;
+  /** Can calls be transcribed (an STT vendor on the jambonz account)? Null = the engine did not answer. */
+  sttReady: TranscriptionReadiness | null;
   initialTab: CampaignTab;
   lists: ListInfo[];
   webhookInfo: Record<string, WebhookInfo>;
@@ -286,6 +290,9 @@ export function CampaignEditor(p: EditorProps) {
       break;
     case "voicemail":
       body = <VoicemailTab />;
+      break;
+    case "assist":
+      body = <AssistTab ready={p.sttReady} />;
       break;
     case "script":
       body = <ScriptTab scriptOptions={p.scriptOptions} rebuttalOptions={p.rebuttalOptions} versions={p.versions} versionCount={p.versionCount} rebuttalPlaceholder={p.rebuttalPlaceholder} />;

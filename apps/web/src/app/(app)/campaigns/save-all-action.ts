@@ -14,6 +14,7 @@ import { betTopUps, clampBetSettings } from "@strowger/shared/games";
 import { revalidatePath } from "next/cache";
 import { requireRole } from "@/lib/auth";
 import { engine } from "@/lib/engine";
+import { transcriptionRefusal } from "@/lib/assist-readiness";
 import { canManageGames } from "@/lib/rights";
 import { campaignSettingsData, newWebhookSecret, ownsActiveNumber, returnNumbersToPool } from "./campaign-data";
 
@@ -53,6 +54,11 @@ export async function saveCampaignAll(campaignId: string, input: { snapshot: Cam
   // ---- Campaign settings (Dialing, Compliance, Voicemail & screeners)
   const settings = campaignSettingsData(fromRecord(draft.settings), before);
   const settingsChanged = CAMPAIGN_SETTING_KEYS.filter((k) => !same(plain(before[k]), settings[k]));
+  // Live transcription goes on only when the jambonz account has a speech-to-text vendor (and assist only with a key).
+  if ((settings.transcriptionOn && !before.transcriptionOn) || (settings.transcriptionOn && settings.liveAssistOn && !before.liveAssistOn)) {
+    const refusal = await transcriptionRefusal({ assist: settings.liveAssistOn });
+    if (refusal) fail("assist", "settings.transcriptionOn", `Transcription was not switched on. ${refusal}`);
+  }
   if (settings.name !== before.name) {
     const clash = await prisma.campaign.findFirst({ where: { tenantId, name: settings.name, id: { not: campaignId } }, select: { id: true } });
     if (clash) fail("dialing", "settings.name", "Another campaign already has this name");

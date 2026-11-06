@@ -27,6 +27,12 @@ export interface Supervision {
 }
 
 const key = (supervisorId: string) => `supervise:${supervisorId}`;
+/** Supervisors (and team leaders) listening to an agent: the live transcript goes to them too (assist/live.ts). */
+const watchKey = (agentId: string) => `watchers:${agentId}`;
+
+export async function watchersOf(agentId: string): Promise<string[]> {
+  return redis.smembers(watchKey(agentId)).catch(() => []);
+}
 
 export async function getSupervision(supervisorId: string): Promise<Supervision | null> {
   const raw = await redis.get(key(supervisorId));
@@ -35,6 +41,8 @@ export async function getSupervision(supervisorId: string): Promise<Supervision 
 
 async function save(s: Supervision): Promise<void> {
   await redis.set(key(s.supervisorId), JSON.stringify(s), "EX", 12 * 3600);
+  await redis.sadd(watchKey(s.agentId), s.supervisorId);
+  await redis.expire(watchKey(s.agentId), 12 * 3600);
   if (s.callSid) await redis.set(`supsid:${s.callSid}`, s.supervisorId, "EX", 12 * 3600);
   emitToTenant(s.tenantId, "floor:supervision", s);
 }
@@ -142,6 +150,7 @@ export async function stopSupervision(supervisorId: string): Promise<void> {
   if (!s) return;
   if (s.callSid) await jambonz.calls.update(s.callSid, { call_status: "completed" }).catch(() => undefined);
   await redis.del(key(supervisorId));
+  await redis.srem(watchKey(s.agentId), supervisorId);
   if (s.callSid) await redis.del(`supsid:${s.callSid}`);
   emitToTenant(s.tenantId, "floor:supervision", { ...s, callSid: null, mode: "LISTEN", ended: true });
   await audit(s.tenantId, supervisorId, "supervise.stop", s.agentId);
@@ -154,6 +163,7 @@ export async function supervisorLegEnded(callSid: string): Promise<void> {
   const s = await getSupervision(supervisorId);
   if (s?.callSid === callSid) {
     await redis.del(key(supervisorId));
+    await redis.srem(watchKey(s.agentId), supervisorId);
     emitToTenant(s.tenantId, "floor:supervision", { ...s, callSid: null, ended: true });
   }
   await redis.del(`supsid:${callSid}`);

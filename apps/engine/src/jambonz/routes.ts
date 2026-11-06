@@ -32,6 +32,7 @@ import { queueCallbackAnswered } from "../inbound/callbacks";
 import { surveyPending, surveyResult, surveyVerbs } from "../inbound/survey";
 import { markTtsDown } from "../inbound/common";
 import { aiFallbackVerbs, aiHandoffVerbs } from "../inbound/ai/control";
+import { agentTranscript, leadTranscript, liveAgentLegVerbs, liveLeadVerbs } from "../assist/live";
 import { log } from "../log";
 import { agentRoom, hookUrl, jambonz } from "./client";
 
@@ -198,7 +199,10 @@ export async function registerJambonzRoutes(app: FastifyInstance): Promise<void>
     const kept = live.state === "READY" || live.state === "ON_CALL" || live.state === "WRAP_UP" || live.state === "PAUSED" ? live.state : "PAUSED";
     await patchAgent(userId, { agentCallSid: b.call_sid, state: live.readyOnLine ? "READY" : kept, readyOnLine: false, ...(live.readyOnLine ? { pauseReason: null } : kept === "PAUSED" && !live.pauseReason ? { pauseReason: "Not ready yet" } : {}) });
     await redis.set(`agentsid:${b.call_sid}`, userId, "EX", 24 * 3600);
+    // Live transcription (assist/live.ts): the agent's side, started now and paused between calls. [] when off.
+    const transcribe = await liveAgentLegVerbs(userId, tenantId, b.call_sid);
     return [
+      ...transcribe,
       {
         verb: "conference",
         name: agentRoom(userId),
@@ -267,9 +271,12 @@ export async function registerJambonzRoutes(app: FastifyInstance): Promise<void>
     await leadCallAnswered(callId);
     const campaign = call.campaign;
 
+    // Live transcription of the lead (assist/live.ts) when the campaign has it on; it also feeds screener detection.
+    const live = await liveLeadVerbs(call);
     // Screener detection: a background transcription of the first seconds.
-    const screener: Verb[] =
-      campaign.screenerDetection && config.SCREENER_STT_VENDOR
+    const screener: Verb[] = live.length
+      ? live
+      : campaign.screenerDetection && config.SCREENER_STT_VENDOR
         ? [{ verb: "config", transcribe: { enable: true, transcriptionHook: hookUrl("/jambonz/transcript", { callId }), recognizer: { vendor: config.SCREENER_STT_VENDOR, language: config.SCREENER_STT_LANGUAGE, interim: false } } }]
         : [];
 
@@ -291,11 +298,20 @@ export async function registerJambonzRoutes(app: FastifyInstance): Promise<void>
   }
 
   // ── Screener transcript + action ────────────────────────────────────────
+  // Also live transcription (assist/live.ts): `leg=lead` results from a lead leg, `leg=agent&agentId=` from an agent's line.
   app.post("/jambonz/transcript", async (req, reply) => {
-    const callId = (req.query as { callId?: string }).callId;
-    const b = req.body as { speech?: { alternatives?: Array<{ transcript?: string }> } };
+    const q = req.query as { callId?: string; agentId?: string; leg?: string };
+    const callId = q.callId;
+    const b = req.body as { call_sid?: string; speech?: { is_final?: boolean; alternatives?: Array<{ transcript?: string }> } };
     const text = b.speech?.alternatives?.[0]?.transcript ?? "";
-    if (!callId || !text) return reply.send({});
+    const final = b.speech?.is_final !== false;
+    if (q.leg === "agent" && q.agentId) {
+      if (text) await agentTranscript(q.agentId, b.call_sid, { text, final }).catch((e) => log.warn({ err: e, agentId: q.agentId }, "agent transcript failed"));
+      return reply.send({});
+    }
+    if (q.leg === "lead" && callId && text) await leadTranscript(callId, { text, final }).catch((e) => log.warn({ err: e, callId }, "lead transcript failed"));
+    // Screener detection reads finals only (live transcription sends interim results too).
+    if (!callId || !text || !final) return reply.send({});
     const call = await prisma.call.findUnique({ where: { id: callId }, include: { campaign: true } });
     if (!call?.campaign || call.screenerDetected || call.endedAt) return reply.send({});
     if (call.answeredAt && Date.now() - call.answeredAt.getTime() > 12_000) return reply.send({});
@@ -463,7 +479,7 @@ export async function registerJambonzRoutes(app: FastifyInstance): Promise<void>
     const { callId, agentId } = req.query as { callId?: string; agentId?: string };
     const call = callId ? await prisma.call.findUnique({ where: { id: callId } }) : null;
     if (!call || !agentId) return reply.send([{ verb: "hangup" }]);
-    return reply.send(joinAgentVerbs(call.id, call.tenantId, agentId));
+    return reply.send(await joinAgentVerbs(call.id, call.tenantId, agentId));
   });
   // AI answer (inbound/ai): the call coming back from the AI's WebSocket session to the queue's people, ahead of the line.
   app.post("/jambonz/ai-handoff", async (req, reply) => {

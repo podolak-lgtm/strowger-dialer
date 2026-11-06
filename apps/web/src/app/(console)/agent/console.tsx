@@ -8,6 +8,8 @@
 // one monitor every column collapses with the chevrons.
 import { createJambonzClient } from "@jambonz/client-sdk-web";
 import { ChatPanel } from "@/components/chat-panel";
+import { AssistCards, ComplianceBanner, ScriptChecklist, TranscriptPanel, useLiveCall } from "@/components/live-call";
+import { keepAiSummaries } from "@strowger/shared/assist";
 import { isStaleBuildError, NewVersionBanner, useNewVersion } from "@/components/new-version";
 import { myTeams } from "@/lib/chat-actions";
 import { assistSuggest, campaignRebuttals, type Suggestion } from "@/lib/games-actions";
@@ -482,6 +484,14 @@ export function AgentConsole(props: ConsoleProps) {
   useEffect(() => {
     callIdRef.current = callId;
   }, [callId]);
+  /** The lead on screen, for the post-call summary landing in its notes box. */
+  const leadIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    leadIdRef.current = lead?.id ?? null;
+  }, [lead]);
+  // Live transcription and assist for the call on screen (components/live-call.tsx, engine assist/live.ts).
+  const live = useLiveCall(sock, callId);
+  const liveOn = Boolean(live.status?.on || live.turns.length || live.partial.CUSTOMER || live.partial.AGENT);
   // A reload mid-call: pick up the transfer in flight, if any.
   useEffect(() => {
     if (!callId) return;
@@ -632,6 +642,10 @@ export function AgentConsole(props: ConsoleProps) {
         setTransfer(null);
         setXferMenu(false);
       }
+    });
+    // After the call: the engine appended an AI summary to the lead's notes; add it to the box without losing what is being typed.
+    sock.on("call:summary", (p: { leadId: string | null; notes: string | null }) => {
+      if (p.notes && p.leadId && p.leadId === leadIdRef.current) setNotes((cur) => keepAiSummaries(p.notes, cur));
     });
     sock.on("text:in", (m: { leadId: string | null; body: string; from: string; action?: string; intent?: string | null }) => {
       const flag = m.action === "opt_out" ? " · OPTED OUT, lead closed" : m.action === "review" ? " · possible opt-out, check before calling" : m.action === "callback" ? " · callback booked" : "";
@@ -1520,9 +1534,18 @@ export function AgentConsole(props: ConsoleProps) {
                   <div className="mb-4 flex items-center justify-center gap-4">
                     <Waveform colors={["#22d3ee", "#a855f7"]} />
                   </div>
-                  <div className="mb-4 rounded-xl border border-emerald-400/20 bg-emerald-400/5 p-4 text-sm">
-                    <div className="mb-1 text-xs uppercase tracking-wide text-emerald-300/80">Communication & Live Transcript</div>
-                    <p className="text-zinc-400">Live transcription arrives in a later phase. Call status: {callStatus}.</p>
+                  <div className="mb-4 rounded-xl border border-emerald-400/20 bg-emerald-400/5 p-3 text-sm">
+                    <div className="mb-2 text-xs uppercase tracking-wide text-emerald-300/80">Communication & Live Transcript</div>
+                    {liveOn ? (
+                      <div className="space-y-3">
+                        <ComplianceBanner view={live} />
+                        <AssistCards view={live} />
+                        <TranscriptPanel view={live} agentLabel="You" />
+                        <ScriptChecklist view={live} />
+                      </div>
+                    ) : (
+                      <p className="text-zinc-400">Live transcription is off for this call. Call status: {callStatus}.</p>
+                    )}
                   </div>
                   <div className="grid grid-cols-4 gap-2">
                     <button onClick={toggleMute} disabled={!onCall} className={`rounded-xl px-3 py-3 text-sm font-medium ${muted ? "bg-amber-400 text-amber-950" : "bg-sky-500/20 text-sky-200"} disabled:opacity-40`}>
@@ -1639,6 +1662,18 @@ export function AgentConsole(props: ConsoleProps) {
                           </button>
                         </div>
                       ) : null}
+                      {wrapUp && live.suggestedDisposition && campaign.dispositions.some((d) => d.id === live.suggestedDisposition?.dispositionId) ? (
+                        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-cyan-400/30 bg-cyan-400/10 px-3 py-2 text-xs text-cyan-100">
+                          <span className="flex-1">
+                            Suggested: <b>{live.suggestedDisposition.label}</b>
+                            {live.suggestedDisposition.reason ? ` · ${live.suggestedDisposition.reason}` : ""}
+                          </span>
+                          <button onClick={() => live.suggestedDisposition && sendDisposition(live.suggestedDisposition.dispositionId)} disabled={busy || !callId} className="rounded-lg bg-cyan-400 px-3 py-1 text-xs font-semibold text-cyan-950 disabled:opacity-40">
+                            Confirm &ldquo;{live.suggestedDisposition.label}&rdquo;
+                          </button>
+                        </div>
+                      ) : null}
+                      {wrapUp && live.summary ? <p className="rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-xs text-zinc-300"><span className="text-zinc-500">AI summary (added to the lead&apos;s notes): </span>{live.summary}</p> : null}
                       <div className="grid grid-cols-2 gap-2 md:grid-cols-3">
                         {campaign.dispositions
                           .filter((d) => !d.isCallback)
@@ -1647,7 +1682,7 @@ export function AgentConsole(props: ConsoleProps) {
                               key={d.id}
                               onClick={() => dispo(d)}
                               disabled={busy || !callId}
-                              className={`rounded-lg border px-2 py-2 text-left text-xs disabled:opacity-40 ${d.isSale ? "border-emerald-400/40 bg-emerald-400/10 text-emerald-200" : d.isDnc ? "border-red-400/40 bg-red-400/10 text-red-200" : "border-white/10 bg-white/5 text-zinc-200"} hover:bg-white/10`}
+                              className={`rounded-lg border px-2 py-2 text-left text-xs disabled:opacity-40 ${wrapUp && live.suggestedDisposition?.dispositionId === d.id ? "ring-2 ring-cyan-400 " : ""}${d.isSale ? "border-emerald-400/40 bg-emerald-400/10 text-emerald-200" : d.isDnc ? "border-red-400/40 bg-red-400/10 text-red-200" : "border-white/10 bg-white/5 text-zinc-200"} hover:bg-white/10`}
                             >
                               <div className="font-semibold">
                                 {d.label}
@@ -1793,6 +1828,20 @@ export function AgentConsole(props: ConsoleProps) {
           <div className="grid gap-4 xl:grid-cols-[1fr_1fr_320px]">
             <div className="space-y-4">
               {screenerBanner}
+              {liveOn && (onCall || wrapUp) ? (
+                <Panel title="Live call" collapsible={false} right={<span className="text-xs text-zinc-500">transcript & assist</span>}>
+                  <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,20rem)]">
+                    <div className="space-y-3">
+                      <ComplianceBanner view={live} />
+                      <TranscriptPanel view={live} height="h-80" agentLabel="You" />
+                    </div>
+                    <div className="space-y-3">
+                      <AssistCards view={live} />
+                      <ScriptChecklist view={live} />
+                    </div>
+                  </div>
+                </Panel>
+              ) : null}
               {aiPanel}
               <Panel title="Script" right={lead ? <span className="text-xs text-zinc-500">personalised for {leadName}</span> : null}>
                 {script ? (

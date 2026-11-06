@@ -20,6 +20,7 @@ import { queueCallbackEnded } from "../inbound/callbacks";
 import { startSurveyInsteadOfHangup } from "../inbound/survey";
 import { endLiveTransfersForCall } from "./transfers";
 import { aiCallEnded } from "../inbound/ai/control";
+import { liveCallBridged, liveLeadEnded } from "../assist/live";
 
 const sidKey = (sid: string) => `callsid:${sid}`;
 
@@ -186,6 +187,8 @@ export async function leadCallEnded(callId: string, status: string, sipStatus: n
   await leaveQueue(callId, "hangup").catch(() => undefined);
   // The caller hung up on the AI answer: its part of the call is finished (outcome, transcript, minutes).
   await aiCallEnded(callId).catch((e) => log.warn({ err: e, callId }, "finishing the AI part failed"));
+  // Live transcription stops; the summary and suggested disposition follow (assist/live.ts).
+  await liveLeadEnded(callId).catch((e) => log.warn({ err: e, callId }, "stopping live transcription failed"));
   // A destination still ringing or in the three-way has nobody to talk to now.
   await endLiveTransfersForCall(callId).catch((e) => log.warn({ err: e, callId }, "ending transfers after the lead left failed"));
   void chargeCallMinutes(callId).catch((e) => log.warn({ err: e, callId }, "billing: minutes charge failed"));
@@ -250,6 +253,7 @@ export async function leadCallBridged(callId: string): Promise<void> {
   if (!call || call.bridgedAt) return;
   await prisma.call.update({ where: { id: callId }, data: { bridgedAt: new Date() } });
   if (call.agentId) emitToAgent(call.agentId, "call:update", { callId, status: "bridged", ...screenerFields(call) });
+  await liveCallBridged(callId).catch((e) => log.warn({ err: e, callId }, "live transcription on bridge failed"));
 }
 
 export interface DispositionInput {

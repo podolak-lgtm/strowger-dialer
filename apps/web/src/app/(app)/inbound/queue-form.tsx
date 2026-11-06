@@ -271,6 +271,13 @@ export function QueueForm({ q, queues, skills, campaigns, audio, boxes, schedule
           </div>
         </Section>
 
+        <Section title="Live transcription and assist" hint="When this queue hands a caller to an agent: both sides transcribed live on the agent's console (and to a supervisor listening in); with assist on, rebuttal cards, a suggested next line and script progress. Phrases, model and limits follow the queue's campaign. Refused without a speech-to-text vendor on the jambonz account.">
+          <div className="flex flex-wrap items-end gap-3">
+            <Check name="transcriptionOn" label="transcribe calls" defaultChecked={q?.transcriptionOn ?? false} />
+            <Check name="liveAssistOn" label="live assist" defaultChecked={q?.liveAssistOn ?? false} />
+          </div>
+        </Section>
+
         <Section
           title="AI answer"
           hint="A built-in AI customer service answers the call. It says it is an automated assistant, never takes card numbers, and stays inside your instructions. A caller who says a hand-off phrase goes straight to a person, ahead of the line and with no forced hold; the agent's screen shows the AI's summary."

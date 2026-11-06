@@ -22,7 +22,8 @@
     "./campaign-draft": "./src/campaign-draft.ts",
     "./referrals": "./src/referrals.ts",
     "./nav": "./src/nav.ts",
-    "./inbound": "./src/inbound/index.ts"
+    "./inbound": "./src/inbound/index.ts",
+    "./assist": "./src/assist/index.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

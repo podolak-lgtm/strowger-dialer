@@ -169,3 +169,25 @@ test("unknown tabs fall back to dialing", () => {
   assert.equal(campaignTab("nope"), "dialing");
   assert.equal(campaignTab(undefined), "dialing");
 });
+
+test("transcription & assist settings: off by default, limits clamped, phrase lists parsed", async () => {
+  const { parseAssistSettings } = await import("./campaign-form");
+  const off = parseAssistSettings(fromRecord({}));
+  assert.equal(off.transcriptionOn, false);
+  assert.equal(off.liveAssistOn, false);
+  assert.equal(off.postCallSummaryOn, false);
+  assert.equal(off.suggestDispositionOn, false);
+  assert.equal(off.assistModel, "claude-haiku-5-5");
+  assert.equal(off.assistMinGapSeconds, 8);
+  assert.equal(off.assistMaxPerCall, 40);
+  assert.ok(off.disclosurePhrases.includes("quality and training"));
+  assert.deepEqual(off.bannedPhrases, []);
+  const on = parseAssistSettings(fromRecord({ transcriptionOn: true, liveAssistOn: true, assistModel: "claude-sonnet-5-5", assistMinGapSeconds: "0", assistMaxPerCall: "999", disclosurePhrases: "Recorded line\n", bannedPhrases: "Guaranteed\nfree\nfree" }));
+  assert.equal(on.transcriptionOn, true);
+  assert.equal(on.assistModel, "claude-sonnet-5-5");
+  assert.equal(on.assistMinGapSeconds, 2);
+  assert.equal(on.assistMaxPerCall, 200);
+  assert.deepEqual(on.disclosurePhrases, ["recorded line"]);
+  assert.deepEqual(on.bannedPhrases, ["guaranteed", "free"]);
+  assert.equal(SETTING_TAB.transcriptionOn, "assist");
+});

@@ -12,6 +12,7 @@
 //         destination up and the lead stays with the agent.
 // In `xfer-<id>` both legs carry endConferenceOnExit, so whichever side hangs
 // up ends the other; the destination leg's timeLimit is the 90-minute cap.
+import { liveAgentLeft } from "../assist/live";
 import { prisma, type Call, type Transfer, type TransferDestination, type TransferKind } from "@strowger/db";
 import { toE164 } from "@strowger/shared/phone";
 import { chooseTransferCallerId, destinationE164, renderWhisper, TRANSFER_CAP_MINUTES, TRANSFER_DISPOSITION, TRANSFER_RING_SECONDS, unansweredOutcome } from "@strowger/shared/transfers";
@@ -351,6 +352,7 @@ export async function agentLeaveTransfer(callId: string, agentId: string, how: "
     log.error({ err: e, transferId: t.id }, "lead redirect into the transfer room failed");
   }
 
+  await liveAgentLeft(callId).catch((e) => log.warn({ err: e, callId }, "stopping live transcription after the agent left failed"));
   if (t.call.leadId) await prisma.leadEvent.create({ data: { tenantId: t.tenantId, leadId: t.call.leadId, kind: "AGENT_LEFT", actorId: agentId, data: { transferId: t.id, destination: name, mode, how } } });
   const disp = await transferredDisposition(t.call.campaignId ?? "", t.tenantId).catch(() => null);
   if (disp) {

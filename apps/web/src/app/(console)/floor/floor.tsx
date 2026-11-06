@@ -7,6 +7,7 @@
 import { createJambonzClient } from "@jambonz/client-sdk-web";
 import { io, type Socket } from "socket.io-client";
 import { ChatPanel } from "@/components/chat-panel";
+import { LiveCallPanel, useLiveCall } from "@/components/live-call";
 import { isStaleBuildError, NewVersionBanner, useNewVersion } from "@/components/new-version";
 import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { floorStats, superviseCurrent, superviseMode, superviseStart, superviseStop, superviseTakeover, type FloorAgent, type FloorStats, type Supervision, type SuperviseMode, type TransferredCall } from "./actions";
@@ -82,6 +83,8 @@ export function FloorConsole({ me, view, initialCampaignId, engineUrl, rtToken, 
   const [pending, start] = useTransition();
   const clientRef = useRef<JambonzClient | null>(null);
   const [sock, setSock] = useState<Socket | null>(null);
+  // Compliance alerts raised on live transcripts anywhere on the floor (engine assist/live.ts), newest first.
+  const [alerts, setAlerts] = useState<Array<{ callId: string; agentId: string | null; message: string; rule: string; at: number }>>([]);
   // A deploy changes every Server Action id; this page then fails on any refresh.
   const { stale: newVersion, markStale } = useNewVersion(version);
 
@@ -116,6 +119,7 @@ export function FloorConsole({ me, view, initialCampaignId, engineUrl, rtToken, 
     sock.on("floor:call", bump);
     sock.on("floor:queue", bump);
     sock.on("floor:blend", bump);
+    sock.on("floor:compliance", (a: { callId: string; agentId: string | null; message: string; rule: string; at: number }) => setAlerts((cur) => [a, ...cur].slice(0, 10)));
     sock.on("floor:supervision", (s: Supervision) => {
       if (s.supervisorId === me.id) setSup(s.ended ? null : s);
     });
@@ -171,6 +175,9 @@ export function FloorConsole({ me, view, initialCampaignId, engineUrl, rtToken, 
   const stop = () => act(() => superviseStop());
 
   const watched = stats?.agents.find((a) => a.userId === sup?.agentId) ?? null;
+  // The watched agent's live transcript while listening, whispering or barging.
+  const live = useLiveCall(sock, sup ? (watched?.currentCallId ?? null) : null, sup?.agentId ?? null);
+  const nameOf = (id: string | null) => stats?.agents.find((a) => a.userId === id)?.name ?? "An agent";
 
   return (
     <div className="flex min-h-screen">
@@ -296,6 +303,12 @@ export function FloorConsole({ me, view, initialCampaignId, engineUrl, rtToken, 
                       </button>
                     </div>
                     <p className="mt-2 text-xs text-orange-300">CAUTION: Barging in makes your audio live to both {watched.name.split(" ")[0]} and the customer.</p>
+                    {watched.currentCallId && (live.status || live.turns.length || live.partial.CUSTOMER || live.partial.AGENT) ? (
+                      <div className="mt-3">
+                        <div className="mb-1 text-xs uppercase tracking-wide text-zinc-400">Live transcript</div>
+                        <LiveCallPanel view={live} assist={false} height="h-64" agentLabel={watched.name.split(" ")[0]} />
+                      </div>
+                    ) : null}
                     <button onClick={stop} className="mt-3 text-xs text-zinc-400 underline">
                       Stop monitoring
                     </button>
@@ -306,6 +319,18 @@ export function FloorConsole({ me, view, initialCampaignId, engineUrl, rtToken, 
               </Panel>
               <Panel title="Call Supervision Console">
                 <div className="space-y-3 text-sm text-zinc-400">
+                  {alerts.length ? (
+                    <div className="rounded-lg border border-red-400/30 bg-red-500/10 p-3">
+                      <div className="mb-1 text-xs uppercase tracking-wide text-red-300">Live compliance alerts</div>
+                      <ul className="space-y-1 text-xs text-red-100">
+                        {alerts.map((a) => (
+                          <li key={`${a.callId}-${a.at}-${a.rule}`}>
+                            <span className="text-zinc-400">{new Date(a.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span> {nameOf(a.agentId)}: {a.message}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
                   <div className="rounded-lg bg-black/30 p-3">
                     <div className="mb-1 flex items-center justify-between text-zinc-200">
                       <span>{watched?.name ?? "Agent"}</span>

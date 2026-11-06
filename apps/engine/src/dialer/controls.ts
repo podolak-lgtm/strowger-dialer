@@ -1,5 +1,6 @@
 // Mid-call controls an agent uses: hold, warm transfer to a closer, and a
 // manual dial of a typed number under the same compliance rules.
+import { liveAgentLeft } from "../assist/live";
 import { outboundAllowed } from "../billing";
 import { isTestPhone } from "./test-phones";
 import { prisma, type Campaign } from "@strowger/db";
@@ -59,6 +60,8 @@ export async function transferCall(callId: string, fromAgentId: string, toAgentI
   // Claim the closer first so nothing else lands on them while the leg moves.
   await patchAgent(toAgentId, { state: "ON_CALL", currentCallId: callId, reservedLeadId: null });
   try {
+    // The fronter leaves: live transcription of this call stops (the closer's part is not transcribed).
+    await liveAgentLeft(callId).catch(() => undefined);
     await jambonz.calls.redirect(call.providerCallId, { url: hookUrl("/jambonz/transfer", { callId, toAgentId }), method: "POST" });
   } catch (e) {
     await patchAgent(toAgentId, { state: "READY", currentCallId: null });

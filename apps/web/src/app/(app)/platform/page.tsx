@@ -229,6 +229,9 @@ export default async function PlatformPage({ searchParams }: PageProps<"/platfor
               <Field label="AI answer speech, ¢ per minute" hint="jambonz speech-to-text + text-to-speech per AI minute, from their invoices. The LLM is costed from tokens.">
                 <input name="aiMinuteCost" defaultValue={toMilli(o.rates.aiMinuteCostMillicents ?? 0)} className={inputClass} />
               </Field>
+              <Field label="Live transcription, ¢ per leg-minute" hint="Speech-to-text for live transcription (each side of a call is a leg), from the jambonz / STT vendor invoice. 0 until entered.">
+                <input name="sttMinuteCost" defaultValue={toMilli(o.rates.sttMinuteCostMillicents ?? 0)} className={inputClass} />
+              </Field>
             </div>
             <Field label="Prepayment instructions shown to clients" hint="Bank wire details, who to email the remittance to, and so on.">
               <textarea name="prepayInstructions" rows={4} defaultValue={o.rates.prepayInstructions ?? ""} className={inputClass} />
@@ -243,7 +246,7 @@ export default async function PlatformPage({ searchParams }: PageProps<"/platfor
         <Card title="Rate plan per client">
           <div className="space-y-4">
             {o.tenants.map((t) => {
-              const p = t.plan ?? { seatMonthlyCents: 7000, perMinuteMillicents: 1200, didMarkupPct: 50, scrubMarginMillicents: 500, smsPriceMillicents: 1500, aiMinutePriceMillicents: 0, lowBalanceCents: 20000, graceDays: 3 };
+              const p = t.plan ?? { seatMonthlyCents: 7000, perMinuteMillicents: 1200, didMarkupPct: 50, scrubMarginMillicents: 500, smsPriceMillicents: 1500, aiMinutePriceMillicents: 0, transcriptMinutePriceMillicents: 0, assistCallPriceMillicents: 0, lowBalanceCents: 20000, graceDays: 3 };
               return (
                 <form key={t.id} action={savePlan} className="rounded-md border border-zinc-800 p-3 text-sm">
                   <input type="hidden" name="tenantId" value={t.id} />
@@ -266,6 +269,12 @@ export default async function PlatformPage({ searchParams }: PageProps<"/platfor
                     </Field>
                     <Field label="AI answer ¢/minute" hint="0 = not charged">
                       <input name="aiMinutePrice" defaultValue={toMilli(p.aiMinutePriceMillicents ?? 0)} className={inputClass} />
+                    </Field>
+                    <Field label="Transcription ¢/minute" hint="Per transcribed call minute; 0 = not charged">
+                      <input name="transcriptMinutePrice" defaultValue={toMilli(p.transcriptMinutePriceMillicents ?? 0)} className={inputClass} />
+                    </Field>
+                    <Field label="Live assist ¢/suggestion" hint="Per AI line suggested; 0 = not charged">
+                      <input name="assistCallPrice" defaultValue={toMilli(p.assistCallPriceMillicents ?? 0)} className={inputClass} />
                     </Field>
                     <Field label="Warn below $">
                       <input name="lowBalance" defaultValue={(p.lowBalanceCents / 100).toFixed(2)} className={inputClass} />

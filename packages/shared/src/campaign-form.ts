@@ -7,6 +7,8 @@
 // the web actions.
 import { normalizePhone } from "./phone";
 import { destinationE164 } from "./transfers";
+import { DEFAULT_ASSIST_MAX_PER_CALL, DEFAULT_ASSIST_MIN_GAP_SECONDS, assistModel, clampAssistLimits } from "./assist/live";
+import { DEFAULT_DISCLOSURE_PHRASES, parsePhraseList } from "./compliance/live-call";
 
 /** Reads one posted value: the string, "on" for a ticked checkbox, null when absent. */
 export type Get = (key: string) => string | null;
@@ -73,6 +75,16 @@ export const CAMPAIGN_SETTING_KEYS = [
   "callerIdMode",
   "fixedCallerId",
   "callerIdFallback",
+  "transcriptionOn",
+  "liveAssistOn",
+  "assistModel",
+  "assistMinGapSeconds",
+  "assistMaxPerCall",
+  "spokenDisclosureRequired",
+  "disclosurePhrases",
+  "bannedPhrases",
+  "postCallSummaryOn",
+  "suggestDispositionOn",
 ] as const;
 export type CampaignSettingKey = (typeof CAMPAIGN_SETTING_KEYS)[number];
 
@@ -125,6 +137,32 @@ export function parseCampaignSettings(get: Get, before: CampaignEnumsBefore) {
     listSelection: String(get("listSelection") ?? before.listSelection),
     closersMayDial: on(get, "closersMayDial"),
     callbackOwnerMinutes: Math.max(0, num(get, "callbackOwnerMinutes", 30)),
+    ...parseAssistSettings(get),
+  };
+}
+
+/**
+ * Live transcription and agent assist (the "Transcription & assist" tab).
+ * Phrase lists are typed one per line; an empty disclosure list falls back
+ * to the defaults (a required disclosure with nothing to listen for would
+ * alert on every call). The STT-vendor check needs the engine and stays in
+ * the save action.
+ */
+export function parseAssistSettings(get: Get) {
+  const n = (k: string, d: number) => (get(k) === null || get(k) === "" ? d : num(get, k, d));
+  const limits = clampAssistLimits(n("assistMinGapSeconds", DEFAULT_ASSIST_MIN_GAP_SECONDS), n("assistMaxPerCall", DEFAULT_ASSIST_MAX_PER_CALL));
+  const disclosure = parsePhraseList(get("disclosurePhrases"));
+  return {
+    transcriptionOn: on(get, "transcriptionOn"),
+    liveAssistOn: on(get, "liveAssistOn"),
+    assistModel: assistModel(get("assistModel")),
+    assistMinGapSeconds: limits.minGapSeconds,
+    assistMaxPerCall: limits.maxPerCall,
+    spokenDisclosureRequired: on(get, "spokenDisclosureRequired"),
+    disclosurePhrases: disclosure.length ? disclosure : [...DEFAULT_DISCLOSURE_PHRASES],
+    bannedPhrases: parsePhraseList(get("bannedPhrases")),
+    postCallSummaryOn: on(get, "postCallSummaryOn"),
+    suggestDispositionOn: on(get, "suggestDispositionOn"),
   };
 }
 export type CampaignSettings = ReturnType<typeof parseCampaignSettings>;
