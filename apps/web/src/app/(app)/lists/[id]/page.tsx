@@ -3,6 +3,7 @@ import { formatPhone } from "@strowger/shared";
 import { notFound } from "next/navigation";
 import { requireClientWorkspace } from "@/lib/auth";
 import { Badge, Button, Card, Field, PageHeader, Table, Td, inputClass } from "@/components/ui";
+import { NumbersCard } from "@/components/numbers-card";
 import { updateList } from "../actions";
 import { rememberedMappings } from "../import-actions";
 import { UploadWizard } from "./upload-wizard";
@@ -45,7 +46,14 @@ export default async function ListPage({ params }: PageProps<"/lists/[id]">) {
         <div className="space-y-6 lg:col-span-2">
           {list.source === "UPLOAD" ? (
             <Card title="Upload CSV">
-              <UploadWizard listId={list.id} remembered={remembered} />
+              <UploadWizard listId={list.id} remembered={remembered} inCampaign={Boolean(list.campaignId)} />
+            </Card>
+          ) : null}
+
+          {list.campaign ? (
+            <Card title="Numbers for this list">
+              {/* Keyed on the lead count so it plans again once an import lands. */}
+              <NumbersCard key={`${list.id}-${list.totalLeads}`} campaignId={list.campaign.id} listId={list.id} />
             </Card>
           ) : null}
 

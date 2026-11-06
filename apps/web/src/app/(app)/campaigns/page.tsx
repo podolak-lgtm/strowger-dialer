@@ -57,7 +57,7 @@ export default async function CampaignsPage() {
             </Field>
             <Button type="submit">Create campaign</Button>
           </form>
-          <p className="mt-3 text-xs text-zinc-500">Starts as a draft with standard dispositions and a three-step dial plan (day 0, days 1–7, day 8+) you can edit.</p>
+          <p className="mt-3 text-xs text-zinc-500">Starts as a draft with standard dispositions and a three-step dial plan (day 0, days 1–7, day 8+) you can edit. Next you load its first list (optional) and order the numbers it needs.</p>
         </Card>
       </div>
     </div>

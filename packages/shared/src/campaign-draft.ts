@@ -36,6 +36,7 @@ export const SETTING_TAB: Record<CampaignSettingKey, CampaignTab> = {
   callbackOwnerMinutes: "dialing",
   callerIdMode: "dialing",
   fixedCallerId: "dialing",
+  callerIdFallback: "dialing",
   localWindowStart: "compliance",
   localWindowEnd: "compliance",
   maxAttemptsPerDay: "compliance",

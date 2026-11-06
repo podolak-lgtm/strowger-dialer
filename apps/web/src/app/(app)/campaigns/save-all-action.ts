@@ -15,7 +15,7 @@ import { revalidatePath } from "next/cache";
 import { requireRole } from "@/lib/auth";
 import { engine } from "@/lib/engine";
 import { canManageGames } from "@/lib/rights";
-import { campaignSettingsData, newWebhookSecret, ownsActiveNumber } from "./campaign-data";
+import { campaignSettingsData, newWebhookSecret, ownsActiveNumber, returnNumbersToPool } from "./campaign-data";
 
 export type SaveAllResult = { ok: true; saved: CampaignTab[]; warning?: string } | { ok: false; errors: DraftError[] };
 
@@ -167,6 +167,8 @@ export async function saveCampaignAll(campaignId: string, input: { snapshot: Cam
           diff.bets = { before: { betsEnabled: before.betsEnabled, weeklyPoints: before.weeklyPoints, maxStake: before.maxStake }, after: bets };
         }
         if (Object.keys(campaignData).length) await tx.campaign.update({ where: { id: campaignId }, data: campaignData });
+        // Archived: the campaign's numbers go back to the pool (the page said so in its confirm).
+        if (settings.status === "ARCHIVED" && before.status !== "ARCHIVED") diff.numbersToPool = await returnNumbersToPool(tx, tenantId, campaignId);
 
         // A list belongs to one campaign at a time: attaching moves it here.
         if (attach.length) await tx.list.updateMany({ where: { id: { in: attach }, tenantId }, data: { campaignId } });
@@ -268,5 +270,9 @@ export async function saveCampaignAll(campaignId: string, input: { snapshot: Cam
   revalidatePath("/campaigns");
   if (attach.length || detach.length) revalidatePath("/lists");
   if (betsChanged) revalidatePath("/games");
+  if (diff.numbersToPool) {
+    revalidatePath("/numbers");
+    revalidatePath("/dids");
+  }
   return { ok: true, saved: dirtyTabs(input.snapshot, draft), warning };
 }

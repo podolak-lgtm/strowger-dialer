@@ -56,7 +56,8 @@ export async function setCallerIdStatus(formData: FormData) {
   const s = await requireRole("SUPERVISOR");
   const id = String(formData.get("id"));
   const status = String(formData.get("status")) as "ACTIVE" | "RESTING" | "SPAM_FLAGGED" | "RETIRED";
-  await prisma.callerIdNumber.updateMany({ where: { id, tenantId: s.tenant.id }, data: { status } });
+  // Flagged or resting: off its campaign, into the pool (owner, 6 Nov).
+  await prisma.callerIdNumber.updateMany({ where: { id, tenantId: s.tenant.id }, data: { status, ...(status === "SPAM_FLAGGED" || status === "RESTING" ? { campaignId: null } : {}) } });
   revalidatePath("/settings");
 }
 

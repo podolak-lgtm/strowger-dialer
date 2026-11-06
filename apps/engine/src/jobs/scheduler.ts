@@ -9,6 +9,7 @@ import { deliverPending } from "../webhooks/deliver";
 import { nightlyRecordings } from "../recordings/export";
 import { queueTick } from "../inbound/router";
 import { syncPendingOrders } from "../provision";
+import { idlePoolCheck, restoreRestedNumbers } from "../provision/plan";
 import { endExpiredRuns, settlePeriodWagers, weeklyTopUp } from "../games";
 import { chargeAllDids, suspendOverdue } from "../billing";
 import { syncTelnyxCosts } from "../billing/vendor";
@@ -72,6 +73,14 @@ async function monthlyDids(): Promise<void> {
   await redis.set("job:monthlyDids:last", key);
 }
 
+/** Once a day: count pool numbers idle two weeks or more (surfaced on /numbers; never released automatically). */
+async function dailyIdlePool(): Promise<void> {
+  const today = new Date().toISOString().slice(0, 10);
+  if ((await redis.get("job:idlePool:last")) === today) return;
+  await idlePoolCheck();
+  await redis.set("job:idlePool:last", today);
+}
+
 const JOBS: Job[] = [
   { name: "scrub", everyMs: 2 * 60_000, run: scrubAllTenants },
   { name: "dailyReset", everyMs: 10 * 60_000, run: dailyReset },
@@ -79,6 +88,8 @@ const JOBS: Job[] = [
   { name: "nightlyRecordings", everyMs: 15 * 60_000, run: nightly },
   { name: "queues", everyMs: 1_000, run: queueTick },
   { name: "numberOrders", everyMs: 3 * 60_000, run: syncPendingOrders },
+  { name: "restedNumbers", everyMs: 10 * 60_000, run: () => restoreRestedNumbers() },
+  { name: "idlePool", everyMs: 60 * 60_000, run: dailyIdlePool },
   { name: "wagers", everyMs: 15 * 60_000, run: () => settlePeriodWagers() },
   { name: "pokerRuns", everyMs: 5 * 60_000, run: () => endExpiredRuns() },
   { name: "weeklyTopUp", everyMs: 10 * 60_000, run: mondayTopUp },

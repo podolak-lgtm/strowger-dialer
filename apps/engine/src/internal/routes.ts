@@ -22,6 +22,7 @@ import { jambonz, jambonzConfigured } from "../jambonz/client";
 import { assignNumbersToCampaign, createBrand, createTenDlcCampaign, orderNumbers, provisionStatus, releaseNumber, searchNumbers, setupCarrier, syncNumbers, tenDlcStatus, usecaseFees } from "../provision";
 import type { BrandInput, CampaignInput } from "../provision/telnyx";
 import { fcrProgress, startFcrRun } from "../provision/fcr";
+import { applyDidPlan, loadDidPlan } from "../provision/plan";
 import { chatHistory, sendChat } from "../chat";
 import { acceptWager, announceCampaignBets, declineWager, endPokerRun, gamesOverview, proposeWager, setCampaignBets, startPokerRun, withdrawWager } from "../games";
 import { suggest } from "../assist";
@@ -458,6 +459,18 @@ export async function registerInternalRoutes(app: FastifyInstance): Promise<void
     return wrap(() => createTenDlcCampaign(b.tenantId, b.campaign), reply);
   });
   app.post("/internal/provision/tendlc/assign", async (req, reply) => wrap(() => assignNumbersToCampaign(z.object({ tenantId: z.string() }).parse(req.body).tenantId), reply));
+  // Number planning (owner, 6 Nov): what a campaign (or one of its lists) needs, and applying it.
+  const flag = (v: unknown, d: boolean) => (v === undefined || v === null || v === "" ? d : v === true || v === "true" || v === "1");
+  app.get("/internal/campaigns/:id/did-plan", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const q = z.object({ tenantId: z.string(), listId: z.string().optional(), poolFirst: z.string().optional(), exactOnly: z.string().optional() }).parse(req.query);
+    return wrap(() => loadDidPlan(q.tenantId, id, { listId: q.listId || null, poolFirst: flag(q.poolFirst, true), exactOnly: flag(q.exactOnly, false) }), reply);
+  });
+  app.post("/internal/campaigns/:id/did-plan/apply", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const b = Ids.extend({ listId: z.string().nullish(), poolFirst: z.boolean().optional(), exactOnly: z.boolean().optional(), requestedBy: z.string().optional() }).parse(req.body);
+    return wrap(() => applyDidPlan({ tenantId: b.tenantId, campaignId: id, userId: b.userId, listId: b.listId ?? null, poolFirst: b.poolFirst ?? true, exactOnly: b.exactOnly ?? false, requestedBy: b.requestedBy }), reply);
+  });
   app.get("/internal/provision/tendlc/fees", async (req, reply) => {
     const q = z.object({ tenantId: z.string(), usecase: z.string() }).parse(req.query);
     return wrap(() => usecaseFees(q.tenantId, q.usecase), reply);

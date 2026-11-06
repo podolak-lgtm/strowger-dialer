@@ -32,6 +32,11 @@ test("campaign settings keep the page's clamps", () => {
   // Enums fall back to the stored value only when absent.
   assert.equal(s.status, "DRAFT");
   assert.equal(parseCampaignSettings(fromRecord({ status: "ACTIVE" }), before).status, "ACTIVE");
+  // Caller ID fallback: ANY unless one of the two narrower modes.
+  assert.equal(s.callerIdFallback, "ANY");
+  assert.equal(parseCampaignSettings(fromRecord({ callerIdFallback: "EXACT_ONLY" }), before).callerIdFallback, "EXACT_ONLY");
+  assert.equal(parseCampaignSettings(fromRecord({ callerIdFallback: "bogus" }), before).callerIdFallback, "ANY");
+  assert.equal(parseCampaignSettings(fromRecord({}), { ...before, callerIdFallback: "SAME_STATE" }).callerIdFallback, "SAME_STATE");
 });
 
 test("every campaign setting sits on exactly one tab", () => {

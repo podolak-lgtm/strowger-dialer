@@ -4,6 +4,8 @@ import { chargeCallMinutes, outboundAllowed } from "../billing";
 import { prisma, type Call, type Campaign, type Lead } from "@strowger/db";
 import { toE164 } from "@strowger/shared/phone";
 import { DID_RULES, capForNumber, hourlyCap } from "@strowger/shared/did-hygiene";
+import { callerIdFallbackScope } from "@strowger/shared/did-plan";
+import { stateForAreaCode } from "@strowger/shared";
 import { config } from "../config";
 import { log } from "../log";
 import { redis } from "../redis";
@@ -22,13 +24,16 @@ export async function callIdForSid(sid: string): Promise<string | null> {
   return redis.get(sidKey(sid));
 }
 
-/** Choose the number to show the lead. Local presence first, then any active, then the campaign's fixed number. */
 /**
- * Choose the number to show the lead. Local presence first (same area code),
- * then any; within that, the least-used today. A number is eligible only if
+ * Choose the number to show the lead. Local presence first (same area code,
+ * the campaign's own numbers and the shared pool), then the campaign's
+ * fallback (`callerIdFallback`: any area code, the lead's state only, or
+ * none); within that, the least-used today. A number is eligible only if
  * it is ACTIVE, registered (Free Caller Registry) when the rules require it,
  * not resting after a flag, under its daily cap for its age, and under the
- * per-hour spread. Caps are data in shared/did-hygiene.
+ * per-hour spread. Caps are data in shared/did-hygiene. Nothing free: the
+ * campaign's fixed caller ID if set, else null (the caller puts the lead back
+ * for later).
  */
 export async function pickCallerId(campaign: Campaign, leadPhone: string): Promise<string | null> {
   if (campaign.callerIdMode === "FIXED") return campaign.fixedCallerId;
@@ -40,9 +45,11 @@ export async function pickCallerId(campaign: Campaign, leadPhone: string): Promi
     OR: [{ campaignId: null }, { campaignId: campaign.id }],
     AND: [{ OR: [{ restUntil: null }, { restUntil: { lte: now } }] }, ...(DID_RULES.requireRegistration ? [{ registeredAt: { not: null } }] : [])],
   };
+  const scope = callerIdFallbackScope(campaign.callerIdFallback, stateForAreaCode(area));
+  const order = [{ usedToday: "asc" as const }, { lastUsedAt: "asc" as const }];
   const candidates = [
-    ...(await prisma.callerIdNumber.findMany({ where: { ...base, areaCode: area }, orderBy: [{ usedToday: "asc" }, { lastUsedAt: "asc" }], take: 10 })),
-    ...(await prisma.callerIdNumber.findMany({ where: { ...base, areaCode: { not: area } }, orderBy: [{ usedToday: "asc" }, { lastUsedAt: "asc" }], take: 20 })),
+    ...(await prisma.callerIdNumber.findMany({ where: { ...base, areaCode: area }, orderBy: order, take: 10 })),
+    ...(scope.kind === "none" ? [] : await prisma.callerIdNumber.findMany({ where: { ...base, areaCode: { not: area }, ...(scope.kind === "state" ? { state: scope.state } : {}) }, orderBy: order, take: 20 })),
   ];
   const hourKey = `did:hour:${now.toISOString().slice(0, 13)}`;
   for (const n of candidates) {
@@ -55,8 +62,9 @@ export async function pickCallerId(campaign: Campaign, leadPhone: string): Promi
     await redis.expire(hourKey, 2 * 3600);
     return n.phone;
   }
-  if (candidates.length === 0) log.warn({ campaignId: campaign.id }, "no eligible caller ID: pool empty, unregistered, or resting");
-  else log.warn({ campaignId: campaign.id }, "no eligible caller ID: every number at its cap for now");
+  const where = scope.kind === "none" ? `area code ${area} only` : scope.kind === "state" ? `area code ${area} or state ${scope.state}` : "any area code";
+  const reason = candidates.length === 0 ? `no eligible caller ID (${where}): none in the campaign or pool, unregistered, or resting` : `no eligible caller ID (${where}): every number at its cap for now`;
+  log.warn({ campaignId: campaign.id, area, fallback: campaign.callerIdFallback, usingFixed: Boolean(campaign.fixedCallerId) }, campaign.fixedCallerId ? `${reason}; using the fixed caller ID` : `${reason}; the lead waits`);
   return campaign.fixedCallerId;
 }
 
@@ -78,7 +86,16 @@ export async function dialLeadForAgent(campaign: Campaign, lead: Lead, agentId: 
   const allowed = await outboundAllowed(campaign.tenantId);
   if (!allowed.ok) return { ok: false, error: allowed.error };
   const callerId = preferredCallerId ?? (await pickCallerId(campaign, lead.phone));
-  if (!callerId) return { ok: false, error: "No caller ID number is available for this campaign" };
+  if (!callerId)
+    return {
+      ok: false,
+      error:
+        campaign.callerIdFallback === "EXACT_ONLY"
+          ? `No caller ID in area code ${lead.phone.slice(0, 3)} is free right now (this campaign uses the exact area code only). Skip this lead for now.`
+          : campaign.callerIdFallback === "SAME_STATE"
+            ? "No caller ID in the lead's area code or state is free right now. Skip this lead for now."
+            : "No caller ID number is available for this campaign",
+    };
 
   const call = await prisma.call.create({
     data: {

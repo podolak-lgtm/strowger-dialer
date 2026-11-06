@@ -2,10 +2,23 @@
 
 // Dialing, Compliance, and Voicemail & screeners: the campaign row's settings.
 import { DEFAULT_SCREENER_SCRIPT } from "@strowger/shared/scripts";
+import { formatPhone } from "@strowger/shared/phone";
 import { NavLink } from "@/components/nav-link";
+import { NumbersCard } from "@/components/numbers-card";
 import { Card, Hint, SettingCheck, SettingInput, SettingSelect, SettingTextarea } from "./editor-ui";
 
-export function DialingTab({ campaignId }: { campaignId: string }) {
+export interface PinnedNumber {
+  id: string;
+  phone: string;
+  areaCode: string;
+  status: string;
+  /** Resting until this day (YYYY-MM-DD), when it is. */
+  restUntil: string | null;
+  registered: boolean;
+  provisionStatus: string;
+}
+
+export function DialingTab({ campaignId, pinned }: { campaignId: string; pinned: PinnedNumber[] }) {
   return (
     <>
       <Card title="Basics">
@@ -55,7 +68,37 @@ export function DialingTab({ campaignId }: { campaignId: string }) {
             <option value="LOCAL_PRESENCE">Local presence: rotate numbers matching the lead&apos;s area code</option>
             <option value="FIXED">One fixed number</option>
           </SettingSelect>
-          <SettingInput k="fixedCallerId" label="Fixed number" hint="Used only in fixed mode." placeholder="(305) 555-0100" />
+          <SettingInput k="fixedCallerId" label="Fixed number" hint="Fixed mode; in local presence, the fallback when Exact area code only finds nothing free." placeholder="(305) 555-0100" />
+          <SettingSelect k="callerIdFallback" label="When no number in the lead's area code is free" hint="Local presence looks at this campaign's numbers and the shared pool, same area code first.">
+            <option value="ANY">Use any free number (any area code)</option>
+            <option value="SAME_STATE">Use a number from the lead&apos;s state only</option>
+            <option value="EXACT_ONLY">Exact area code only: else the fixed number, else the lead waits</option>
+          </SettingSelect>
+        </div>
+      </Card>
+
+      <Card title={`Numbers (${pinned.length} pinned)`} className="min-[900px]:col-span-2">
+        <div className="space-y-3">
+          <Hint
+            more={
+              <>
+                Numbers start in the workspace&apos;s shared pool and are pinned to a campaign by this button or on the Numbers page. Archiving the campaign returns them to the pool. A number that is flagged or put to rest leaves the campaign for the pool, and rotates back in from the pool when its rest ends. The button below acts at once (with a confirm); it is not part of Save campaign.
+              </>
+            }
+          >
+            What every active list on this campaign needs, by area code.
+          </Hint>
+          <NumbersCard campaignId={campaignId} />
+          {pinned.length ? (
+            <div className="flex flex-wrap gap-1.5 border-t border-zinc-800 pt-3">
+              {pinned.map((n) => (
+                <span key={n.id} className={`rounded border px-1.5 py-0.5 font-mono text-[11px] ${n.status === "ACTIVE" && !n.restUntil ? "border-zinc-700 text-zinc-300" : "border-amber-900 text-amber-300"}`} title={`${n.status.toLowerCase()}${n.restUntil ? `, rests until ${n.restUntil}` : ""}${n.registered ? "" : ", not yet registered at the Free Caller Registry"} · ${n.provisionStatus}`}>
+                  {formatPhone(n.phone)}
+                  {n.registered ? "" : " ·unreg"}
+                </span>
+              ))}
+            </div>
+          ) : null}
         </div>
       </Card>
     </>

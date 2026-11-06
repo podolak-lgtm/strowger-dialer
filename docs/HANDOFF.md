@@ -458,6 +458,91 @@ before the campaign dials, from one screen. `apps/engine/src/provision/`:
   action is audit-logged (`provision.*`). The engine's internal routes are
   under `/internal/provision/*`.
 
+## Number planning and the pool (owner, 6 Nov)
+
+Owner: "when a list is loaded into a campaign, work out the DIDs it needs,
+tell the customer, and order and match them for local presence; DIDs start
+in a pool, are registered to a campaign, go back to the pool when the
+campaign dies; a flagged DID goes to the pool, not back to its campaign;
+talk about returning pool DIDs idle two weeks."
+
+- **The pool** is `CallerIdNumber.campaignId = null`. Numbers ordered on
+  /numbers without a campaign land there (unchanged). `pickCallerId` already
+  dialled from the campaign's own numbers plus the pool.
+- **Planner** (`packages/shared/src/did-plan.ts`, pure, tested in
+  `did-plan.test.ts`; assumptions in `PLAN_DEFAULTS`): dialable leads (NEW,
+  IN_HOPPER, DIALING, CONTACTED, CALLBACK; not scrubbed DNC/litigator) are
+  counted per area code (state = `stateForAreaCode`). Dials per lead on its
+  day = the campaign's attempt rule (max of `maxAttemptsPerDay`, active dial
+  plans' `attemptsPerDay`, the lists' cadence `maxAttemptsPerDay`) capped at
+  **3**, because few leads use every attempt. The list is worked over **5**
+  working days, so dials/day = leads / 5 × dials per lead. Numbers =
+  ceil(dials / **75**) (`DID_RULES.establishedCap`) + round(20%) spare per
+  area code, at least **1** spare in the whole plan (on the busiest row).
+  Area codes under **25** leads a week fold into the busiest area code of
+  their state. "Have" = pinned to the campaign, ACTIVE, not resting, not
+  failed/released (unregistered numbers count, with a note: they need the
+  Free Caller Registry before they dial). Pool: same area code first for
+  every row, then same-state stand-ins unless **exact only** (forced when
+  the campaign's `callerIdFallback` is EXACT_ONLY, since a stand-in would
+  never be picked). Whatever is still short is ordered, sized for warm-up at
+  **65** dials/day (the weeks 2–3 cap): a shortfall of n orders
+  round(n × 75 / 65), never fewer than n. Price per number = platform
+  `didMonthlyCents` × (1 + `didMarkupPct`) (cost for the platform
+  workspace); the card shows the monthly cost of the new numbers and of all
+  the campaign's numbers after applying.
+- **Engine** (`apps/engine/src/provision/plan.ts`):
+  `GET /internal/campaigns/:id/did-plan?tenantId&listId&poolFirst&exactOnly`
+  (whole campaign = its ACTIVE lists; with `listId`, that list's leads
+  against everything the campaign has, with a note that the campaign page
+  plans all lists together) and
+  `POST /internal/campaigns/:id/did-plan/apply {tenantId, userId, listId?,
+  poolFirst, exactOnly}`: recomputes the plan, pins the chosen pool numbers
+  (`updateMany` guarded on still being pool + ACTIVE; one taken meanwhile is
+  ordered instead), then, if `outboundAllowed`, searches Telnyx per short
+  area code and orders through `orderNumbers` pinned to the campaign; when
+  Telnyx has too few in the area code it orders the rest in the same state
+  and says so; what it could not find comes back in `short`. Pinning pool
+  numbers is free and happens even when billing blocks the order (the
+  result says "Nothing ordered: …"). Audit `numbers.plan.apply`. An archived
+  campaign refuses.
+- **UI**: `components/numbers-card.tsx` (client; loads through
+  `numbers/plan-actions.ts`), with the table, the two options (pool first,
+  exact area codes only), totals, monthly cost and one button "Take N from
+  the pool and order M numbers" (confirm), or "You have enough numbers".
+  It appears on the list page under the CSV import report when the list is
+  in a campaign (keyed on `totalLeads`; the wizard calls `router.refresh()`
+  after an import so it plans again), on the campaign's Dialing tab as the
+  **Numbers** card with the numbers pinned to it (an immediate action, never
+  part of Save), and in the **new campaign setup**: `createCampaign` now
+  redirects to `/campaigns/<id>/setup` (step 2: upload a new list or attach
+  an existing one, or skip; step 3: the CSV wizard and the numbers card).
+- **Lifecycle**: archiving a campaign (save-all and the old
+  `updateCampaign`) sets its numbers' `campaignId` to null inside the save
+  (`returnNumbersToPool`; `campaign.save` diff `numbersToPool`); the Save
+  confirm says so first. A flag or a rest (the reputation reading in
+  `lib/did-reputation.ts`, /dids "rest", Settings status RESTING or
+  SPAM_FLAGGED) also unpins the number, so it never returns to that
+  campaign by itself. Scheduler job `restedNumbers` (10 min,
+  `restoreRestedNumbers`) puts RESTING / SPAM_FLAGGED numbers whose
+  `restUntil` has passed back to ACTIVE in the pool; a number still marked
+  spam is flagged again by the next reading. Numbers set to SPAM_FLAGGED by
+  hand without a `restUntil` stay out.
+- **Idle pool numbers** (`isIdlePoolNumber`: pool, not RETIRED, no use in
+  14 days, or never used and created 14+ days ago): job `idlePool` logs the
+  count per workspace once a day; /numbers shows an "Idle in the pool 14+
+  days" card with the monthly cost, checkboxes and "Release selected to
+  Telnyx" (confirm, `releaseIdle` → `/provision/release` each, audit
+  `provision.release_idle`). Nothing is released automatically. The numbers
+  table shows a pool / campaign badge.
+- **Local presence shortfall** (`Campaign.callerIdFallback`, Dialing tab →
+  Caller ID card, in the draft): ANY (default, the old behaviour), SAME_STATE
+  (only numbers in the lead's state, by area code), EXACT_ONLY (exact area
+  code only; else the campaign's fixed caller ID if set, else null and the
+  lead waits, with the reason logged). Pure scope in `callerIdFallbackScope`
+  (tested). A lead's `assignedCallerId` from an earlier attempt still wins
+  over `pickCallerId` in the pacer and cadence paths (unchanged).
+
 ## Media bucket
 
 Railway bucket `media` (S3-compatible, region sjc). The web service reads
@@ -795,7 +880,9 @@ Lead Queue expands (`CollapsibleLeadCard`) to the same editor.
   ACTIVE, `registeredAt` set (Free Caller Registry), not `restUntil`, under
   its cap (week 1 40, weeks 2–3 65, then 75, or `dailyCap`) and under the
   hourly spread (cap/10, Redis `did:hour:<hour>`). Local area code first,
-  then least used. Any spam/blocked reading → SPAM_FLAGGED with a 21-day
+  then least used (the campaign's `callerIdFallback` decides how far it
+  looks; see "Number planning and the pool"). Any spam/blocked reading →
+  unpinned to the pool and SPAM_FLAGGED with a 21-day
   `restUntil`. Short calls (<10 s after answer) are counted per number
   (`shortCallsToday`). DIDs page shows all of it and bulk "mark registered".
 
@@ -853,7 +940,8 @@ container queries, `@container` / `@min-[…]:`).
   from another campaign; no job runs) and detached on the Lists tab.
   Rebuttals are still one JSON field (no versions); only the script keeps
   versions ("History (n)" loads an old one into the box).
-- **Immediate, never through Save** (each confirms): poker run Start / End
+- **Immediate, never through Save** (each confirms): the Dialing tab's
+  Numbers button (take from the pool and order), poker run Start / End
   (`games-actions.ts`, redirects to `?tab=games`), transfer destination
   Deactivate/Activate (`toggleTransferDestination`; the editor patches both
   snapshot and draft so the tab stays clean), webhook Test.

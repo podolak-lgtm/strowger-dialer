@@ -32,7 +32,8 @@ export async function setRest(formData: FormData) {
   const days = Number(formData.get("days"));
   await prisma.callerIdNumber.updateMany({
     where: { id, tenantId: s.tenant.id },
-    data: days > 0 ? { status: "RESTING", restUntil: new Date(Date.now() + days * 86_400_000) } : { status: "ACTIVE", restUntil: null },
+    // A rest takes the number off its campaign into the pool; it comes back into rotation from the pool (owner, 6 Nov).
+    data: days > 0 ? { status: "RESTING", restUntil: new Date(Date.now() + days * 86_400_000), campaignId: null } : { status: "ACTIVE", restUntil: null },
   });
   await prisma.auditLog.create({ data: { tenantId: s.tenant.id, actorId: s.user.id, action: days > 0 ? "did.rest" : "did.restore", target: id, after: { days } } });
   revalidatePath("/dids");

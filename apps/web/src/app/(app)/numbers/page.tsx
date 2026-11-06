@@ -4,6 +4,8 @@ import Link from "next/link";
 import { requireClientWorkspace } from "@/lib/auth";
 import { engine } from "@/lib/engine";
 import { Badge, Button, Card, Field, Notice, PageHeader, Table, Td, inputClass } from "@/components/ui";
+import { PLAN_DEFAULTS, isIdlePoolNumber } from "@strowger/shared/did-plan";
+import { IdleRelease } from "./idle-release";
 import { assignCampaign, assignNumbersToTenDlc, orderSelected, registerBrand, registerCampaign, releaseOne, runSetup, syncNow } from "./actions";
 
 type Status = {
@@ -66,11 +68,27 @@ export default async function NumbersPage({ searchParams }: PageProps<"/numbers"
   const areaCode = str("areaCode").replace(/\D/g, "").slice(0, 3);
   const qty = Math.min(50, Math.max(1, Number(str("qty")) || 10));
 
-  const [campaigns, numbers, orders] = await Promise.all([
+  const now = new Date();
+  const idleCutoff = new Date(now.getTime() - PLAN_DEFAULTS.idleDays * 86_400_000);
+  const [campaigns, numbers, orders, idleRows, platformRates, account] = await Promise.all([
     prisma.campaign.findMany({ where: { tenantId: s.tenant.id, status: { not: "ARCHIVED" } }, orderBy: { name: "asc" }, select: { id: true, name: true } }),
     prisma.callerIdNumber.findMany({ where: { tenantId: s.tenant.id, status: { not: "RETIRED" } }, orderBy: [{ createdAt: "desc" }], include: { campaign: { select: { name: true } } }, take: 300 }),
     prisma.numberOrder.findMany({ where: { tenantId: s.tenant.id }, orderBy: { createdAt: "desc" }, take: 20, include: { campaign: { select: { name: true } }, _count: { select: { numbers: true } } } }),
+    prisma.callerIdNumber.findMany({
+      where: { tenantId: s.tenant.id, campaignId: null, status: { not: "RETIRED" }, provisionStatus: { not: "released" }, OR: [{ lastUsedAt: { lt: idleCutoff } }, { lastUsedAt: null, createdAt: { lt: idleCutoff } }] },
+      orderBy: [{ lastUsedAt: "asc" }, { createdAt: "asc" }],
+      take: 500,
+    }),
+    prisma.platformRates.findUnique({ where: { id: "default" } }),
+    prisma.billingAccount.findUnique({ where: { tenantId: s.tenant.id }, select: { didMarkupPct: true } }),
   ]);
+  // What one number costs this workspace a month: our cost plus the markup (the platform workspace pays cost).
+  const didCost = platformRates?.didMonthlyCents ?? 110;
+  const priceCents = s.tenant.isPlatform ? didCost : Math.round(didCost * (1 + (account?.didMarkupPct ?? 50) / 100));
+  const idle = idleRows
+    .filter((n) => isIdlePoolNumber(n, now))
+    .map((n) => ({ id: n.id, phone: n.phone, status: n.status, lastUsed: n.lastUsedAt ? n.lastUsedAt.toISOString().slice(0, 10) : "never used", idleDays: Math.floor((now.getTime() - (n.lastUsedAt ?? n.createdAt).getTime()) / 86_400_000), releasable: Boolean(n.telnyxNumberId) }));
+  const inPool = numbers.filter((n) => !n.campaignId).length;
 
   let status: Status | null = null;
   let statusError: string | null = null;
@@ -375,15 +393,30 @@ export default async function NumbersPage({ searchParams }: PageProps<"/numbers"
         </div>
       </Card>
 
+      {idle.length ? (
+        <Card title={`Idle in the pool ${PLAN_DEFAULTS.idleDays}+ days (${idle.length})`} className="mt-6">
+          <p className="mb-3 text-sm text-zinc-400">
+            Pool numbers (not pinned to any campaign) that have not dialled in {PLAN_DEFAULTS.idleDays} days or more. Each costs ${(priceCents / 100).toFixed(2)} a month. Keep them for the next campaign, or release the ones you do not need back to Telnyx. Nothing is released automatically.
+          </p>
+          <IdleRelease numbers={idle} priceCents={priceCents} />
+        </Card>
+      ) : null}
+
       <div className="mt-6 grid gap-6 lg:grid-cols-[2fr_1fr]">
-        <Card title={`Numbers (${numbers.length})`}>
+        <Card title={`Numbers (${numbers.length}: ${inPool} in the pool, ${numbers.length - inPool} on campaigns)`}>
           {numbers.length === 0 ? (
             <p className="text-sm text-zinc-500">No numbers yet. Order some above, or Sync to adopt numbers already on the Telnyx account.</p>
           ) : (
-            <Table head={["Number", "Campaign", "Provisioning", "Telnyx", "jambonz", "Added", ""]}>
+            <Table head={["Number", "Pool / campaign", "Provisioning", "Telnyx", "jambonz", "Added", ""]}>
               {numbers.map((n) => (
                 <tr key={n.id}>
-                  <Td className="font-mono">{formatPhone(n.phone)}</Td>
+                  <Td className="font-mono">
+                    {formatPhone(n.phone)}
+                    <div className="mt-0.5 flex gap-1 font-sans">
+                      <Badge tone={n.campaignId ? "blue" : "zinc"}>{n.campaignId ? (n.campaign?.name ?? "campaign") : "pool"}</Badge>
+                      {n.status !== "ACTIVE" ? <Badge tone={n.status === "SPAM_FLAGGED" ? "red" : "amber"}>{n.status.toLowerCase().replace("_", " ")}</Badge> : null}
+                    </div>
+                  </Td>
                   <Td>
                     <form action={assignCampaign} className="flex items-center gap-1">
                       <input type="hidden" name="id" value={n.id} />

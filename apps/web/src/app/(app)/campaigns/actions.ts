@@ -5,7 +5,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { parseDialPlan, parseDisposition } from "@strowger/shared/campaign-form";
 import { requireRole } from "@/lib/auth";
-import { campaignSettingsData } from "./campaign-data";
+import { campaignSettingsData, returnNumbersToPool } from "./campaign-data";
 
 const DEFAULT_DISPOSITIONS = [
   { code: "SALE", label: "Sale", isContact: true, isSale: true, hotkey: "1" },
@@ -43,7 +43,8 @@ export async function createCampaign(formData: FormData) {
     },
   });
   await prisma.auditLog.create({ data: { tenantId: s.tenant.id, actorId: s.user.id, action: "campaign.create", target: c.id, after: { name, dialMode } } });
-  redirect(`/campaigns/${c.id}`);
+  // The wizard goes on to the first list and its numbers (owner, 6 Nov).
+  redirect(`/campaigns/${c.id}/setup`);
 }
 
 const formGet = (formData: FormData) => (k: string) => {
@@ -59,6 +60,10 @@ export async function updateCampaign(formData: FormData) {
   const data = campaignSettingsData(formGet(formData), before);
   await prisma.campaign.update({ where: { id }, data });
   await prisma.auditLog.create({ data: { tenantId: s.tenant.id, actorId: s.user.id, action: "campaign.update", target: id, before: before as object, after: data } });
+  if (data.status === "ARCHIVED" && before.status !== "ARCHIVED") {
+    const moved = await returnNumbersToPool(prisma, s.tenant.id, id);
+    if (moved) await prisma.auditLog.create({ data: { tenantId: s.tenant.id, actorId: s.user.id, action: "campaign.numbers_to_pool", target: id, after: { count: moved } } });
+  }
   revalidatePath(`/campaigns/${id}`);
   revalidatePath("/campaigns");
 }

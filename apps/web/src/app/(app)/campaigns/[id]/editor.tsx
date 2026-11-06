@@ -15,7 +15,7 @@ import { setLeaveGuard } from "@/lib/leave-guard";
 import { saveCampaignAll } from "../save-all-action";
 import { toggleTransferDestination } from "../transfer-actions";
 import { EditorContext, type EditorApi } from "./editor-ui";
-import { ComplianceTab, DialingTab, VoicemailTab } from "./tab-settings";
+import { ComplianceTab, DialingTab, VoicemailTab, type PinnedNumber } from "./tab-settings";
 import { CrmTab, DispositionsTab, ListsTab, type ListInfo, type WebhookInfo } from "./tab-rows";
 import { TransfersTab, type CopySource, type TransferPanel } from "./tab-transfers";
 import { GamesTab, ScriptTab, type RunView, type ScriptVersion } from "./tab-script-games";
@@ -30,6 +30,8 @@ export interface EditorProps {
   lists: ListInfo[];
   webhookInfo: Record<string, WebhookInfo>;
   ownNumbers: string[];
+  /** Numbers pinned to this campaign (the Dialing tab's Numbers card). */
+  pinned: PinnedNumber[];
   copySources: CopySource[];
   scriptOptions: { key: string; name: string; text: string }[];
   rebuttalOptions: { key: string; name: string; text: string }[];
@@ -141,6 +143,11 @@ export function CampaignEditor(p: EditorProps) {
 
   async function save() {
     if (!isDirty || saving) return;
+    // Archiving hands the campaign's numbers back to the pool; say so first.
+    if (state.draft.settings.status === "ARCHIVED" && state.snapshot.settings.status !== "ARCHIVED") {
+      const n = p.pinned.length;
+      if (!window.confirm(`Archive this campaign? ${n ? `Its ${n} number${n === 1 ? "" : "s"} go back to the shared pool for other campaigns, and stay there if you un-archive it.` : "It has no numbers of its own."} Agents can no longer log into it.`)) return;
+    }
     setSaving(true);
     try {
       const r = await saveCampaignAll(p.campaignId, { snapshot: state.snapshot, draft: state.draft, removed: removedIds(state.snapshot, state.draft) });
@@ -269,7 +276,7 @@ export function CampaignEditor(p: EditorProps) {
   let body: ReactNode;
   switch (tab) {
     case "dialing":
-      body = <DialingTab campaignId={p.campaignId} />;
+      body = <DialingTab campaignId={p.campaignId} pinned={p.pinned} />;
       break;
     case "lists":
       body = <ListsTab lists={p.lists} />;

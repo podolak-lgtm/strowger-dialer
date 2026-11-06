@@ -230,6 +230,16 @@ enum CallerIdMode {
   LOCAL_PRESENCE
 }
 
+/// Local presence when no number with the lead's area code is free:
+/// ANY = any area code (the original behaviour); SAME_STATE = only numbers in
+/// the lead's state; EXACT_ONLY = only the exact area code, else the fixed
+/// caller ID if set, else the lead waits.
+enum CallerIdFallback {
+  ANY
+  SAME_STATE
+  EXACT_ONLY
+}
+
 enum HopperOrder {
   LIFO
   FIFO
@@ -296,6 +306,7 @@ model Campaign {
 
   callerIdMode  CallerIdMode @default(LOCAL_PRESENCE)
   fixedCallerId String?
+  callerIdFallback CallerIdFallback @default(ANY)
 
   /// Campaign's own calling window in the lead's local time. State and
   /// federal rules still apply on top; the most restrictive wins.

@@ -1,7 +1,7 @@
 // Typed wrappers over @strowger/shared/campaign-form for the campaign actions
 // (no "use server": these are helpers, not actions).
 import { randomBytes } from "node:crypto";
-import type { PrismaClient, CallerIdMode, CampaignStatus, DialMode, HopperOrder, ListSelection, ScreenerAction, VoicemailAction, VoicemailMode } from "@strowger/db";
+import type { PrismaClient, CallerIdFallback, CallerIdMode, CampaignStatus, DialMode, HopperOrder, ListSelection, ScreenerAction, VoicemailAction, VoicemailMode } from "@strowger/db";
 import { parseCampaignSettings, type CampaignEnumsBefore, type Get } from "@strowger/shared/campaign-form";
 
 /** The campaign row update the page has always written, with Prisma's enum types. */
@@ -15,6 +15,7 @@ export function campaignSettingsData(get: Get, before: CampaignEnumsBefore) {
     voicemailMode: d.voicemailMode as VoicemailMode,
     screenerAction: d.screenerAction as ScreenerAction,
     callerIdMode: d.callerIdMode as CallerIdMode,
+    callerIdFallback: d.callerIdFallback as CallerIdFallback,
     hopperOrder: d.hopperOrder as HopperOrder,
     listSelection: d.listSelection as ListSelection,
   };
@@ -27,4 +28,10 @@ export async function ownsActiveNumber(db: Pick<PrismaClient, "callerIdNumber">,
 
 export function newWebhookSecret(): string {
   return `whsec_${randomBytes(24).toString("base64url")}`;
+}
+
+/** An archived campaign's numbers go back to the workspace's shared pool (owner, 6 Nov). Returns how many moved. */
+export async function returnNumbersToPool(db: Pick<PrismaClient, "callerIdNumber">, tenantId: string, campaignId: string): Promise<number> {
+  const r = await db.callerIdNumber.updateMany({ where: { tenantId, campaignId }, data: { campaignId: null } });
+  return r.count;
 }

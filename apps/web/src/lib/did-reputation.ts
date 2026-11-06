@@ -4,6 +4,7 @@
 // TNS, Hiya, …). Until the owner picks one, the `manual` provider is the
 // only one wired: it records what a human checked. Adding a vendor means
 // implementing `ReputationProvider` and selecting it by DID_REPUTATION_VENDOR.
+import { DID_RULES } from "@strowger/shared/did-hygiene";
 import { prisma, type CarrierVerdict } from "@strowger/db";
 
 export interface Reading {
@@ -62,8 +63,9 @@ export async function recordReading(numberId: string, vendor: string, r: Reading
         tmobileVerdict: r.tmobile,
         attestation: r.attestation,
         lastScannedAt: new Date(),
-        // A number blocked or marked spam anywhere comes out of rotation on its own and rests three weeks.
-        ...([r.att, r.verizon, r.tmobile].some((v) => v === "SPAM" || v === "BLOCKED") ? { status: "SPAM_FLAGGED" as const, restUntil: new Date(Date.now() + 21 * 86_400_000) } : {}),
+        // A number blocked or marked spam anywhere comes out of rotation on its own and rests three weeks,
+        // in the shared pool: it never returns to its campaign by itself, and rotates back in from the pool (owner, 6 Nov).
+        ...([r.att, r.verizon, r.tmobile].some((v) => v === "SPAM" || v === "BLOCKED") ? { status: "SPAM_FLAGGED" as const, restUntil: new Date(Date.now() + DID_RULES.restAfterFlagDays * 86_400_000), campaignId: null } : {}),
       },
     }),
   ]);

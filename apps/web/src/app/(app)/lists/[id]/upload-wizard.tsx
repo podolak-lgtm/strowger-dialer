@@ -2,6 +2,7 @@
 
 import { LEAD_FIELDS, LEAD_FIELD_LABELS, type LeadField } from "@strowger/shared";
 import Papa from "papaparse";
+import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
 import { Button, inputClass } from "@/components/ui";
 import { finishImport, importBatch, startImport, type BatchCounts } from "../import-actions";
@@ -31,7 +32,7 @@ function guessField(header: string): LeadField | "" {
   return "";
 }
 
-export function UploadWizard({ listId, remembered }: { listId: string; remembered: Record<string, Record<string, string>> }) {
+export function UploadWizard({ listId, remembered, inCampaign = false }: { listId: string; remembered: Record<string, Record<string, string>>; inCampaign?: boolean }) {
   const [file, setFile] = useState<File | null>(null);
   const [headers, setHeaders] = useState<string[]>([]);
   const [rows, setRows] = useState<Row[]>([]);
@@ -39,6 +40,7 @@ export function UploadWizard({ listId, remembered }: { listId: string; remembere
   const [progress, setProgress] = useState<{ done: number; total: number; counts: BatchCounts } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
+  const router = useRouter();
 
   const onFile = (f: File | null) => {
     setFile(f);
@@ -103,6 +105,8 @@ export function UploadWizard({ listId, remembered }: { listId: string; remembere
         };
         await Promise.all(Array.from({ length: Math.min(CONCURRENCY, batches.length) }, worker));
         await finishImport(importId);
+        // The page's lead counts (and its Numbers for this list card) catch up.
+        router.refresh();
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         setError(msg);
@@ -153,6 +157,7 @@ export function UploadWizard({ listId, remembered }: { listId: string; remembere
             {progress.done.toLocaleString()} / {progress.total.toLocaleString()} processed
             {progress.done === progress.total && !pending ? " · done" : ""}
           </div>
+          {progress.done === progress.total && !pending && inCampaign ? <div className="text-xs text-sky-300">Numbers for this list (below) now counts these leads: the caller IDs they need by area code, and one button to take them from the pool and order the rest.</div> : null}
           <div className="grid grid-cols-5 gap-2 text-center">
             {(
               [

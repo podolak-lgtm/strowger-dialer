@@ -72,6 +72,7 @@ export const CAMPAIGN_SETTING_KEYS = [
   "screenerScript",
   "callerIdMode",
   "fixedCallerId",
+  "callerIdFallback",
 ] as const;
 export type CampaignSettingKey = (typeof CAMPAIGN_SETTING_KEYS)[number];
 
@@ -83,6 +84,7 @@ export interface CampaignEnumsBefore {
   voicemailMode: string;
   screenerAction: string;
   callerIdMode: string;
+  callerIdFallback?: string;
   hopperOrder: string;
   listSelection: string;
 }
@@ -114,6 +116,7 @@ export function parseCampaignSettings(get: Get, before: CampaignEnumsBefore) {
     disclosureOn: on(get, "disclosureOn"),
     callerIdMode: String(get("callerIdMode") ?? before.callerIdMode),
     fixedCallerId: String(get("fixedCallerId") ?? "").replace(/\D/g, "").slice(-10) || null,
+    callerIdFallback: callerIdFallback(get("callerIdFallback") ?? before.callerIdFallback),
     localWindowStart: Math.max(0, Math.min(23, num(get, "localWindowStart", 9))),
     localWindowEnd: Math.max(1, Math.min(24, num(get, "localWindowEnd", 20))),
     maxAttemptsPerDay,
@@ -125,6 +128,11 @@ export function parseCampaignSettings(get: Get, before: CampaignEnumsBefore) {
   };
 }
 export type CampaignSettings = ReturnType<typeof parseCampaignSettings>;
+
+/** Local presence when the lead's area code has no free number: ANY (default), SAME_STATE or EXACT_ONLY. */
+export function callerIdFallback(raw: string | null | undefined): "ANY" | "SAME_STATE" | "EXACT_ONLY" {
+  return raw === "SAME_STATE" || raw === "EXACT_ONLY" ? raw : "ANY";
+}
 
 // ---- Dial plans by lead age
 

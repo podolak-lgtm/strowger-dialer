@@ -30,7 +30,7 @@ export default async function CampaignPage({ params, searchParams }: PageProps<"
   if (!c) notFound();
   const now = new Date();
   const since = new Date(now.getTime() - 30 * 86_400_000);
-  const [ownNumbers, otherCampaigns, tenantLists, ledger] = await Promise.all([
+  const [ownNumbers, otherCampaigns, tenantLists, ledger, pinned] = await Promise.all([
     prisma.callerIdNumber.findMany({ where: { tenantId: s.tenant.id, status: "ACTIVE" }, select: { phone: true }, orderBy: { phone: "asc" } }),
     prisma.campaign.findMany({
       where: { tenantId: s.tenant.id, id: { not: c.id }, transferDestinations: { some: { active: true } } },
@@ -44,6 +44,7 @@ export default async function CampaignPage({ params, searchParams }: PageProps<"
       take: 1000,
     }),
     prisma.abandonLedger.aggregate({ where: { campaignId: c.id, day: { gte: since } }, _sum: { answered: true, abandoned: true } }),
+    prisma.callerIdNumber.findMany({ where: { tenantId: s.tenant.id, campaignId: c.id, status: { not: "RETIRED" } }, select: { id: true, phone: true, areaCode: true, status: true, restUntil: true, registeredAt: true, provisionStatus: true }, orderBy: [{ areaCode: "asc" }, { phone: "asc" }] }),
   ]);
   const answered30 = ledger._sum.answered ?? 0;
   const abandoned30 = ledger._sum.abandoned ?? 0;
@@ -78,6 +79,7 @@ export default async function CampaignPage({ params, searchParams }: PageProps<"
     lists: tenantLists.map((l) => ({ id: l.id, name: l.name, priority: l.priority, totalLeads: l.totalLeads, dialableLeads: l.dialableLeads, status: l.status, elsewhere: l.campaignId && l.campaignId !== c.id ? (l.campaign?.name ?? "another campaign") : null })),
     webhookInfo: Object.fromEntries(c.webhooks.map((w) => [w.id, { secretPrefix: w.secret.slice(0, 12), last: w.deliveries[0] ? { status: w.deliveries[0].status, error: w.deliveries[0].lastError } : null }])),
     ownNumbers: ownNumbers.map((n) => n.phone),
+    pinned: pinned.map((n) => ({ id: n.id, phone: n.phone, areaCode: n.areaCode, status: n.status, restUntil: n.restUntil && n.restUntil > now ? n.restUntil.toISOString().slice(0, 10) : null, registered: Boolean(n.registeredAt), provisionStatus: n.provisionStatus })),
     copySources: otherCampaigns.map((o) => ({
       id: o.id,
       name: o.name,
