@@ -232,7 +232,7 @@ export async function saveVendorAccount(formData: FormData) {
     }),
   });
   revalidatePath("/platform");
-  redirect(back("accounting", `Saved ${vendor}.`) + "#balances");
+  redirect(back("balances", `Saved ${vendor}.`) + "#balances");
 }
 
 export async function createWorkspace(formData: FormData) {

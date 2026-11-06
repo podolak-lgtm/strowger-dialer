@@ -10,9 +10,12 @@ import { platformReferrals } from "@/lib/referral-actions";
 import { ReferralsCard } from "./referrals-card";
 import { PnlTable } from "./pnl-table";
 import { onboardingRows } from "@/lib/onboarding";
+import { vendorConnections } from "@/lib/vendor-actions";
+import { VendorConnectionsCard } from "./vendor-connections";
 
 // The owner's view (platform workspace only), in tabs:
-//   Accounting  revenue, cost, margin for the month; P&L per client; vendor spend this month and last; balances; CSV
+//   Accounting  revenue, cost, margin for the month; P&L per client; vendor spend this month and last; CSV
+//   Balances    vendor balances and warning lines; vendor connections (credentials, Collect now, upload invoice, nightly)
 //   Clients     balances, record a payment, open a client, new workspace, move a campaign
 //   Costs       fixed monthly costs, allocation rule and margin floor, fallback cost rates
 //   Plans       each client's rate plan
@@ -44,6 +47,8 @@ const VENDOR_KIND: Record<string, string> = {
   "ai.call_summary": "AI: call summaries",
   "ai.summary": "AI: hand-off summaries",
   "ai.prompt_test": "AI: prompt tests",
+  "ai.invoice": "AI: reading vendor invoices",
+  invoice: "Invoice (as read)",
   scrub: "Litigator / DNC scrub",
   subscription: "Subscription",
   hosting: "Hosting",
@@ -55,9 +60,11 @@ const SOURCE: Record<string, { label: string; tone: "green" | "blue" | "amber" |
   usage: { label: "per use", tone: "blue" },
   estimate: { label: "estimate", tone: "amber" },
   fixed: { label: "fixed", tone: "zinc" },
+  invoice: { label: "invoice", tone: "green" },
 };
 const TABS = [
   ["accounting", "Accounting"],
+  ["balances", "Balances"],
   ["clients", "Clients"],
   ["costs", "Costs"],
   ["plans", "Plans"],
@@ -77,6 +84,7 @@ export default async function PlatformPage({ searchParams }: PageProps<"/platfor
   const tab: Tab = TABS.some(([k]) => k === sp.tab) ? (sp.tab as Tab) : "accounting";
   const [o, a, refs, campaigns] = await Promise.all([platformOverview(period), platformAccounting(period), platformReferrals(), prisma.campaign.findMany({ where: { tenantId: s.tenant.id, status: { not: "ARCHIVED" } }, select: { id: true, name: true }, orderBy: { name: "asc" } })]);
   const setup = tab === "clients" ? await onboardingRows(o.tenants.map((t) => t.id)) : {};
+  const connections = tab === "balances" ? await vendorConnections() : null;
   const lowVendors = a.accounts.filter((x) => balanceLow(x.balanceCents, x.lowBalanceCents));
   const failing = a.accounts.filter((x) => x.lastError);
   const href = (t: Tab) => `/platform?tab=${t}${period ? `&period=${period}` : ""}`;
@@ -213,7 +221,19 @@ export default async function PlatformPage({ searchParams }: PageProps<"/platfor
             </p>
           </Card>
 
-          <Card title="Vendor balances" className="mt-6" id="balances">
+          <p className="mt-3 text-xs text-zinc-500">
+            Vendor balances, and the buttons that collect each vendor&rsquo;s costs and invoices, are under{" "}
+            <Link href={href("balances")} className="text-sky-400 hover:underline">
+              Balances
+            </Link>
+            .
+          </p>
+        </>
+      ) : null}
+
+      {tab === "balances" ? (
+        <>
+          <Card title="Vendor balances" id="balances">
             {failing.length > 0 ? (
               <Notice kind="error">
                 {failing.map((x) => (
@@ -236,7 +256,7 @@ export default async function PlatformPage({ searchParams }: PageProps<"/platfor
                     <Td className="max-w-xs text-xs text-zinc-400">{x.api}</Td>
                     <Td className={`tabular-nums ${low ? "font-semibold text-red-300" : ""}`}>
                       {x.balanceCents === null ? "—" : cents(x.balanceCents)}
-                      {x.balanceCents !== null ? <div className="text-xs font-normal text-zinc-500">{x.balanceSource === "manual" ? "entered" : "from the API"} {when(x.balanceAt)}</div> : null}
+                      {x.balanceCents !== null ? <div className="text-xs font-normal text-zinc-500">{x.balanceSource === "manual" ? "entered" : x.balanceSource === "portal" ? "from the portal" : "from the API"} {when(x.balanceAt)}</div> : null}
                     </Td>
                     <Td className="tabular-nums text-xs text-zinc-400">{x.reportedCents === null ? "—" : `${cents(x.reportedCents)} (${x.reportedPeriod})`}</Td>
                     <Td className="text-xs text-zinc-400">{when(x.usageSyncedAt ?? x.balanceAt)}</Td>
@@ -254,7 +274,14 @@ export default async function PlatformPage({ searchParams }: PageProps<"/platfor
                 );
               })}
             </Table>
-            <p className="mt-2 text-xs text-zinc-500">Only Telnyx publishes a balance. For prepaid credit elsewhere (jambonz, Anthropic, Cartesia) type the balance from their portal; it shows when it was entered. A balance at or under its line turns red and shows a warning on every Platform tab. Anthropic&rsquo;s month figure needs <code>ANTHROPIC_ADMIN_KEY</code> on the engine (it reads the Admin API cost report).</p>
+            <p className="mt-2 text-xs text-zinc-500">Telnyx, Railway (credit) and Deepgram publish a balance, collected by their connectors below. For prepaid credit elsewhere (Anthropic, Cartesia) type the balance from their portal; it shows when it was entered. A balance at or under its line turns red and shows a warning on every Platform tab. Anthropic&rsquo;s month figure needs <code>ANTHROPIC_ADMIN_KEY</code> on the engine (it reads the Admin API cost report).</p>
+          </Card>
+
+          <Card title="Vendor connections" className="mt-6" id="connections">
+            <p className="-mt-1 mb-3 text-xs text-zinc-500">
+              Each vendor&rsquo;s costs, balance and invoices, collected with its API where it has one and by signing in to its portal where it does not. <b>Collect now</b> runs it while you watch; <b>Collect nightly</b> runs it at about 07:00 UTC (2&ndash;3 a.m. Eastern), one vendor after another, and the platform admins get an email only when one fails or a balance is at or under its line. <b>Upload invoice</b> (or drop a PDF or CSV on a row) has Claude read it. An invoice becomes that vendor&rsquo;s cost for its month and replaces the fixed cost and the API&rsquo;s running total for that month, so nothing is counted twice; for vendors already counted per call, text, token or minute (Telnyx, Anthropic, Deepgram) the invoice is shown beside our figure, never added. Logins and keys are sealed on the engine and never shown again.
+            </p>
+            {connections ? <VendorConnectionsCard initial={connections} /> : <Notice kind="error">The engine did not answer, so the vendor connections cannot be shown.</Notice>}
           </Card>
         </>
       ) : null}

@@ -782,8 +782,8 @@ billed and sees `/platform`.
     (default 4¢ / 1,000; jambonz caches repeated prompts so it errs high; set
     0 if a flat Cartesia plan is entered as a fixed cost instead). Live
     transcription STT = usage (`sttMinuteCostMillicents`). SubscriberVerify =
-    usage (records × `scrubCostMillicents`). Railway, Clerk, Vercel = fixed.
-    The Free Caller Registry is free.
+    usage (records × `scrubCostMillicents`). Railway, Clerk, Vercel = fixed
+    until their connectors run (below). The Free Caller Registry is free.
   - **Fixed costs**: `VendorFixedCost` (vendor, kind, label, amount, MONTHLY
     or ONCE, start/end month, optional tenant). `materialiseFixedCosts`
     writes one row per month covered up to the current month (on save and
@@ -822,9 +822,117 @@ billed and sees `/platform`.
   - **Jobs**: `vendorUsage` hourly (Telnyx records for 2 days, number
     rental, fixed costs), `vendorBalances` daily (Telnyx balance, jambonz,
     Anthropic report). A vendor that fails records `lastError` and does not
-    stop the others. Not done: Railway's GraphQL usage API (needs a Railway
-    token on the engine; fixed for now), Telnyx invoices for number fees
-    (numbers use the rate), referral credits as a cost line.
+    stop the others. Not done: Telnyx invoices for number fees (numbers use
+    the rate), referral credits as a cost line.
+  - **Collection: connectors, buttons, nightly (owner, 6 Nov: "the APIs
+    don't give you everything … a button next to it … at night you log in
+    and get everything updated")**. `apps/engine/src/billing/vendors/`, one
+    module per vendor with one interface (`types.ts`: `collect(ctx)` returns
+    `{ balanceCents, reported, rows, invoices, note }` and writes nothing);
+    the runner (`index.ts`) writes it all through the cost model:
+    `VendorAccount` (balance, `balanceSource` api/portal, the vendor's own
+    month figure), running month totals as `VendorUsage` keyed
+    `period:<YYYY-MM>:<part>` (source api, `replace`, rows not returned again
+    for a reported month removed), invoices through `invoice.ts`. Re-runs
+    never add twice. The connectors:
+    - **Telnyx** (API): wraps the existing detail-record pulls and balance;
+      uses `TELNYX_API_KEY`, nothing to enter.
+    - **Railway** (API, GraphQL `backboard.railway.com/graphql/v2`, account or
+      workspace token as Bearer; schema read by introspection 6 Nov):
+      `usage(workspaceId, month start→now, CPU_USAGE / MEMORY_USAGE_GB /
+      NETWORK_TX_GB / DISK_USAGE_GB, groupBy PROJECT_ID+SERVICE_ID)` priced at
+      the published rates (`RAILWAY_RATES` in `@strowger/shared/vendor-collect`:
+      $0.000463 / vCPU-min, $0.000231 / GB-min, $0.05 / GB egress, $0.15 /
+      GB-month volume) per service; `workspace.customer` gives `currentUsage`
+      (their figure), `creditBalance` (balance) and `invoices` (paid/open:
+      `total` taken as cents, PDF archived).
+    - **Vercel** (API): `GET /v1/billing/charges?teamId&from&to` (FOCUS
+      JSONL), summed per service and project for this month and last.
+    - **Deepgram** (API, `Authorization: Token`, Administrator-role key):
+      `/v1/projects`, `/balances`, `/billing/breakdown` (dollars). STT is
+      already counted per minute, so Deepgram's dollars are reconciliation.
+    - **Anthropic** (API): the Admin API cost report, reconciliation only as
+      before; a key saved on the card wins over `ANTHROPIC_ADMIN_KEY`.
+    - **Cartesia** (API, it has one): `GET api.cartesia.ai/usage/credits`
+      with an admin key and `Cartesia-Version` (`CARTESIA_API_VERSION`,
+      default `2026-08-14`; the docs index showed `2026-03-01` on one page).
+      Credits are not dollars: shown as a note; cost stays per character or
+      the plan.
+    - **jambonz.cloud** (API + browser): `pullJambonz` as before, then the
+      portal with the saved login for the subscription figure and past
+      Stripe invoice PDFs.
+    - **Clerk** (browser): the dashboard's billing page, upcoming figure and
+      past Stripe invoice PDFs.
+  - **Browser connectors** (`vendors/browser.ts`, Playwright Chromium, the
+    image FCR uses): sign in with the saved username/password; a second
+    factor is answered with a TOTP from the saved authenticator secret (RFC
+    6238 in `@strowger/shared/totp`, RFC test vectors in its test; base32 or
+    an `otpauth://` link) or an emailed code read from Crossbar's inbox
+    (`GET /api/agent/inbox`, `vendors/inbox.ts`) at the saved "email code
+    goes to" address, which must be one Crossbar receives. A CAPTCHA, SMS, a
+    passkey or a device approval stops the run as **needs a person** with the
+    reason. Each connector keeps its URLs and selectors in one object
+    (`JAMBONZ_PORTAL`, `CLERK_PORTAL`); any failing step stores a full-page
+    screenshot at `vendor-screens/<vendor>/<time>.png` and the card links it.
+    **Neither portal has been signed in to from a session** (no logins here):
+    the selectors are a best reading and the first live run is the test;
+    Clerk's dashboard may well put a bot check in front of a headless
+    browser, in which case upload its invoice instead.
+  - **Invoices** (`vendors/invoice.ts`): a downloaded or uploaded PDF (a
+    document block) or CSV (text) is read by Claude, `VENDOR_INVOICE_MODEL`
+    (default `claude-sonnet-5-5`), through `client.beta.messages.parse` with
+    a zod output format (vendor, invoice number, service period, currency,
+    line items with description/quantity/amount, total) and the server-side
+    refusal fallback (`fallbacks: "default"`). The read is costed as
+    `ai.invoice`. Stored as `VendorInvoice` (unique on vendor + `ref` = the
+    invoice number, else the month), file at
+    `vendor-invoices/<vendor>/<period>[-<number>].pdf|csv`; the month is the
+    middle of the service period (else a YYYY-MM in the file name). Lines
+    become `VendorUsage` source **invoice**, keyed
+    `invoice:<vendor>:<number or month>:<n>`, plus a "difference to the
+    invoice total" line so the month equals the invoice. Reading it again
+    replaces its lines.
+  - **The no-double-count rule** (`@strowger/shared/vendor-collect`, tested):
+    per vendor and month, month-level rows compete and only the best kind
+    counts: **invoice > the API's running total (`period:` rows, and
+    jambonz's `invoice:<YYYY-MM>` upcoming row) > fixed**. An invoice deletes
+    that month's running total and `materialiseFixedCosts` skips (and
+    removes) every fixed row of that vendor for that month; a running total
+    skips the fixed row until an invoice arrives. Vendors counted per event
+    (Telnyx, Anthropic, Deepgram, SubscriberVerify: `RECONCILE_ONLY`) never
+    get invoice rows: their invoice is stored and its total shown as their
+    figure for the month. Per-event rows are never touched by the rule.
+  - **Credentials**: `VendorConnection` (migration `vendor_connections`, one
+    row per vendor, platform-level like `VendorAccount`, so no `tenantId`):
+    `sealed` = the credential JSON under AES-256-GCM with
+    `VENDOR_SECRETS_KEY` (engine only; `vendors/secrets.ts`), `hints` = what
+    the browser may see ("saved, ending …1234"; non-secret ids and emails in
+    full). Blank fields keep what is saved; "remove the saved value" clears
+    one. Every change is audit-logged as `vendor.credentials` with the field
+    names, never values; also `vendor.nightly`, `vendor.collect`,
+    `vendor.invoice-upload`. Without the key the card says so and the engine
+    refuses to save. **Changing the key makes saved credentials unreadable**
+    (the card shows the error): enter them again.
+  - **/platform → Balances** (new tab; the Vendor balances card moved here):
+    "Vendor connections" lists every connector with its method, what it
+    collects, where to get the credential, the credential form, **Collect
+    now** (background run; the card polls `vendorConnections` every 3 s for
+    the live line: signing in… downloading… reading… done / failed with the
+    reason / needs a person; last success time), **Upload invoice** (or drop
+    a PDF/CSV on the row; route handler `/api/platform/vendor-invoice`,
+    because Server Action bodies stop at 1 MB; capped at 9.5 MB because the
+    proxy buffers 10 MB) and **Collect nightly**. Below it, the invoices
+    read, with links through `/api/platform/vendor-file` (platform admins
+    only). `/api/media` refuses `vendor-invoices/` and `vendor-screens/`
+    keys (they are guessable). Engine: `GET/POST /internal/billing/connections`,
+    `/connections/nightly`, `/connections/collect`, `/invoices/upload` (45 MB
+    body limit for the base64 JSON).
+  - **Nightly** (`vendorNightly` job, every 15 min, runs on the first tick
+    at or after 07:00 UTC, the day marked before it starts): every connector
+    with Collect nightly on, one after another; then the platform workspace's
+    admins get one email (Crossbar, `vendor-nightly:<day>`) **only** when a
+    run failed or needs a person, or a vendor balance is at or under its
+    line (`nightlySummary`).
 - **Client workspaces** (`apps/engine/src/workspaces`): `/platform` creates
   a workspace (tenant + billing account + optional admin user by email),
   **Open** sets the `strowger_ws` cookie so a platform admin works inside
@@ -1329,7 +1437,9 @@ below.
 
 ## Media bucket
 
-Railway bucket `media` (S3-compatible, region sjc). The web service reads
+Railway bucket `media` (S3-compatible, region sjc). Vendor invoices and
+failure screenshots live under `vendor-invoices/` and `vendor-screens/`,
+which the public `/api/media` route refuses (see Billing, Collection). The web service reads
 it through `${{media.*}}` references as `S3_*` (never copied values).
 `lib/storage.ts` uploads prompts under `audio/<tenantId>/<random>.<ext>` and
 serves them from `/api/media/<key>` (public read, unguessable key, so the

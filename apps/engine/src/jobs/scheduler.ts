@@ -13,6 +13,8 @@ import { idlePoolCheck, restoreRestedNumbers } from "../provision/plan";
 import { endExpiredRuns, settlePeriodWagers, weeklyTopUp } from "../games";
 import { chargeAllDids, suspendOverdue } from "../billing";
 import { syncVendorBalances, syncVendorUsage } from "../billing/vendor";
+import { runNightly as vendorNightlyRun } from "../billing/vendors";
+import { nightlyDue } from "@strowger/shared/vendor-collect";
 import { endLapsedReferrers, monthlyReferralCredits, trialTick } from "../referrals";
 import { retryPendingCampaigns } from "../onboarding";
 
@@ -90,6 +92,18 @@ async function dailyVendorBalances(): Promise<void> {
   await redis.set("job:vendorBalances:last", today);
 }
 
+/**
+ * Nightly vendor collection (owner, 6 Nov): every connector switched to "Collect nightly", one after another, on the
+ * first tick at or after 07:00 UTC (2-3 a.m. US Eastern). The day is marked before the run so a long run with
+ * browsers is never started twice.
+ */
+async function nightlyVendorCollection(): Promise<void> {
+  const now = new Date();
+  if (!nightlyDue(now, await redis.get("job:vendorNightly:last"))) return;
+  await redis.set("job:vendorNightly:last", now.toISOString().slice(0, 10));
+  await vendorNightlyRun();
+}
+
 /** First tick of each month: referral credits for the month before (idempotent per relationship and month). */
 async function monthlyReferrals(): Promise<void> {
   const key = new Date().toISOString().slice(0, 7);
@@ -128,6 +142,8 @@ const JOBS: Job[] = [
   // Hourly: Telnyx detail records, number rental, fixed costs into the month (every pull keyed by vendor record id).
   { name: "vendorUsage", everyMs: 60 * 60_000, run: () => syncVendorUsage("last_2_days") },
   { name: "vendorBalances", everyMs: 60 * 60_000, run: dailyVendorBalances },
+  // Nightly: the vendor connectors switched on in /platform → Balances (API pulls, portal sign-ins, invoices read).
+  { name: "vendorNightly", everyMs: 15 * 60_000, run: nightlyVendorCollection },
 ];
 
 export function startScheduler(): () => void {

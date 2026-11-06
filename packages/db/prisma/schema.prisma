@@ -1262,7 +1262,8 @@ model VendorUsage {
   /// What we paid in thousandths of a cent, so a fraction-of-a-cent AI request is not lost.
   costMillicents Int      @default(0)
   /// api = pulled from the vendor's records; usage = counted per event (tokens, minutes, characters) × a list price or rate;
-  /// estimate = our rate until the vendor's record is matched (replaced then); fixed = a monthly cost entered on /platform.
+  /// estimate = our rate until the vendor's record is matched (replaced then); fixed = a monthly cost entered on /platform;
+  /// invoice = a line of the vendor's invoice as read (VendorInvoice), which replaces that vendor's fixed row for the month.
   source         String   @default("usage")
   day            String
   /// Telnyx record id, or our own key for rows we write (est:call:<id>, did:<numberId>:<YYYY-MM>, fixed:<id>:<YYYY-MM>).
@@ -2006,6 +2007,54 @@ model VendorFixedCost {
   updatedAt    DateTime @updatedAt
 
   @@index([vendor])
+}
+
+/// How the engine collects one vendor's costs and balance (owner, 6 Nov: "a button next to it … at night you log in and get
+/// everything updated"). Platform-level like VendorAccount (the platform's own vendors, no client), so no tenantId.
+/// `sealed` is the credentials as AES-256-GCM under VENDOR_SECRETS_KEY (engine only); `hints` is what the browser may see
+/// ("saved, ending …1234"). Never returned to the web app.
+model VendorConnection {
+  vendor            String    @id
+  sealed            String?
+  hints             Json      @default("{}")
+  nightly           Boolean   @default(false)
+  /// ok | failed | needs_person | running
+  lastStatus        String?
+  lastError         String?
+  lastRunAt         DateTime?
+  lastSuccessAt     DateTime?
+  /// Screenshot of the page a browser step failed on (media bucket, vendor-screens/…), for the platform page.
+  lastScreenshotKey String?
+  updatedById       String?
+  updatedAt         DateTime  @updatedAt
+}
+
+/// An invoice or usage file a connector downloaded or the owner uploaded, as Claude read it. Its lines are written into
+/// VendorUsage (source invoice, keyed invoice:<vendor>:<number or month>) unless the vendor is reconcile-only.
+model VendorInvoice {
+  id            String   @id @default(cuid())
+  vendor        String
+  /// YYYY-MM the invoice belongs to (the middle of its service period).
+  period        String
+  /// The vendor's invoice number, or the month when it has none: the same key as its VendorUsage rows (invoice:<vendor>:<ref>).
+  ref           String
+  invoiceNumber String?
+  /// upload | browser | api
+  origin        String
+  /// Media bucket key (vendor-invoices/<vendor>/<period>.pdf); never served publicly.
+  fileKey       String?
+  fileType      String?
+  totalCents    Int?
+  currency      String?
+  /// read | reconcile | failed
+  status        String
+  error         String?
+  lines         Json     @default("[]")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([vendor, ref])
+  @@index([vendor, period])
 }
 
 /// A vendor account: its balance (from the API where there is one, else entered), when it was read, and the warning line.

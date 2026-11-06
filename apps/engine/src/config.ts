@@ -82,6 +82,17 @@ export const config = readEnv({
     .default("true")
     .transform((v) => v !== "false" && v !== "0"),
 
+  /**
+   * Seals the vendor logins and API keys saved on /platform → Balances (AES-256-GCM). 32+ random characters, engine only
+   * (e.g. `openssl rand -base64 32`). Unset = the Vendor connections card refuses to save. Changing it makes saved
+   * credentials unreadable: they must be entered again.
+   */
+  VENDOR_SECRETS_KEY: z.string().min(32).optional(),
+  /** Reads vendor invoices (PDF or CSV) into cost lines. */
+  VENDOR_INVOICE_MODEL: z.string().default("claude-sonnet-5-5"),
+  /** Cartesia API version header for the credit usage report. */
+  CARTESIA_API_VERSION: z.string().default("2026-08-14"),
+
   // Media bucket (voicemail recordings). Same bucket the web app serves prompts from.
   S3_ENDPOINT: z.string().optional(),
   S3_BUCKET: z.string().optional(),

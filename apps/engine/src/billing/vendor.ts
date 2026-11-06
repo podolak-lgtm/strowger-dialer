@@ -7,11 +7,17 @@
 //   usage     counted per event × a list price or rate (AI tokens, speech minutes, TTS characters, numbers, scrubs)
 //   estimate  our rate for a call or text until Telnyx's record is matched, then deleted
 //   fixed     a monthly cost entered on /platform (Railway, Clerk, the jambonz plan…)
+//   invoice   a line of the vendor's own invoice, as read by billing/vendors/invoice.ts
+//
+// Per vendor and month, month-level rows compete (@strowger/shared/vendor-collect): an invoice beats the
+// API's running month total (keys period:<YYYY-MM>:…), which beats the fixed cost. Vendors counted per event
+// (Telnyx, Anthropic, Deepgram, SubscriberVerify) never get invoice rows.
 //
 // Every pull is keyed by (vendor, vendorRecordId), so re-runs never double count.
 // Balances and the vendors' own month totals live in VendorAccount.
 import { prisma } from "@strowger/db";
 import { periodsCovered } from "@strowger/shared/accounting";
+import { monthRowCounts, type MonthClass } from "@strowger/shared/vendor-collect";
 import { config } from "../config";
 import { log } from "../log";
 import { redis } from "../redis";
@@ -36,7 +42,7 @@ export interface UsageInput {
   tenantId?: string | null;
   refId?: string | null;
   quantity?: number;
-  source: "api" | "usage" | "estimate" | "fixed";
+  source: "api" | "usage" | "estimate" | "fixed" | "invoice";
   /** Overwrite an existing row with the same key (fixed costs, monthly reports); default = keep the first. */
   replace?: boolean;
 }
@@ -77,13 +83,13 @@ async function vendorAccount(vendor: string) {
   return prisma.vendorAccount.upsert({ where: { vendor }, create: { vendor }, update: {} });
 }
 
-async function noteError(vendor: string, e: unknown): Promise<void> {
+export async function noteError(vendor: string, e: unknown): Promise<void> {
   const msg = (e instanceof Error ? e.message : String(e)).slice(0, 300);
   await prisma.vendorAccount.upsert({ where: { vendor }, create: { vendor, lastError: msg, lastErrorAt: new Date() }, update: { lastError: msg, lastErrorAt: new Date() } }).catch(() => undefined);
   log.warn({ vendor, err: msg }, "vendor sync failed");
 }
 
-const synced = (vendor: string, data: Record<string, unknown>) => prisma.vendorAccount.upsert({ where: { vendor }, create: { vendor, ...data, lastError: null, lastErrorAt: null }, update: { ...data, lastError: null, lastErrorAt: null } });
+export const synced = (vendor: string, data: Record<string, unknown>) => prisma.vendorAccount.upsert({ where: { vendor }, create: { vendor, ...data, lastError: null, lastErrorAt: null }, update: { ...data, lastError: null, lastErrorAt: null } });
 
 // ---- Telnyx: detail records (calls, texts, the per-record extras) and the balance
 
@@ -241,13 +247,40 @@ export async function recordNumberCosts(period = thisPeriod()): Promise<number> 
   return added;
 }
 
-// ---- Fixed monthly costs (no usable API): written once per month they cover
+// ---- Month-level rows: which kinds a vendor has for a month (invoice, the API's running total, fixed)
+
+/** The API running-total keys for a vendor and month: period:<YYYY-MM>:…, and jambonz's upcoming invoice (invoice:<YYYY-MM>, source api). */
+export const periodRowsWhere = (vendor: string, period: string) => ({ vendor, source: "api", OR: [{ vendorRecordId: { startsWith: `period:${period}:` } }, { vendorRecordId: `invoice:${period}` }] });
+
+export async function monthClasses(vendor: string, period: string): Promise<Set<MonthClass>> {
+  const [inv, per, fix] = await Promise.all([
+    prisma.vendorUsage.count({ where: { vendor, source: "invoice", day: { startsWith: period } } }),
+    prisma.vendorUsage.count({ where: periodRowsWhere(vendor, period) }),
+    prisma.vendorUsage.count({ where: { vendor, source: "fixed", day: { startsWith: period } } }),
+  ]);
+  const out = new Set<MonthClass>();
+  if (inv) out.add("invoice");
+  if (per) out.add("period");
+  if (fix) out.add("fixed");
+  return out;
+}
+
+// ---- Fixed monthly costs (no usable API): written once per month they cover, unless that vendor's invoice
+// or its API running total is in for the month (the no-double-count rule above).
 
 export async function materialiseFixedCosts(upTo = thisPeriod()): Promise<number> {
   const costs = await prisma.vendorFixedCost.findMany();
+  const classes = new Map<string, Set<MonthClass>>();
+  const present = async (vendor: string, p: string) => {
+    const k = `${vendor}:${p}`;
+    if (!classes.has(k)) classes.set(k, await monthClasses(vendor, p));
+    return classes.get(k)!;
+  };
   let rows = 0;
   for (const c of costs) {
-    const months = c.amountCents > 0 ? periodsCovered(c, upTo) : [];
+    const covered = c.amountCents > 0 ? periodsCovered(c, upTo) : [];
+    const months: string[] = [];
+    for (const p of covered) if (monthRowCounts(c.vendor, "fixed", await present(c.vendor, p))) months.push(p);
     for (const p of months) {
       await keepUsage({ vendor: c.vendor, kind: c.kind, recordId: `fixed:${c.id}:${p}`, millicents: c.amountCents * 1000, day: `${p}-01`, tenantId: c.tenantId, refId: c.id, source: "fixed", replace: true });
       rows++;
@@ -293,7 +326,9 @@ export async function pullJambonz(): Promise<{ plan: string | null; invoiceCents
   await synced("jambonz", { usageSyncedAt: new Date(), note: plan ? `Plan: ${plan}` : null, ...(invoiceCents !== null ? { reportedPeriod: period, reportedCents: invoiceCents, reportedAt: new Date() } : {}) });
   const entered = await prisma.vendorFixedCost.findFirst({ where: { vendor: "jambonz", amountCents: { gt: 0 }, startPeriod: { lte: period }, OR: [{ endPeriod: null }, { endPeriod: { gte: period } }] } });
   const key = `invoice:${period}`;
-  if (invoiceCents !== null && invoiceCents > 0 && !entered) await keepUsage({ vendor: "jambonz", kind: "subscription", recordId: key, millicents: invoiceCents * 1000, day: `${period}-01`, source: "api", replace: true });
+  // A read invoice for the month (billing/vendors) beats the upcoming one.
+  const invoiced = (await monthClasses("jambonz", period)).has("invoice");
+  if (invoiceCents !== null && invoiceCents > 0 && !entered && !invoiced) await keepUsage({ vendor: "jambonz", kind: "subscription", recordId: key, millicents: invoiceCents * 1000, day: `${period}-01`, source: "api", replace: true });
   else await prisma.vendorUsage.deleteMany({ where: { vendor: "jambonz", vendorRecordId: key } });
   return { plan, invoiceCents };
 }
@@ -304,8 +339,8 @@ export async function pullJambonz(): Promise<{ plan: string | null; invoiceCents
 // cents) gives the month as Anthropic bills it, shown beside what we recorded.
 // No API exposes the prepaid credit balance: it is entered on /platform.
 
-export async function pullAnthropicReport(): Promise<number | null> {
-  if (!config.ANTHROPIC_ADMIN_KEY) return null;
+export async function pullAnthropicReport(adminKey = config.ANTHROPIC_ADMIN_KEY): Promise<number | null> {
+  if (!adminKey) return null;
   const now = new Date();
   const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
   let cents = 0;
@@ -317,7 +352,7 @@ export async function pullAnthropicReport(): Promise<number | null> {
     u.searchParams.set("bucket_width", "1d");
     u.searchParams.set("limit", "31");
     if (page) u.searchParams.set("page", page);
-    const res = await fetch(u, { headers: { "x-api-key": config.ANTHROPIC_ADMIN_KEY, "anthropic-version": "2026-10-21", "user-agent": "strowger-engine/1.0" }, signal: AbortSignal.timeout(20_000) });
+    const res = await fetch(u, { headers: { "x-api-key": adminKey, "anthropic-version": "2026-10-21", "user-agent": "strowger-engine/1.0" }, signal: AbortSignal.timeout(20_000) });
     if (!res.ok) throw new Error(`Anthropic cost report: ${res.status} ${(await res.text()).slice(0, 160)}`);
     const body = (await res.json()) as { data?: Array<{ results?: Array<{ amount?: string | number | { amount?: string | number } }> }>; has_more?: boolean; next_page?: string | null };
     for (const bucket of body.data ?? []) for (const r of bucket.results ?? []) cents += Number(typeof r.amount === "object" && r.amount !== null ? r.amount.amount : r.amount) || 0;
@@ -403,14 +438,15 @@ export const syncTelnyxCosts = syncAllVendors;
 
 /** The vendors the platform pays; balances shown even before the first sync. */
 export const KNOWN_VENDORS: Array<{ vendor: string; label: string; api: string }> = [
-  { vendor: "telnyx", label: "Telnyx", api: "Detail records hourly, balance daily" },
-  { vendor: "jambonz", label: "jambonz.cloud", api: "Plan and upcoming invoice daily (when the key may read them); else the fixed cost" },
-  { vendor: "anthropic", label: "Anthropic", api: "Per request from token usage; month total from the Admin API cost report when ANTHROPIC_ADMIN_KEY is set" },
-  { vendor: "cartesia", label: "Cartesia (text to speech)", api: "Characters spoken × rate (no usage API)" },
-  { vendor: "deepgram", label: "Speech to text", api: "Transcribed leg-minutes × rate" },
+  { vendor: "telnyx", label: "Telnyx", api: "Detail records hourly, balance daily (connector: Telnyx)" },
+  { vendor: "jambonz", label: "jambonz.cloud", api: "Plan and upcoming invoice daily (when the key may read them); the portal's invoices with the jambonz connector; else the fixed cost" },
+  { vendor: "anthropic", label: "Anthropic", api: "Per request from token usage; month total from the Admin API cost report (connector, or ANTHROPIC_ADMIN_KEY)" },
+  { vendor: "cartesia", label: "Cartesia (text to speech)", api: "Characters spoken × rate; credits used from the usage API (connector)" },
+  { vendor: "deepgram", label: "Speech to text", api: "Transcribed leg-minutes × rate; balance and Deepgram's month in dollars from the Manage API (connector)" },
   { vendor: "subscriberverify", label: "SubscriberVerify (litigator scrub)", api: "Records scrubbed × invoice rate" },
-  { vendor: "railway", label: "Railway", api: "Fixed monthly" },
-  { vendor: "clerk", label: "Clerk", api: "Fixed monthly" },
+  { vendor: "railway", label: "Railway", api: "Usage per service at Railway's rates, credit balance and invoices from the GraphQL API (connector); else fixed" },
+  { vendor: "vercel", label: "Vercel", api: "Billing charges (FOCUS) from the REST API (connector); else fixed" },
+  { vendor: "clerk", label: "Clerk", api: "Invoices from the dashboard (browser connector) or uploaded; else fixed" },
 ];
 
 export async function vendorAccounts() {

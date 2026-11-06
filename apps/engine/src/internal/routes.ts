@@ -38,6 +38,7 @@ import { changeAttribution, endReferral, referralsForTenant, referralsPlatform, 
 import { log } from "../log";
 import { saveVendorAccount, syncAllVendors, vendorSpend } from "../billing/vendor";
 import { deleteFixedCost, platformAccounting, saveAccountingSettings, saveFixedCost } from "../billing/accounting";
+import { listConnections, saveConnection, setNightly, startCollect, uploadInvoice } from "../billing/vendors";
 import { createWorkspace, moveCampaign } from "../workspaces";
 import { checkAndKeepWebsite, registrationStatus, reserveNumbers, startPayment, submitRegistration, welcomeEmail } from "../onboarding";
 import { applyPaymentEvents, paymentProvider } from "../payments";
@@ -439,6 +440,38 @@ export async function registerInternalRoutes(app: FastifyInstance): Promise<void
     const b = z.object({ vendor: z.string().min(1).max(40), lowBalanceCents: z.number().int().min(0).nullable(), balanceCents: z.number().int().nullable().optional() }).parse(req.body);
     await saveVendorAccount(b);
     return { ok: true };
+  });
+  // ---- Vendor connections (owner, 6 Nov): credentials sealed here, never returned; Collect now; nightly; invoice upload
+  const actor = z.object({ tenantId: z.string(), userId: z.string().nullable() });
+  const vendorName = z.string().regex(/^[a-z0-9-]{2,40}$/);
+  app.get("/internal/billing/connections", async () => listConnections());
+  app.post("/internal/billing/connections", async (req, reply) => {
+    const b = z.object({ vendor: vendorName, values: z.record(z.string().max(4000)), clear: z.array(z.string()).max(20).default([]), actor }).parse(req.body);
+    try {
+      await saveConnection(b.vendor, b.values, b.clear, b.actor);
+      return { ok: true };
+    } catch (e) {
+      return reply.code(400).send({ ok: false, error: e instanceof Error ? e.message : String(e) });
+    }
+  });
+  app.post("/internal/billing/connections/nightly", async (req) => {
+    const b = z.object({ vendor: vendorName, nightly: z.boolean(), actor }).parse(req.body);
+    await setNightly(b.vendor, b.nightly, b.actor);
+    return { ok: true };
+  });
+  app.post("/internal/billing/connections/collect", async (req, reply) => {
+    const b = z.object({ vendor: vendorName, actor }).parse(req.body);
+    const r = await startCollect(b.vendor, b.actor);
+    return r.ok ? r : reply.code(409).send(r);
+  });
+  // A PDF of up to 30 MB arrives base64-encoded in JSON, so this route takes a larger body than the default 1 MB.
+  app.post("/internal/billing/invoices/upload", { bodyLimit: 45 * 1024 * 1024 }, async (req, reply) => {
+    const b = z.object({ vendor: vendorName, name: z.string().max(200), contentType: z.string().max(100).nullable(), dataBase64: z.string().max(42 * 1024 * 1024), actor }).parse(req.body);
+    try {
+      return { ok: true, ...(await uploadInvoice(b.vendor, b.name, b.contentType, Buffer.from(b.dataBase64, "base64"), b.actor)) };
+    } catch (e) {
+      return reply.code(400).send({ ok: false, error: e instanceof Error ? e.message : String(e) });
+    }
   });
   app.post("/internal/workspaces", async (req, reply) => {
     const b = z.object({ name: z.string().min(2).max(80), adminEmail: z.string().email().nullable() }).parse(req.body);
