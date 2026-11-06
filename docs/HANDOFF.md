@@ -956,12 +956,61 @@ container queries, `@container` / `@min-[…]:`).
   `saveTransferDestination`, `addWebhook`, …) still exist with the same
   rules (now via the shared helpers); the page no longer calls them.
 - **App shell**: the sidebar is sticky at full height (its own scroll) and
-  folds into a "Menu" under 768 px; `main` is `min-w-0`, padding 16 px on
+  folds into a "Menu" under 768 px (see "Navigation" below); `main` is `min-w-0`, padding 16 px on
   phones. The client-workspace band carries `data-app-band` so the
   campaign header sticks below it.
 - The app's `globals.css` still follows `prefers-color-scheme` for the body
   (a light-mode browser gets a white page around the dark cards); the
   campaign editor sets its own text colours so it reads either way.
+
+## Navigation: launchers, sections, tabs (owner, 6 Nov)
+
+"As few items on the left as possible, about 7." The menu is data:
+`packages/shared/src/nav.ts` (`NAV_LAUNCHERS`, `NAV_SECTIONS`,
+`visibleNav(viewer)`, `visibleTabs`, `tabOfPath`, `TAB_ALIASES`; tested in
+`nav.test.ts`). Change the menu there, not in the layout.
+
+- **Launchers** (top of the sidebar, sky outlined buttons with an
+  open-in-window icon, not nav items): Agent console `/agent`, Floor
+  `/floor`, Campaigns `/campaigns`. `components/app-nav.tsx` opens each in
+  its own named popup window (`strowger-agent`, `strowger-floor`,
+  `strowger-campaigns`) via `window.open("", name)`: an existing window is
+  only focused, never reloaded (mid-call console, unsaved campaign); a new
+  one is pointed at the URL. Inside the window of that name (the Campaigns
+  window's own sidebar) it navigates in place. Popup blocked → opens in the
+  same window. Middle / cmd / ctrl / shift-click fall through to the
+  browser (the `<a>` has a real `href` and `target`).
+- **Sections** (client admin sees 7: Dashboard, Leads, Numbers,
+  Compliance, People, Billing, Settings; plus Platform when the owner is
+  inside a client; Partner portal for affiliates):
+  Dashboard = Overview `/dashboard` | Reports `/reports`;
+  Leads = Find a lead `/leads` | Lists | Cadences | Affiliates;
+  Numbers = Numbers `/numbers` | Reputation `/dids` | Inbound routing
+  `/inbound` (also `/skills`) | Voicemails;
+  Compliance (one page, no tabs); People = People | Teams & rooms | Games.
+- **A tab is its own page at its old URL.** Each tab folder has a one-line
+  `layout.tsx` rendering `components/section-shell.tsx` (server: the tabs
+  this person may open) → `section-tabs.tsx` (client: links, active by
+  `usePathname`, wraps on phones). Pages were not touched, so their own
+  query params, server-action redirects and `revalidatePath` calls keep
+  working, and sub-pages (`/lists/<id>`, `/people/<id>`) keep the bar.
+  `?tab=` on a section root is an alias: `proxy.ts` redirects
+  `/numbers?tab=reputation` → `/dids` etc. (`TAB_ALIASES`). Chosen over one
+  page switching on `?tab=` because the pages' params collide and
+  `revalidatePath("/dids")` would not refresh a page rendered at `/numbers`.
+- **Roles are unchanged**: each tab carries the roles its page already
+  required; a section shows if any tab does and links to the first visible
+  one. A section whose only visible tab is not its own first page takes
+  that tab's name (an agent sees Dashboard, Voicemails, Games and the
+  Agent console launcher; agents opening /dashboard still land on /agent).
+  The tab bar hides when one tab is visible. The bare platform workspace
+  keeps Platform, People, Settings and no launchers.
+- Active section is highlighted in the sidebar for any of its tab URLs.
+- 390 px: the People, Teams, Compliance and Reports grids got
+  `grid-cols-1` (their wide tables used to push the page sideways; they
+  now scroll inside their card) and `PageHeader` actions wrap.
+- The Campaigns window still carries the app sidebar (it is an `(app)`
+  page); Agent and Floor are full-bleed `(console)` pages.
 
 ## Campaign builder
 

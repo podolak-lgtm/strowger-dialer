@@ -26,7 +26,7 @@ export default async function CompliancePage() {
     <div>
       <PageHeader title="Compliance" subtitle="Do-not-call list, and the calling-time rules the dialer enforces." />
 
-      <div className="grid gap-6 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <div className="space-y-6 lg:col-span-2">
           <Card
             title={
