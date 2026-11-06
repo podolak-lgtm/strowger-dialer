@@ -32,3 +32,11 @@ test("a test phone dials past the calling window; any other number does not", ()
   // The time zone is still required.
   assert.equal(evaluateDialWindow({ ...base, timezone: null, testPhone: true }).allowed, false);
 });
+
+test("always-on test phones never expire and still cover only the list", () => {
+  const settings = { testPhones: turnOnTestPhones(["5612718275", "4303821338"], NOW, true) };
+  const later = new Date(NOW.getTime() + 400 * 24 * 3600_000);
+  assert.equal(testPhoneActive(settings, "4303821338", later), true);
+  assert.equal(testPhoneActive(settings, "4303820938", later), false);
+  assert.deepEqual(readTestPhones(settings)?.always, true);
+});

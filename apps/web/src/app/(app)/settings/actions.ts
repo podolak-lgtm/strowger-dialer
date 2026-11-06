@@ -149,15 +149,16 @@ export async function saveTexting(formData: FormData) {
 
 /**
  * Test phones (owner, 6 Nov): the listed phones dial outside the calling
- * window for 12 hours, then the switch turns itself off. Admins only; audit-logged.
+ * window for 12 hours, or with "always" until turned off. Admins only; audit-logged.
  */
 export async function turnOnTestPhones(formData: FormData) {
   const s = await requireRole("ADMIN");
   const phones = parseTestPhones(String(formData.get("phones") ?? ""));
   if (!phones.length) throw new Error("List at least one ten-digit number");
   const settings = (s.tenant.settings ?? {}) as Record<string, unknown>;
-  const testPhones = buildTestPhones(phones);
-  await prisma.tenant.update({ where: { id: s.tenant.id }, data: { settings: { ...settings, testPhones: { phones: testPhones.phones, until: testPhones.until } } as object } });
+  const always = formData.get("always") === "on";
+  const testPhones = buildTestPhones(phones, new Date(), always);
+  await prisma.tenant.update({ where: { id: s.tenant.id }, data: { settings: { ...settings, testPhones: { phones: testPhones.phones, until: testPhones.until, always: Boolean(testPhones.always) } } as object } });
   await prisma.auditLog.create({ data: { tenantId: s.tenant.id, actorId: s.user.id, action: "settings.test-phones.on", after: { ...testPhones } } });
   revalidatePath("/settings");
 }

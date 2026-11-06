@@ -634,8 +634,12 @@ takes `testPhone: true` and then skips hour, weekday and attempt limits
 hopper's `eligibility`; texts (`cadence.ts`) keep normal hours, and DNC is
 checked outside the window so it still applies. Settings → "Test phones:
 ignore calling hours" (admins; audit-logged on and off) pre-fills the last
-list, the owner's cell 561-271-8275 the first time, and every active
-transfer destination's number. Expired = off, no job needed.
+list, `DEFAULT_TEST_PHONES` (the owner's 561-271-8275 and 430-382-1338),
+and every active transfer destination's number. Expired = off, no job
+needed. **Always on** (owner, 6 Nov: "test numbers that can be called
+anytime 24/7, that's fine") stores `{ phones, until: null, always: true }`
+and stays on until an admin turns it off; the card's checkbox defaults to
+it. It still covers only the listed numbers.
 
 ## Mid-call controls (`dialer/controls.ts`)
 

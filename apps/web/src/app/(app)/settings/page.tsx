@@ -6,7 +6,7 @@ import { Badge, Button, Card, Field, PageHeader, Table, Td, inputClass } from "@
 import { addAudioAsset, addCallerIds, deleteAudioAsset, saveFcrProfile, saveGames, saveGoals, saveLevelRights, saveTexting, setCallerIdStatus, turnOffTestPhones, turnOnTestPhones, setCampaignAudio, uploadAudio } from "./actions";
 import { AGENT_RIGHTS, LEVELS, rightsForLevel } from "@strowger/shared/games";
 import { storageConfigured } from "@/lib/storage";
-import { readTestPhones, TEST_PHONES_HOURS } from "@strowger/shared/compliance";
+import { DEFAULT_TEST_PHONES, readTestPhones, testPhonesOn, TEST_PHONES_HOURS } from "@strowger/shared/compliance";
 import { TestPhonesUntil } from "./test-phones-until";
 import { runRecordingExportNow, saveRecordingPolicy } from "./recording-actions";
 
@@ -439,22 +439,22 @@ export default async function SettingsPage() {
 /** Test phones: the owner's own numbers dial outside calling hours for 12 hours (owner, 6 Nov). */
 async function TestPhonesCard({ settings, tenantId, isAdmin }: { settings: unknown; tenantId: string; isAdmin: boolean }) {
   const current = readTestPhones(settings);
-  const on = current && Date.parse(current.until) > Date.parse(new Date().toISOString()) ? current : null;
+  const on = testPhonesOn(current) ? current : null;
   // Pre-fill: the last list, plus every active transfer destination in the workspace.
   const dests = await prisma.transferDestination.findMany({ where: { tenantId, active: true }, select: { phone: true, name: true } });
   const destTen = dests.map((d) => d.phone.replace(/\D/g, "").slice(-10)).filter((p) => p.length === 10);
-  const prefill = [...new Set([...(current?.phones ?? ["5612718275"]), ...destTen])];
+  const prefill = [...new Set([...(current?.phones ?? []), ...DEFAULT_TEST_PHONES, ...destTen])];
   return (
     <Card title="Test phones: ignore calling hours" className="lg:col-span-2">
       <p className="mb-3 text-xs text-zinc-500">
-        For testing on your own phones. Numbers listed here can be dialled outside the calling window and past the daily attempt cap for {TEST_PHONES_HOURS} hours, then the switch turns itself off.
+        For testing on your own phones. Numbers listed here can be dialled outside the calling window and past the daily attempt cap, for {TEST_PHONES_HOURS} hours or, with &quot;Always on&quot;, until an admin turns it off.
         Every other number keeps the federal and state hours. Do-not-call still applies. Texts keep normal hours.
       </p>
       {on ? (
         <div className="mb-3 flex flex-wrap items-center gap-3 rounded-lg border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-sm text-amber-100">
           <span className="font-medium">On</span>
           <span>
-            until <TestPhonesUntil iso={on.until} /> for {on.phones.map((p) => formatPhone(p)).join(", ")}
+            {on.always || !on.until ? "always, 24/7," : <>until <TestPhonesUntil iso={on.until} /></>} for {on.phones.map((p) => formatPhone(p)).join(", ")}
           </span>
           {isAdmin ? (
             <form action={turnOffTestPhones}>
@@ -470,7 +470,10 @@ async function TestPhonesCard({ settings, tenantId, isAdmin }: { settings: unkno
           <Field label="Phones (up to 10, one per line or comma separated)">
             <textarea name="phones" rows={3} defaultValue={prefill.map((p) => formatPhone(p)).join("\n")} className={`${inputClass} w-72 font-mono`} />
           </Field>
-          <Button type="submit">{on ? `Restart for ${TEST_PHONES_HOURS} hours` : `Turn on for ${TEST_PHONES_HOURS} hours`}</Button>
+          <label className="flex items-center gap-2 pb-2 text-zinc-300">
+            <input type="checkbox" name="always" defaultChecked={on?.always ?? true} className="h-4 w-4" /> Always on (24/7, no expiry)
+          </label>
+          <Button type="submit">{on ? "Save test phones" : "Turn on"}</Button>
           {dests.length ? <span className="text-xs text-zinc-500">Includes the transfer destinations: {dests.map((d) => d.name).join(", ")}.</span> : null}
         </form>
       ) : (
