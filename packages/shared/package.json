@@ -19,7 +19,8 @@
     "./scripts": "./src/scripts.ts",
     "./transfers": "./src/transfers.ts",
     "./campaign-form": "./src/campaign-form.ts",
-    "./campaign-draft": "./src/campaign-draft.ts"
+    "./campaign-draft": "./src/campaign-draft.ts",
+    "./nav": "./src/nav.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

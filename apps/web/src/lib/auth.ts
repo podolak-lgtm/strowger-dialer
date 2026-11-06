@@ -9,6 +9,7 @@ import { auth, currentUser } from "@clerk/nextjs/server";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { cache } from "react";
+import type { NavViewer } from "@strowger/shared/nav";
 
 export interface Session {
   user: User;
@@ -92,4 +93,9 @@ export async function requireClientWorkspace(...roles: Role[]): Promise<Session>
   const session = roles.length ? await requireRole(...roles) : await requireSession();
   if (isBarePlatform(session)) redirect("/platform?pick=1");
   return session;
+}
+
+/** What the left-hand menu needs to know about the session (`@strowger/shared/nav`). */
+export function navViewer(session: Session): NavViewer {
+  return { roles: session.roles, bare: isBarePlatform(session), platformTenant: session.tenant.isPlatform, acting: Boolean(session.actingFrom) };
 }
