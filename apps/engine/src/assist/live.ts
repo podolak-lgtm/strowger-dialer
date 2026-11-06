@@ -126,8 +126,22 @@ async function patch(callId: string, p: Partial<LiveState>): Promise<LiveState |
 
 // ── Readiness ───────────────────────────────────────────────────────────────
 
+const STT_DOWN = "live:stt-down";
+
+/**
+ * jambonz reported a speech-to-text failure (alert webhook): no new call gets a
+ * transcription for an hour, so calls keep their audio and their hang-up. A
+ * broken transcription on 6 Nov left two calls silent and impossible to end.
+ */
+export async function markSttDown(reason: string): Promise<void> {
+  await redis.set(STT_DOWN, reason.slice(0, 300), "EX", 3600);
+  log.error({ reason }, "live transcription paused for an hour: jambonz reported a speech-to-text failure");
+}
+
 /** Can calls be transcribed at all (jambonz configured, an STT vendor on the account)? Cached with the speech services. */
 export async function transcriptionReady(): Promise<TranscriptionReadiness> {
+  const down = await redis.get(STT_DOWN).catch(() => null);
+  if (down) return { ok: false, stt: null, problems: [`Transcription is paused for up to an hour: jambonz reported a speech-to-text failure (${down}). Check the speech-to-text vendor in jambonz (Account → Speech services).`] };
   return transcriptionReadiness({ jambonzConfigured, creds: await speechCreds(), preferred: config.SCREENER_STT_VENDOR ?? null });
 }
 

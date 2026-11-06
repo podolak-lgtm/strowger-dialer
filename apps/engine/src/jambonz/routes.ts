@@ -32,7 +32,7 @@ import { queueCallbackAnswered } from "../inbound/callbacks";
 import { surveyPending, surveyResult, surveyVerbs } from "../inbound/survey";
 import { markTtsDown } from "../inbound/common";
 import { aiFallbackVerbs, aiHandoffVerbs } from "../inbound/ai/control";
-import { agentTranscript, leadTranscript, liveAgentLegVerbs, liveLeadVerbs } from "../assist/live";
+import { agentTranscript, leadTranscript, liveAgentLegVerbs, liveLeadVerbs, markSttDown } from "../assist/live";
 import { log } from "../log";
 import { agentRoom, hookUrl, jambonz } from "./client";
 
@@ -101,6 +101,7 @@ export async function registerJambonzRoutes(app: FastifyInstance): Promise<void>
     // A text-to-speech failure: spoken queue prompts pause for 15 minutes instead of failing on every caller.
     const text = JSON.stringify(req.body ?? {}).toLowerCase();
     if (/\btts\b|synthes|text[- ]to[- ]speech/.test(text)) await markTtsDown(text.slice(0, 200));
+    if (/no-stt|\bstt\b|speech[- ]to[- ]text|recogni[sz]/.test(text)) await markSttDown(text.slice(0, 200));
     return reply.send({ ok: true });
   });
 

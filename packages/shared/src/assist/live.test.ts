@@ -62,6 +62,11 @@ test("readiness refuses without an STT vendor and names the jambonz step", () =>
   assert.match(none.problems[0]!, /Account → Speech services/);
   assert.match(none.problems[0]!, /Use for speech-to-text/);
   assert.equal(transcriptionReadiness({ jambonzConfigured: true, creds: [{ vendor: "google", stt: true }, { vendor: "deepgram", stt: true }] }).stt, "deepgram");
+  // A voice-only vendor ticked for speech-to-text is never used (6 Nov: Cartesia broke two calls).
+  const cartesiaOnly = transcriptionReadiness({ jambonzConfigured: true, creds: [{ vendor: "cartesia", stt: true }] });
+  assert.equal(cartesiaOnly.ok, false);
+  assert.equal(cartesiaOnly.stt, null);
+  assert.equal(transcriptionReadiness({ jambonzConfigured: true, creds: [{ vendor: "cartesia", stt: true }, { vendor: "deepgram", stt: true }] }).stt, "deepgram");
   assert.equal(transcriptionReadiness({ jambonzConfigured: true, creds: [{ vendor: "google", stt: true }] }).stt, "google");
   assert.equal(transcriptionReadiness({ jambonzConfigured: true, creds: [{ vendor: "google", stt: true }], preferred: "deepgram" }).ok, false);
   assert.equal(transcriptionReadiness({ jambonzConfigured: false, creds: null }).ok, false);

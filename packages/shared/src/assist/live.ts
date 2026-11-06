@@ -119,6 +119,15 @@ export const STT_SETUP_STEP =
  * engine's SCREENER_STT_VENDOR, when set, must be one of them; otherwise
  * Deepgram is preferred, then the first STT vendor.
  */
+/**
+ * Speech vendors that only speak (text-to-speech). A credential for one of
+ * these can carry a "use for speech-to-text" tick in jambonz and still not
+ * transcribe: on 6 Nov Cartesia was picked, jambonz raised "speech to text
+ * credentials for cartesia have not been provisioned", and the calls lost
+ * their audio and could not be hung up. Never pick these for transcription.
+ */
+export const TTS_ONLY_VENDORS: readonly string[] = ["cartesia", "elevenlabs", "playht", "rimelabs", "wellsaid", "whisper"];
+
 export function transcriptionReadiness(i: { jambonzConfigured: boolean; creds: readonly SpeechCredLike[] | null; preferred?: string | null }): TranscriptionReadiness {
   const problems: string[] = [];
   if (!i.jambonzConfigured) problems.push("jambonz is not configured on the engine (JAMBONZ_API_KEY and JAMBONZ_ACCOUNT_SID).");
@@ -126,7 +135,7 @@ export function transcriptionReadiness(i: { jambonzConfigured: boolean; creds: r
   if (i.creds === null) {
     if (i.jambonzConfigured) problems.push("Could not read the speech services on the jambonz account to check for speech-to-text; try again in a minute.");
   } else {
-    const vendors = i.creds.filter((c) => c.stt).map((c) => c.vendor);
+    const vendors = i.creds.filter((c) => c.stt && !TTS_ONLY_VENDORS.includes(c.vendor.toLowerCase())).map((c) => c.vendor);
     if (i.preferred) {
       if (vendors.includes(i.preferred)) stt = i.preferred;
       else problems.push(`The engine's speech-to-text vendor "${i.preferred}" (SCREENER_STT_VENDOR) is not on the jambonz account for speech-to-text${vendors.length ? ` (it has ${vendors.join(", ")})` : ""}. ${STT_SETUP_STEP}`);

@@ -1430,6 +1430,22 @@ Lead Queue expands (`CollapsibleLeadCard`) to the same editor.
 
 ## Live transcription and agent assist (6 Nov)
 
+**6 Nov incident, and the guards it added.** Transcription was switched on
+while the only speech service on the jambonz account was Cartesia (a voice
+vendor). It was picked as the speech-to-text vendor; jambonz alerted
+"speech to text credentials for cartesia have not been provisioned", the
+lead and the agent never met in the room (no conference events at all), the
+agent heard nothing, and jambonz then dropped the sessions without a final
+status, so every Hang up failed with "call session is gone" and the console
+stayed on the call. Now: (1) `TTS_ONLY_VENDORS` in `shared/assist/live.ts`
+(cartesia, elevenlabs, playht, rimelabs, wellsaid, whisper) are never chosen
+for transcription, tested; (2) a jambonz alert mentioning speech-to-text
+(`no-stt` and the like) calls `markSttDown`, and `transcriptionReady` then
+refuses for an hour, so new calls and agent lines come up without it;
+(3) `hangupCall` treats "session is gone" / 404 from jambonz as the call
+having ended and runs `leadCallEnded`, so the agent goes to wrap-up instead
+of being stuck.
+
 Both sides of a call transcribed live, coaching from what the customer says,
 compliance checks on what the agent says, and an after-call summary.
 **Built and checked offline against a fake jambonz; not yet on a live call.

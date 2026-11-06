@@ -159,7 +159,15 @@ export async function hangupCall(callId: string): Promise<void> {
   if (!call?.providerCallId || call.endedAt) return;
   // An inbound queue call with the post-call survey on: the caller goes to the survey instead of being hung up.
   if (await startSurveyInsteadOfHangup(callId).catch(() => false)) return;
-  await jambonz.calls.update(call.providerCallId, { call_status: "completed" }).catch((e) => log.warn({ err: e, callId }, "hangup failed"));
+  try {
+    await jambonz.calls.update(call.providerCallId, { call_status: "completed" });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    log.warn({ err: e, callId }, "hangup failed");
+    // jambonz no longer has the call (its session died without a final status): close it here, or the
+    // agent's console stays on a call nothing can end (6 Nov). leadCallEnded moves them to wrap-up.
+    if (/session is gone|404|not found/i.test(msg)) await leadCallEnded(callId, "completed", undefined, undefined);
+  }
 }
 
 /** The lead leg ended, from the status hook. Moves the agent to wrap-up. */
