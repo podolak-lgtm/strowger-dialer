@@ -1,6 +1,7 @@
 // Mid-call controls an agent uses: hold, warm transfer to a closer, and a
 // manual dial of a typed number under the same compliance rules.
 import { outboundAllowed } from "../billing";
+import { isTestPhone } from "./test-phones";
 import { prisma, type Campaign } from "@strowger/db";
 import { evaluateDialWindow } from "@strowger/shared/compliance";
 import { resolveZone } from "@strowger/shared/geo";
@@ -103,7 +104,7 @@ export async function manualDial(tenantId: string, agentId: string, raw: string)
 
   let lead = await prisma.lead.findFirst({ where: { tenantId, phone }, orderBy: [{ lastAttemptAt: "desc" }, { postedAt: "desc" }] });
   const zone = resolveZone({ zip: lead?.zip, state: lead?.state, phone });
-  const d = evaluateDialWindow({ timezone: lead?.timezone ?? zone?.timezone ?? null, state: lead?.state ?? zone?.state ?? null, campaignStartHour: campaign.localWindowStart, campaignEndHour: campaign.localWindowEnd, attemptsAllowedPerDay: campaign.maxAttemptsPerDay, attemptsToday: 0, allowedHours: campaign.allowedHours as number[][] | null });
+  const d = evaluateDialWindow({ timezone: lead?.timezone ?? zone?.timezone ?? null, state: lead?.state ?? zone?.state ?? null, campaignStartHour: campaign.localWindowStart, campaignEndHour: campaign.localWindowEnd, attemptsAllowedPerDay: campaign.maxAttemptsPerDay, attemptsToday: 0, allowedHours: campaign.allowedHours as number[][] | null, testPhone: await isTestPhone(tenantId, phone) });
   if (!d.allowed) return { ok: false, error: `${d.reason} (${d.rule})` };
 
   if (!lead) {

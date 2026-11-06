@@ -621,6 +621,22 @@ warm. The customer is never put on hold: no hold music, no private consult.
   destination, a supervisor view into `xfer-<id>` rooms (listen/whisper
   target the agent's room only).
 
+## Test phones: calling hours off for the owner's own numbers (6 Nov)
+
+The owner asked for a 12-hour switch to test on his cell after 9 p.m.
+Eastern. It is scoped, not a global off switch: `Tenant.settings.testPhones
+= { phones, until }` (up to `TEST_PHONES_MAX` 10 numbers; `until` = now +
+`TEST_PHONES_HOURS` 12). Rules and tests in
+`packages/shared/src/compliance/test-phones.ts`; `evaluateDialWindow`
+takes `testPhone: true` and then skips hour, weekday and attempt limits
+(the time zone is still required). The engine asks
+`dialer/test-phones.ts` `isTestPhone` (15 s cache) in `manualDial` and the
+hopper's `eligibility`; texts (`cadence.ts`) keep normal hours, and DNC is
+checked outside the window so it still applies. Settings → "Test phones:
+ignore calling hours" (admins; audit-logged on and off) pre-fills the last
+list, the owner's cell 561-271-8275 the first time, and every active
+transfer destination's number. Expired = off, no job needed.
+
 ## Mid-call controls (`dialer/controls.ts`)
 
 - **Hold**: `conf_hold_status` on the lead leg.

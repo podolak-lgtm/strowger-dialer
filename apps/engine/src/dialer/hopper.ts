@@ -5,6 +5,7 @@
 // list with a cadence dials by the cadence's caps, gap and dayparts; a list
 // without one dials by the campaign's dial plans. Compliance (window, state
 // caps) applies to both.
+import { isTestPhone } from "./test-phones";
 import { prisma, type CadenceProfile, type Campaign, type DialPlan, type Lead, type List } from "@strowger/db";
 import { daypartOf, localParts, parseDayparts } from "@strowger/shared/cadence";
 import { evaluateDialWindow, type DialDecision } from "@strowger/shared/compliance";
@@ -70,6 +71,7 @@ export async function eligibility(campaign: Campaign, plans: DialPlan[], lead: L
     allowedHours: campaign.allowedHours as number[][] | null,
     attemptsAllowedPerDay: cadence?.maxAttemptsPerDay ?? plan?.attemptsPerDay ?? campaign.maxAttemptsPerDay,
     attemptsToday: attempts,
+    testPhone: await isTestPhone(campaign.tenantId, lead.phone, now),
     now,
   });
   return { decision, plan, attemptsToday: attempts };

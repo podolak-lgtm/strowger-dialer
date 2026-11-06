@@ -1,5 +1,6 @@
 "use server";
 
+import { parseTestPhones, turnOnTestPhones as buildTestPhones } from "@strowger/shared/compliance";
 import { prisma, type AudioKind } from "@strowger/db";
 import { normalizePhone, stateForAreaCode } from "@strowger/shared";
 import { revalidatePath } from "next/cache";
@@ -143,5 +144,29 @@ export async function saveTexting(formData: FormData) {
   const textingEnabled = formData.get("textingEnabled") === "on";
   await prisma.tenant.update({ where: { id: s.tenant.id }, data: { settings: { ...settings, textingEnabled } } });
   await prisma.auditLog.create({ data: { tenantId: s.tenant.id, actorId: s.user.id, action: "settings.texting", after: { textingEnabled } } });
+  revalidatePath("/settings");
+}
+
+/**
+ * Test phones (owner, 6 Nov): the listed phones dial outside the calling
+ * window for 12 hours, then the switch turns itself off. Admins only; audit-logged.
+ */
+export async function turnOnTestPhones(formData: FormData) {
+  const s = await requireRole("ADMIN");
+  const phones = parseTestPhones(String(formData.get("phones") ?? ""));
+  if (!phones.length) throw new Error("List at least one ten-digit number");
+  const settings = (s.tenant.settings ?? {}) as Record<string, unknown>;
+  const testPhones = buildTestPhones(phones);
+  await prisma.tenant.update({ where: { id: s.tenant.id }, data: { settings: { ...settings, testPhones: { phones: testPhones.phones, until: testPhones.until } } as object } });
+  await prisma.auditLog.create({ data: { tenantId: s.tenant.id, actorId: s.user.id, action: "settings.test-phones.on", after: { ...testPhones } } });
+  revalidatePath("/settings");
+}
+
+export async function turnOffTestPhones() {
+  const s = await requireRole("ADMIN");
+  const settings = { ...((s.tenant.settings ?? {}) as Record<string, unknown>) };
+  delete settings.testPhones;
+  await prisma.tenant.update({ where: { id: s.tenant.id }, data: { settings: settings as object } });
+  await prisma.auditLog.create({ data: { tenantId: s.tenant.id, actorId: s.user.id, action: "settings.test-phones.off" } });
   revalidatePath("/settings");
 }

@@ -20,6 +20,8 @@ export interface DialWindowInput {
   extraRules?: StateRuleDef[];
   /** Optional campaign day x hour grid (7 x 24 flags, Sunday first). */
   allowedHours?: ReadonlyArray<ReadonlyArray<number | boolean>> | null;
+  /** The phone is on the workspace's switched-on test list (`test-phones.ts`): hours, weekday and attempt caps are skipped. */
+  testPhone?: boolean;
   now?: Date;
 }
 
@@ -75,6 +77,8 @@ export function evaluateDialWindow(input: DialWindowInput): DialDecision {
   if (!local) {
     return { allowed: false, reason: `Unrecognised time zone ${input.timezone}`, rule: "timezone" };
   }
+  // The owner's own test phone while the 12-hour switch is on: no hour, weekday or attempt limits.
+  if (input.testPhone) return { allowed: true, localHour: local.hour, localWeekday: local.weekday };
 
   const rules: StateRuleDef[] = [FEDERAL_RULE];
   const stateRule = ruleForState(input.state);
