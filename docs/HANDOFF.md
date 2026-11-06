@@ -1197,6 +1197,136 @@ active").
   kept). A trial workspace keeps being charged the monthly fee for numbers
   it holds after an unpaid end, like any client.
 
+## Client onboarding wizard (owner, 6 Nov) — PAUSED, switched off
+
+Owner: "When I set up a new client workspace I want it wizard-driven ... name
+and email are the only minimum ... tell them about 7 days ... it ends with a
+credit card." **Paused by the owner on 6 Nov** (merchant account about a week
+away). Built and pushed, but **`ONBOARDING_WIZARD_LIVE = false`**
+(`packages/shared/src/onboarding.ts`): nothing sends a client there by itself
+(no first-visit redirect from /dashboard, no redirect after sign-up, no
+"Finish setup" banner, no welcome email on workspace creation). `/welcome`
+works when opened directly, from Settings ("Setup wizard") or from /platform
+→ Clients → **Open wizard**. Turn the flag on only after the walk-through
+below.
+
+- **Rules, pure and tested**: `packages/shared/src/tendlc.ts` (10DLC brand,
+  address, EIN, website findings, campaign checks; `toBrandInput` /
+  `toCampaignInput` give the Telnyx shapes; `VERTICALS`/`USECASES` moved
+  here from the Numbers page) and `onboarding.ts` (steps, status per step,
+  progress, `TIMELINE_TEXT` and dates, `recommendedPrepayment`,
+  `callingNotes` against `STATE_RULES`). Tests: `tendlc.test.ts`,
+  `onboarding.test.ts`. **No 10DLC validation code existed before** (the
+  earlier checks were done by hand in a session); these rules are new and
+  are now also enforced by the Numbers page's brand/campaign forms
+  (`numbers/actions.ts`; that form's free-text message flow skips the
+  consent-wording checks), whose fields are prefilled from the wizard.
+- **Data**: `Tenant.onboarding Json?` (migration `tenant_onboarding`;
+  `onboarding_existing_clients` marks every workspace that existed before as
+  finished, so live clients are never nagged). Shape `OnboardingState`:
+  `steps.<you|business|texting|calling|leads|team|payment>`, `meta.<step>`
+  (updatedAt, skippedAt), firstSeenAt, finishedAt, website (last check),
+  registration, firstCampaign, reserve, paymentRequest. **Write only with
+  `patchOnboarding`** (`packages/db/src/onboarding.ts`, one UPDATE per edit on
+  a one- or two-key path) because the browser autosaves while the engine
+  writes the same JSON. `packages/db/src/index.ts` now re-exports `prisma`
+  from `client.ts`. Settings → Free Caller Registry profile is prefilled from
+  the Business step (`fcrPrefill`); saved values win.
+- **Web**: `app/(app)/welcome/` (`page.tsx`, `wizard.tsx` client,
+  `actions.ts`). Left rail with dots (done / needs info / skipped / not
+  started), jump anywhere, Back / Next / Skip, progress bar, why + "needed
+  for" per step, the 7-day box with dates. Autosave = the console lead-card
+  pattern (800 ms after typing stops, at once on blur or leaving the step,
+  `saveStep`; no revalidation). The website check and the 10DLC status poll
+  are **route handlers** (`/api/welcome/website`, `/api/welcome/registration`)
+  because server actions run one at a time per browser and would queue
+  behind autosave. Steps: You (name + email required); Business (live
+  checks, website check 1.5 s after the address stops changing, "Ready for
+  10DLC" list); Texting (compliant defaults prefilled, Submit only when
+  clean, then status polled every 30 s); Calling (campaign name, hours,
+  states checked against state rules, inbound, agent count); Leads (creates
+  the first campaign, default "My first campaign", plus an upload list, then
+  the existing `UploadWizard` and `NumbersCard` with `onApply` =
+  `reserveNumbers` and the label "Reserve these numbers"); Team
+  (`lib/people-invite.ts`, extracted from People: the user row with SIP and
+  Clerk's invitation); Payment; Done. Also extracted: `lib/campaign-create.ts`.
+  /platform → Clients has a **Setup** column (steps, 10DLC, payment, numbers
+  waiting) and **Open wizard** (`openWorkspace` with `next=/welcome`).
+- **Engine** (`apps/engine/src/onboarding/`): `website.ts` fetches the home
+  page and the privacy page (public hosts only: every redirect hop is
+  resolved and private / loopback / link-local / CGNAT refused; 8 s, 1.5 MB).
+  `index.ts`: `submitRegistration` (re-checks, then `createBrand` +
+  `createTenDlcCampaign` from provisioning; a campaign refused while the brand
+  is unverified waits as `campaignPending` and job `onboarding10dlc` (30 min)
+  retries it); `reserveNumbers` → `applyDidPlan`; with no funds the plan is
+  saved (`reserve.state = pending_funds`) and **`onPayment`** (new listener
+  hook in `billing/recordPayment`) orders it on the first payment, claimed
+  atomically so it runs once; `startPayment`; `welcomeEmail` (button
+  `/sign-up?redirect_url=/welcome`). Routes `/internal/onboarding/*`,
+  `/internal/payments/provider`, `/internal/payments/webhook`. Audit:
+  `onboarding.step.started|skipped`, `onboarding.tendlc.submit`,
+  `onboarding.numbers.saved|reserved|ordered_on_payment`,
+  `onboarding.payment.requested`, `onboarding.payment_link_needed` (on the
+  platform tenant), `onboarding.finish`.
+- **Payments** (`apps/engine/src/payments/index.ts`): `PaymentProvider`
+  (`createSetupIntent` / `confirm` / `charge` / `webhook`) with `noneProvider`
+  (default `PAYMENT_PROVIDER=none`). With none the Payment step shows "Card
+  payments are being set up. We'll email you a secure payment link; you can
+  also pay by wire or ACH" plus `PlatformRates.prepayInstructions`, and
+  "Send me a payment link" emails the platform admins and audit-logs it.
+  `recordPayment` gained `uniqueKey` (idempotent) and returns false on a
+  repeat; `applyPaymentEvents` credits through it with key
+  `pay:<provider>:<payment id>`.
+  **To add a processor (likely Stripe)**: never collect or store card numbers
+  in Strowger; use the provider's hosted checkout or hosted fields only.
+  1. Write `stripeProvider` (see `TODO(provider)` in `payments/index.ts`):
+     `createSetupIntent` = Checkout Session, mode payment, amount,
+     `customer_email`, `client_reference_id` and `metadata.tenantId` =
+     tenant id, success/cancel = the return URL,
+     `setup_future_usage: off_session`, answer `{mode:"redirect", url}`;
+     `confirm` = read the session (status only); `charge` = off-session
+     PaymentIntent with the idempotency key; `webhook` =
+     `constructEvent(rawBody, stripe-signature, STRIPE_WEBHOOK_SECRET)`.
+  2. Events that credit `recordPayment`: `checkout.session.completed` with
+     `payment_status = paid`, and `payment_intent.succeeded` (amount =
+     `amount_received`, ref = the PaymentIntent id, so both events credit once).
+     `setup_intent.succeeded` = card saved (no money). Refunds: post a
+     negative `recordPayment` with key `refund:<id>` (counts as a refund for
+     referral clawback).
+  3. Env on the engine: `PAYMENT_PROVIDER=stripe`, `STRIPE_SECRET_KEY`,
+     `STRIPE_WEBHOOK_SECRET` (add to `config.ts`); on web nothing unless
+     hosted fields are used (`NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`, and the
+     `embedded` branch in `wizard.tsx` PaymentStep).
+  4. Webhook URL: `https://strowger.crossbar.digital/api/webhooks/payments/stripe`
+     (public under `/api/webhooks/`; the route forwards raw body + headers to
+     the engine, which verifies the signature).
+  5. Return it from `paymentProvider()`; the Payment step then shows
+     "Add a card and pay $X". Billing's own page still has no card button.
+- **Recommended prepayment** = seats × the client's seat price + seats ×
+  180 billed minutes a working day × 21 days × the per-minute price +
+  planned numbers × the number price, rounded up to the next $100 (minimum
+  $100). Seats = the most of: agents on the Calling step, agents invited, agents
+  in People, 1.
+- **Checked here**: shared tests; the engine routes by hand against local
+  Postgres with no Telnyx or Crossbar keys (workspace creation prefill, the
+  website check on example.com, nationalsolarresolutions.com and twilio.com,
+  private addresses refused, Submit refused with every reason listed,
+  reserve with no funds saved, a recorded payment picked up the saved plan
+  (it then failed at the Telnyx search, as it must with no key), payment
+  request audit, webhook 404 with no provider, `uniqueKey` crediting once).
+- **Where it stopped / what remains before switching it on**: the wizard UI
+  has **not been opened in a browser** (it typechecks, lints and builds; the
+  pause came as the browser check started). Walk every step at 1280 and
+  390 px; the CSV upload and Reserve inside the wizard; a real 10DLC
+  submission with the owner (Telnyx brand fees apply; the campaign retry on
+  an unverified brand is unproven); the welcome email through Crossbar and
+  the Clerk sign-up redirect to /welcome; the platform payment-link email;
+  the card processor itself. Then set `ONBOARDING_WIZARD_LIVE = true`.
+  Known limits: the website check resolves DNS and then fetches (a
+  rebinding race is possible; it only reads HTML and returns findings);
+  10DLC resubmission after a rejection is by hand on /numbers; "Finish"
+  only hides the banner.
+
 ## Media bucket
 
 Railway bucket `media` (S3-compatible, region sjc). The web service reads

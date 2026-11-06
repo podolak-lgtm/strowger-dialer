@@ -49,6 +49,13 @@ export const config = readEnv({
   // Crossbar scrub (optional). Without both, leads are marked CLEAN with the reason "No scrub source configured".
   CROSSBAR_URL: z.string().optional(),
   CROSSBAR_AGENT_KEY: z.string().optional(),
+
+  /**
+   * Card processor for client prepayments (onboarding wizard, Payment step). "none" (default): no cards; the
+   * wizard shows wire/ACH instructions and emails the platform admin to send a payment link. Adding one: see
+   * apps/engine/src/payments/index.ts TODO(provider) and docs/HANDOFF.md "Client onboarding wizard".
+   */
+  PAYMENT_PROVIDER: z.enum(["none", "stripe"]).default("none"),
   /** Run the paid SubscriberVerify layer, not only Crossbar's own lists. */
   SCRUB_PAID: z.coerce.boolean().default(true),
 

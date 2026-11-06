@@ -24,7 +24,9 @@
     "./nav": "./src/nav.ts",
     "./inbound": "./src/inbound/index.ts",
     "./assist": "./src/assist/index.ts",
-    "./accounting": "./src/accounting.ts"
+    "./accounting": "./src/accounting.ts",
+    "./tendlc": "./src/tendlc.ts",
+    "./onboarding": "./src/onboarding.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

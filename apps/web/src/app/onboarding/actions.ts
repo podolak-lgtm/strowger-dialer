@@ -6,6 +6,7 @@ import { REFERRAL_COOKIE } from "@strowger/shared/referrals";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { engine } from "@/lib/engine";
+import { ONBOARDING_WIZARD_LIVE } from "@strowger/shared/onboarding";
 
 type SignupResult = { ok: true; tenantId: string; trial: boolean; referredBy: string | null } | { ok: false; error: string; trialRefused?: boolean };
 
@@ -44,5 +45,6 @@ export async function createTenant(formData: FormData) {
   }
   if (!r.ok) redirect(`/onboarding?${r.trialRefused ? "refused" : "error"}=${encodeURIComponent(r.error)}`);
   jar.delete(REFERRAL_COOKIE);
-  redirect("/dashboard");
+  // The new admin's first stop: the setup wizard (business details, 10DLC, leads, team, payment).
+  redirect(ONBOARDING_WIZARD_LIVE ? "/welcome" : "/dashboard");
 }

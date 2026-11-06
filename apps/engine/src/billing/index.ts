@@ -46,12 +46,25 @@ export async function charge(input: ChargeInput): Promise<number> {
   return amountCents;
 }
 
-export async function recordPayment(tenantId: string, amountCents: number, note: string, createdById: string): Promise<void> {
+type PaymentListener = (tenantId: string, amountCents: number) => Promise<void>;
+const paymentListeners: PaymentListener[] = [];
+/** Run after every positive payment lands (the onboarding wizard orders numbers it saved for the first payment). Never blocks the payment. */
+export function onPayment(fn: PaymentListener): void {
+  paymentListeners.push(fn);
+}
+
+/**
+ * A payment (positive) or an adjustment (negative) on the client's balance.
+ * `uniqueKey` (a card processor's payment id) makes it idempotent: a webhook
+ * delivered twice credits once. Returns false when the key was already used.
+ */
+export async function recordPayment(tenantId: string, amountCents: number, note: string, createdById: string | null, opts: { uniqueKey?: string } = {}): Promise<boolean> {
   if (!Number.isInteger(amountCents) || amountCents === 0) throw new Error("Amount must be a whole number of cents");
   await ensureAccount(tenantId);
+  if (opts.uniqueKey && (await prisma.billingEntry.findUnique({ where: { uniqueKey: opts.uniqueKey } }))) return false;
   const now = new Date();
   await prisma.$transaction([
-    prisma.billingEntry.create({ data: { tenantId, kind: amountCents > 0 ? "PAYMENT" : "ADJUSTMENT", category: amountCents > 0 ? "PAYMENT" : "OTHER", quantity: 1, unitMillicents: amountCents * 1000, amountCents, note, period: period(), createdById } }),
+    prisma.billingEntry.create({ data: { tenantId, kind: amountCents > 0 ? "PAYMENT" : "ADJUSTMENT", category: amountCents > 0 ? "PAYMENT" : "OTHER", quantity: 1, unitMillicents: amountCents * 1000, amountCents, note, period: period(), createdById, uniqueKey: opts.uniqueKey ?? null } }),
     prisma.billingAccount.update({ where: { tenantId }, data: { balanceCents: { increment: amountCents } } }),
     // The first real payment ends the trial's limits and locks who referred this client.
     ...(amountCents > 0
@@ -62,6 +75,8 @@ export async function recordPayment(tenantId: string, amountCents: number, note:
       : []),
   ]);
   await afterBalanceChange(tenantId, { payment: amountCents > 0 });
+  if (amountCents > 0) for (const fn of paymentListeners) void fn(tenantId, amountCents).catch((e) => log.warn({ err: e, tenantId }, "billing: payment listener failed"));
+  return true;
 }
 
 /**

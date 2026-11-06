@@ -9,6 +9,7 @@ import { Badge, Button, Card, Field, Notice, PageHeader, Table, Td, inputClass }
 import { platformReferrals } from "@/lib/referral-actions";
 import { ReferralsCard } from "./referrals-card";
 import { PnlTable } from "./pnl-table";
+import { onboardingRows } from "@/lib/onboarding";
 
 // The owner's view (platform workspace only), in tabs:
 //   Accounting  revenue, cost, margin for the month; P&L per client; vendor spend this month and last; balances; CSV
@@ -75,6 +76,7 @@ export default async function PlatformPage({ searchParams }: PageProps<"/platfor
   const kind = sp.kind === "error" ? "error" : "ok";
   const tab: Tab = TABS.some(([k]) => k === sp.tab) ? (sp.tab as Tab) : "accounting";
   const [o, a, refs, campaigns] = await Promise.all([platformOverview(period), platformAccounting(period), platformReferrals(), prisma.campaign.findMany({ where: { tenantId: s.tenant.id, status: { not: "ARCHIVED" } }, select: { id: true, name: true }, orderBy: { name: "asc" } })]);
+  const setup = tab === "clients" ? await onboardingRows(o.tenants.map((t) => t.id)) : {};
   const lowVendors = a.accounts.filter((x) => balanceLow(x.balanceCents, x.lowBalanceCents));
   const failing = a.accounts.filter((x) => x.lastError);
   const href = (t: Tab) => `/platform?tab=${t}${period ? `&period=${period}` : ""}`;
@@ -260,7 +262,7 @@ export default async function PlatformPage({ searchParams }: PageProps<"/platfor
       {tab === "clients" ? (
         <>
       <Card title={`Clients: balances and payments (${o.period})`}>
-        <Table head={["Client", "Seats", "Balance", "Revenue", "Cost", "Margin", "Record payment", ""]}>
+        <Table head={["Client", "Setup", "Seats", "Balance", "Revenue", "Cost", "Margin", "Record payment", ""]}>
           {o.tenants.map((t) => (
             <tr key={t.id}>
               <Td>
@@ -269,6 +271,31 @@ export default async function PlatformPage({ searchParams }: PageProps<"/platfor
                   {t.users} people{t.suspended ? " · " : ""}
                   {t.suspended ? <Badge tone="red">outbound paused</Badge> : null}
                 </div>
+              </Td>
+              <Td>
+                {(() => {
+                  const r = setup[t.id];
+                  if (!r) return <span className="text-xs text-zinc-500">–</span>;
+                  const tone = { approved: "green", pending: "amber", rejected: "red", none: "zinc" } as const;
+                  return (
+                    <div className="space-y-1 text-xs">
+                      <div className="flex items-center gap-2">
+                        <span className="h-1.5 w-16 overflow-hidden rounded-full bg-zinc-800">
+                          <span className="block h-full bg-emerald-400" style={{ width: `${Math.round((r.done / r.total) * 100)}%` }} />
+                        </span>
+                        <span className="tabular-nums text-zinc-300">
+                          {r.done}/{r.total}
+                        </span>
+                        {r.complete ? <Badge tone="green">complete</Badge> : !r.started ? <Badge tone="zinc">not opened</Badge> : null}
+                      </div>
+                      <div className="flex flex-wrap gap-1">
+                        <Badge tone={tone[r.tenDlc]}>10DLC {r.tenDlc === "none" ? "not sent" : r.tenDlc}</Badge>
+                        <Badge tone={r.payment === "funded" ? "green" : r.payment === "link requested" ? "amber" : "zinc"}>{r.payment === "link requested" ? `pay link ${r.paymentRequestCents ? cents(r.paymentRequestCents) : ""}` : r.payment === "funded" ? "funded" : "no payment"}</Badge>
+                        {r.reserve === "pending_funds" ? <Badge tone="blue">numbers wait for payment</Badge> : null}
+                      </div>
+                    </div>
+                  );
+                })()}
               </Td>
               <Td className="tabular-nums">{t.seats}</Td>
               <Td className={`tabular-nums ${t.balanceCents <= 0 ? "text-red-300" : t.balanceCents <= t.lowBalanceCents ? "text-amber-300" : ""}`}>{cents(t.balanceCents)}</Td>
@@ -286,25 +313,34 @@ export default async function PlatformPage({ searchParams }: PageProps<"/platfor
                 </form>
               </Td>
               <Td>
-                <form action={openWorkspace}>
-                  <input type="hidden" name="tenantId" value={t.id} />
-                  <Button type="submit" variant="ghost" className="px-2 py-1 text-xs">
-                    Open
-                  </Button>
-                </form>
+                <div className="flex gap-1">
+                  <form action={openWorkspace}>
+                    <input type="hidden" name="tenantId" value={t.id} />
+                    <Button type="submit" variant="ghost" className="px-2 py-1 text-xs">
+                      Open
+                    </Button>
+                  </form>
+                  <form action={openWorkspace}>
+                    <input type="hidden" name="tenantId" value={t.id} />
+                    <input type="hidden" name="next" value="/welcome" />
+                    <Button type="submit" variant="ghost" className="px-2 py-1 text-xs">
+                      Open wizard
+                    </Button>
+                  </form>
+                </div>
               </Td>
             </tr>
           ))}
           {o.tenants.length === 0 ? (
             <tr>
               <Td className="text-zinc-500">No client workspaces yet. Create one below.</Td>
-              {[1, 2, 3, 4, 5, 6, 7].map((i) => (
+              {[1, 2, 3, 4, 5, 6, 7, 8].map((i) => (
                 <Td key={i}>{""}</Td>
               ))}
             </tr>
           ) : null}
         </Table>
-        <p className="mt-2 text-xs text-zinc-500">A negative amount is an adjustment (credit back or correction). Payments lift a pause immediately. &ldquo;Open&rdquo; steps you into that client&rsquo;s workspace as its admin until you come back.</p>
+        <p className="mt-2 text-xs text-zinc-500">A negative amount is an adjustment (credit back or correction). Payments lift a pause immediately. &ldquo;Open&rdquo; steps you into that client&rsquo;s workspace as its admin until you come back; &ldquo;Open wizard&rdquo; does the same and lands on their setup wizard. Setup = onboarding steps done, texting registration and payment.</p>
       </Card>
 
       <div className="mt-6 grid gap-6 lg:grid-cols-[1fr_1fr]">
@@ -313,7 +349,7 @@ export default async function PlatformPage({ searchParams }: PageProps<"/platfor
             <Field label="Business name">
               <input name="name" className={inputClass} placeholder="National Solar Resolutions" required />
             </Field>
-            <Field label="Their admin's email (optional)" hint="They sign in with it and land in their own workspace as admin. Leave blank to run it yourself from here.">
+            <Field label="Their admin's email (optional)" hint="They are emailed a sign-in link (through Crossbar) that opens the setup wizard: business details, 10DLC, leads file, team and first payment. Leave blank to run it yourself from here (Open wizard).">
               <input name="adminEmail" type="email" className={inputClass} />
             </Field>
             <Button type="submit">Create workspace</Button>

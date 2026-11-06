@@ -67,6 +67,11 @@ model Tenant {
   usageTermsAcceptedAt      DateTime?
   /// Workspace closed: referral credits stop and its referrals end.
   closedAt                  DateTime?
+  /// Client onboarding wizard (/welcome, owner 6 Nov): per-step answers and timestamps,
+  /// the website check, 10DLC submission, the first campaign, the saved number
+  /// reservation and the payment request. Shape: `OnboardingState` in
+  /// `@strowger/shared/onboarding`; written with `patchOnboarding` (packages/db).
+  onboarding                Json?
   referralsMade             Referral[]       @relation("referrer")
   referredBy                Referral?        @relation("referred")
   referralPayouts           ReferralPayout[]

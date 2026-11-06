@@ -14,6 +14,7 @@ import { endExpiredRuns, settlePeriodWagers, weeklyTopUp } from "../games";
 import { chargeAllDids, suspendOverdue } from "../billing";
 import { syncVendorBalances, syncVendorUsage } from "../billing/vendor";
 import { endLapsedReferrers, monthlyReferralCredits, trialTick } from "../referrals";
+import { retryPendingCampaigns } from "../onboarding";
 
 interface Job {
   name: string;
@@ -122,6 +123,8 @@ const JOBS: Job[] = [
   { name: "referralCredits", everyMs: 30 * 60_000, run: monthlyReferrals },
   { name: "referralLapse", everyMs: 60 * 60_000, run: dailyReferralLapse },
   { name: "trials", everyMs: 15 * 60_000, run: () => trialTick() },
+  // Onboarding wizard: a 10DLC campaign submitted before its brand was verified goes in once it is.
+  { name: "onboarding10dlc", everyMs: 30 * 60_000, run: retryPendingCampaigns },
   // Hourly: Telnyx detail records, number rental, fixed costs into the month (every pull keyed by vendor record id).
   { name: "vendorUsage", everyMs: 60 * 60_000, run: () => syncVendorUsage("last_2_days") },
   { name: "vendorBalances", everyMs: 60 * 60_000, run: dailyVendorBalances },

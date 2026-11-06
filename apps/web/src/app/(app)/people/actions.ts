@@ -5,18 +5,13 @@ import { encryptString, randomPassword } from "@strowger/shared/secrets";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { requireRole } from "@/lib/auth";
-import { clerkClient } from "@clerk/nextjs/server";
+import { createInvitedUser, sendClerkInvitation, sipUsernameFor } from "@/lib/people-invite";
 
 const ROLE_VALUES: Role[] = ["ADMIN", "SUPERVISOR", "ROOM_SUPERVISOR", "TEAM_LEADER", "AGENT", "AFFILIATE"];
 
 function rolesFrom(formData: FormData): Role[] {
   const picked = formData.getAll("roles").map(String).filter((r): r is Role => (ROLE_VALUES as string[]).includes(r));
   return picked.length ? picked : ["AGENT"];
-}
-
-function sipUsernameFor(email: string, tenantSlug: string): string {
-  const local = email.split("@")[0]?.toLowerCase().replace(/[^a-z0-9]/g, "") || "agent";
-  return `${tenantSlug}-${local}-${Math.random().toString(36).slice(2, 6)}`;
 }
 
 export async function invitePerson(formData: FormData) {
@@ -29,19 +24,7 @@ export async function invitePerson(formData: FormData) {
   // Only an admin may make another admin.
   if (roles.includes("ADMIN") && !s.roles.includes("ADMIN")) throw new Error("Only an admin can grant admin");
 
-  const needsPhone = roles.some((r) => r === "AGENT" || r === "TEAM_LEADER" || r === "SUPERVISOR" || r === "ROOM_SUPERVISOR" || r === "ADMIN");
-  const password = needsPhone ? randomPassword() : null;
-  const user = await prisma.user.create({
-    data: {
-      tenantId: s.tenant.id,
-      email,
-      firstName,
-      lastName,
-      roles,
-      sipUsername: needsPhone ? sipUsernameFor(email, s.tenant.slug) : null,
-      sipSecret: password ? encryptString(password, process.env.ENGINE_INTERNAL_KEY ?? "") : null,
-    },
-  });
+  const { user, password } = await createInvitedUser(s.tenant, { email, firstName, lastName, roles });
   await prisma.auditLog.create({ data: { tenantId: s.tenant.id, actorId: s.user.id, action: "user.invite", target: user.id, after: { email, roles } } });
   redirect(`/people/${user.id}${password ? `?sip=${encodeURIComponent(password)}` : ""}`);
 }
@@ -132,11 +115,9 @@ export async function sendSignInInvite(formData: FormData) {
   const id = String(formData.get("id"));
   const target = await prisma.user.findFirst({ where: { id, tenantId: s.tenant.id } });
   if (!target) throw new Error("Unknown person");
-  const base = process.env.NEXT_PUBLIC_APP_URL ?? "https://strowger.crossbar.digital";
   let msg: string;
   try {
-    const client = await clerkClient();
-    await client.invitations.createInvitation({ emailAddress: target.email, redirectUrl: `${base}/sign-up`, ignoreExisting: true, expiresInDays: 14 });
+    await sendClerkInvitation(target.email);
     msg = `Invitation emailed to ${target.email}. The link lets them create their sign-in; they then land on their agent screen.`;
     await prisma.auditLog.create({ data: { tenantId: s.tenant.id, actorId: s.user.id, action: "user.invite.email", target: id } });
   } catch (e) {

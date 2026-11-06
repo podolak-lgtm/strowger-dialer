@@ -12,7 +12,9 @@ export async function createWorkspace(name: string, adminEmail: string | null): 
   const base = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "client";
   let slug = base;
   for (let i = 2; await prisma.tenant.findUnique({ where: { slug } }); i++) slug = `${base}-${i}`;
-  const t = await prisma.tenant.create({ data: { name: name.trim(), slug } });
+  // The onboarding wizard (/welcome) opens with what the owner already typed.
+  const onboarding = { steps: { you: adminEmail ? { email: adminEmail.trim().toLowerCase() } : {}, business: { legalName: name.trim() } }, meta: {}, createdBy: "platform" };
+  const t = await prisma.tenant.create({ data: { name: name.trim(), slug, onboarding } });
   await prisma.billingAccount.create({ data: { tenantId: t.id } });
   if (adminEmail) {
     const email = adminEmail.trim().toLowerCase();

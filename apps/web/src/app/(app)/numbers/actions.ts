@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { redirect, unstable_rethrow } from "next/navigation";
 import { requireRole } from "@/lib/auth";
 import { engine } from "@/lib/engine";
+import { blocking, validateBrand, validateCampaign } from "@strowger/shared/tendlc";
 
 const back = (msg: string, kind: "ok" | "error" = "ok", campaign?: string | null): never => {
   const u = new URLSearchParams({ msg, kind });
@@ -107,6 +108,9 @@ export async function registerBrand(formData: FormData) {
     vertical: f("vertical"),
     businessContactEmail: f("businessContactEmail") || f("email"),
   };
+  // The same 10DLC rules as the setup wizard (packages/shared/src/tendlc.ts): refuse what TCR would reject.
+  const problems = blocking(validateBrand({ entityType: brand.entityType, legalName: brand.companyName, dba: brand.displayName, ein: brand.ein, vertical: brand.vertical, website: brand.website, phone: brand.phone, supportEmail: brand.email, street: brand.street, city: brand.city, state: brand.state, zip: brand.postalCode, firstName: brand.firstName, lastName: brand.lastName }));
+  if (problems.length) back(`Not sent: ${problems.map((p) => `${p.message} ${p.fix}`).join(" · ")}`, "error");
   try {
     await engine("/provision/tendlc/brand", { method: "POST", body: JSON.stringify({ tenantId: s.tenant.id, brand }) });
     await prisma.auditLog.create({ data: { tenantId: s.tenant.id, actorId: s.user.id, action: "provision.brand", after: { displayName: brand.displayName } } });
@@ -148,6 +152,9 @@ export async function registerCampaign(formData: FormData) {
     termsAndConditionsLink: f("termsAndConditionsLink") || undefined,
     embeddedLinkSample: f("embeddedLinkSample") || undefined,
   };
+  // Shared 10DLC checks on what this form has (its opt-in is a free-text message flow, so the wizard's consent-wording checks are left out).
+  const checked = blocking(validateCampaign({ usecase: campaign.usecase, description: campaign.description, samples: [campaign.sample1, campaign.sample2 ?? "", campaign.sample3 ?? ""], optInMethod: "WEB_FORM", optInWording: "x".repeat(40), optOutKeywords: campaign.optoutKeywords, optOutMessage: campaign.optoutMessage, helpKeywords: campaign.helpKeywords, helpMessage: campaign.helpMessage, embeddedLink: campaign.embeddedLink, embeddedPhone: campaign.embeddedPhone, directLending: campaign.directLending, privacyUrl: campaign.privacyPolicyLink, termsUrl: campaign.termsAndConditionsLink }, String(((s.tenant.tenDlcBrand ?? {}) as { displayName?: string }).displayName || s.tenant.name))).filter((p) => !p.field.startsWith("optIn"));
+  if (checked.length) back(`Not sent: ${checked.map((p) => `${p.message} ${p.fix}`).join(" · ")}`, "error");
   try {
     await engine("/provision/tendlc/campaign", { method: "POST", body: JSON.stringify({ tenantId: s.tenant.id, campaign }) });
     await prisma.auditLog.create({ data: { tenantId: s.tenant.id, actorId: s.user.id, action: "provision.tendlc", after: { usecase: campaign.usecase } } });

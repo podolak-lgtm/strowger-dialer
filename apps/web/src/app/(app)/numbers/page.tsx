@@ -6,6 +6,8 @@ import { engine } from "@/lib/engine";
 import { Badge, Button, Card, Field, Notice, PageHeader, Table, Td, inputClass } from "@/components/ui";
 import { PLAN_DEFAULTS, isIdlePoolNumber } from "@strowger/shared/did-plan";
 import { IdleRelease } from "./idle-release";
+import { USECASES, VERTICALS } from "@strowger/shared/tendlc";
+import { readOnboarding } from "@strowger/shared/onboarding";
 import { assignCampaign, assignNumbersToTenDlc, orderSelected, registerBrand, registerCampaign, releaseOne, runSetup, syncNow } from "./actions";
 
 type Status = {
@@ -31,18 +33,6 @@ type TenDlc = {
   numbersAssigned: number | null;
 };
 
-const VERTICALS = ["INSURANCE", "FINANCIAL", "REAL_ESTATE", "LEGAL", "HEALTHCARE", "EDUCATION", "RETAIL", "PROFESSIONAL", "TECHNOLOGY", "ENERGY", "CONSTRUCTION", "HOSPITALITY", "COMMUNICATION", "AGRICULTURE", "ENTERTAINMENT", "HUMAN_RESOURCES", "MANUFACTURING", "NGO", "POLITICAL", "POSTAL", "TRANSPORTATION", "GAMBLING", "GOVERNMENT"];
-const USECASES: [string, string][] = [
-  ["LOW_VOLUME", "Low volume mixed (under 2,000 msgs/day; fastest approval)"],
-  ["MIXED", "Mixed: marketing + customer care"],
-  ["MARKETING", "Marketing / promotions"],
-  ["CUSTOMER_CARE", "Customer care (support, account)"],
-  ["ACCOUNT_NOTIFICATION", "Account notifications"],
-  ["DELIVERY_NOTIFICATION", "Delivery notifications"],
-  ["2FA", "Two-factor authentication"],
-  ["POLLING_VOTING", "Polling / voting"],
-  ["PUBLIC_SERVICE_ANNOUNCEMENT", "Public service announcement"],
-];
 
 function statusTone(s: string): "zinc" | "green" | "amber" | "red" | "blue" {
   if (s === "ready") return "green";
@@ -98,6 +88,8 @@ export default async function NumbersPage({ searchParams }: PageProps<"/numbers"
   } catch (e) {
     statusError = e instanceof Error ? e.message : String(e);
   }
+  // The setup wizard's Business answers prefill the brand form.
+  const ob = readOnboarding(s.tenant.onboarding).steps.business ?? {};
   const setupDone = Boolean(status?.connection && status?.carrier && status?.messagingProfile);
 
   let found: Found[] = [];
@@ -265,14 +257,15 @@ export default async function NumbersPage({ searchParams }: PageProps<"/numbers"
               </div>
             ) : (
               <form action={registerBrand} className="grid grid-cols-2 gap-3 text-sm">
+                <p className="col-span-2 text-xs text-zinc-500">Prefilled from the setup wizard&apos;s Business step where it has answers; checked against the same 10DLC rules before it is sent.</p>
                 <Field label="Legal company name">
-                  <input name="companyName" className={inputClass} required />
+                  <input name="companyName" defaultValue={ob.legalName ?? ""} className={inputClass} required />
                 </Field>
                 <Field label="Brand / display name">
-                  <input name="displayName" defaultValue={s.tenant.name} className={inputClass} required />
+                  <input name="displayName" defaultValue={ob.dba || ob.legalName || s.tenant.name} className={inputClass} required />
                 </Field>
                 <Field label="Entity type">
-                  <select name="entityType" className={inputClass} defaultValue="PRIVATE_PROFIT">
+                  <select name="entityType" className={inputClass} defaultValue={ob.entityType || "PRIVATE_PROFIT"}>
                     <option value="PRIVATE_PROFIT">Private company</option>
                     <option value="PUBLIC_PROFIT">Public company</option>
                     <option value="NON_PROFIT">Non-profit</option>
@@ -281,10 +274,10 @@ export default async function NumbersPage({ searchParams }: PageProps<"/numbers"
                   </select>
                 </Field>
                 <Field label="EIN (tax id)">
-                  <input name="ein" className={inputClass} placeholder="12-3456789" />
+                  <input name="ein" defaultValue={ob.ein ?? ""} className={inputClass} placeholder="12-3456789" />
                 </Field>
                 <Field label="Industry (vertical)">
-                  <select name="vertical" className={inputClass} defaultValue="INSURANCE">
+                  <select name="vertical" className={inputClass} defaultValue={ob.vertical || "INSURANCE"}>
                     {VERTICALS.map((v) => (
                       <option key={v} value={v}>
                         {v.replace("_", " ").toLowerCase()}
@@ -293,25 +286,25 @@ export default async function NumbersPage({ searchParams }: PageProps<"/numbers"
                   </select>
                 </Field>
                 <Field label="Website">
-                  <input name="website" className={inputClass} placeholder="https://" />
+                  <input name="website" defaultValue={ob.website ?? ""} className={inputClass} placeholder="https://" />
                 </Field>
                 <Field label="Contact email">
-                  <input name="email" type="email" defaultValue={s.user.email} className={inputClass} required />
+                  <input name="email" type="email" defaultValue={ob.supportEmail || s.user.email} className={inputClass} required />
                 </Field>
                 <Field label="Contact phone">
-                  <input name="phone" className={inputClass} placeholder="+13055550100" />
+                  <input name="phone" defaultValue={ob.phone ?? ""} className={inputClass} placeholder="+13055550100" />
                 </Field>
                 <Field label="Street">
-                  <input name="street" className={inputClass} />
+                  <input name="street" defaultValue={ob.street ?? ""} className={inputClass} />
                 </Field>
                 <Field label="City">
-                  <input name="city" className={inputClass} />
+                  <input name="city" defaultValue={ob.city ?? ""} className={inputClass} />
                 </Field>
                 <Field label="State (2 letters)">
-                  <input name="state" maxLength={2} className={inputClass} />
+                  <input name="state" maxLength={2} defaultValue={ob.state ?? ""} className={inputClass} />
                 </Field>
                 <Field label="ZIP">
-                  <input name="postalCode" className={inputClass} />
+                  <input name="postalCode" defaultValue={ob.zip ?? ""} className={inputClass} />
                 </Field>
                 <div className="col-span-2">
                   <Button type="submit" disabled={!status?.telnyx}>
@@ -359,10 +352,10 @@ export default async function NumbersPage({ searchParams }: PageProps<"/numbers"
                   <textarea name="messageFlow" rows={2} className={inputClass} required defaultValue="Consumers opt in by submitting a web form that states they agree to receive calls and texts from us about their request; the form carries the consent language and a link to our privacy policy. They can reply STOP at any time." />
                 </Field>
                 <Field label="Sample message 1">
-                  <input name="sample1" className={inputClass} required defaultValue={`Hi Jane, this is ${s.tenant.name}. Your phone is going to ring within the next 30 seconds from (305) 555-0100. If you miss us, call that number back when you're ready. Reply STOP if you'd rather not get a call.`} />
+                  <input name="sample1" className={inputClass} required defaultValue={`Hi Jane, this is ${String(((s.tenant.tenDlcBrand ?? {}) as { displayName?: string }).displayName || s.tenant.name)}. Your phone is going to ring within the next 30 seconds from (305) 555-0100. If you miss us, call that number back when you're ready. Reply STOP if you'd rather not get a call.`} />
                 </Field>
                 <Field label="Sample message 2">
-                  <input name="sample2" className={inputClass} defaultValue={`Hey Jane, sorry I missed you! Call us back anytime, or tap the link to pick a quick callback time: https://strowger.crossbar.digital/cb/abc123 Reply STOP to opt out.`} />
+                  <input name="sample2" className={inputClass} defaultValue={`${String(((s.tenant.tenDlcBrand ?? {}) as { displayName?: string }).displayName || s.tenant.name)}: hey Jane, sorry I missed you! Call us back anytime, or tap the link to pick a quick callback time: https://strowger.crossbar.digital/cb/abc123 Reply STOP to opt out.`} />
                 </Field>
                 <div className="grid grid-cols-2 gap-3">
                   <Field label="Privacy policy link">

@@ -7,6 +7,9 @@ import { billingStatus } from "@/lib/billing-actions";
 import { BillingBadge } from "@/components/billing-badge";
 import { leaveWorkspace } from "@/lib/billing-actions";
 import { TrialBanner } from "@/components/trial-banner";
+import { FinishSetupBanner } from "@/components/finish-setup-banner";
+import { onboardingProgressFor } from "@/lib/onboarding";
+import { ONBOARDING_WIZARD_LIVE } from "@strowger/shared/onboarding";
 
 export default async function AppLayout({ children }: LayoutProps<"/">) {
   const session = await requireSession();
@@ -17,6 +20,8 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
   const acting = session.actingFrom ?? null;
   const billing = hasRole(session, "SUPERVISOR") && !bare ? await billingStatus() : null;
   const nav = visibleNav(navViewer(session));
+  // Onboarding wizard: a client admin sees "Finish setup" until it is complete (platform admins inside a client do not).
+  const setup = ONBOARDING_WIZARD_LIVE && !bare && !acting && !session.tenant.isPlatform && session.roles.includes("ADMIN") ? (await onboardingProgressFor(session.tenant)).progress : null;
   return (
     <div className="flex min-h-screen flex-col">
       {acting ? (
@@ -44,6 +49,7 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
         </header>
       ) : null}
       {billing ? <TrialBanner tenant={session.tenant} billing={billing} now={new Date()} /> : null}
+      {setup && !setup.complete ? <FinishSetupBanner done={setup.done} total={setup.total} missingRequired={setup.missingRequired} /> : null}
       {/* Narrow screens: the sidebar folds into a menu so nothing scrolls sideways. */}
       <details className="border-b border-zinc-800 bg-zinc-900/60 md:hidden">
         <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-3 text-sm">

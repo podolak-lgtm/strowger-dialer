@@ -12,7 +12,14 @@ import { applyDidPlan, getDidPlan, type ApplyResult, type PlanOpts, type PlanVie
 
 const money = (cents: number) => `$${(cents / 100).toFixed(2)}`;
 
-export function NumbersCard({ campaignId, listId = null, scope = listId ? "list" : "campaign" }: { campaignId: string; listId?: string | null; scope?: "list" | "campaign" }) {
+type ApplyFn = (opts: PlanOpts) => Promise<{ ok: true; result: ApplyResult; note?: string } | { ok: false; error: string }>;
+
+/**
+ * `onApply` replaces the plain apply (the onboarding wizard reserves through
+ * the engine so a plan with no funds yet is saved for the first payment) and
+ * `buttonLabel` the button text; `note` from it shows under the result.
+ */
+export function NumbersCard({ campaignId, listId = null, scope = listId ? "list" : "campaign", onApply, buttonLabel }: { campaignId: string; listId?: string | null; scope?: "list" | "campaign"; onApply?: ApplyFn; buttonLabel?: string }) {
   const router = useRouter();
   const [opts, setOpts] = useState<PlanOpts>({ poolFirst: true, exactOnly: false });
   const [view, setView] = useState<PlanView | null>(null);
@@ -20,6 +27,7 @@ export function NumbersCard({ campaignId, listId = null, scope = listId ? "list"
   const [loading, setLoading] = useState(true);
   const [applying, setApplying] = useState(false);
   const [result, setResult] = useState<ApplyResult | null>(null);
+  const [note, setNote] = useState<string | null>(null);
 
   async function load(o: PlanOpts) {
     setLoading(true);
@@ -57,13 +65,15 @@ export function NumbersCard({ campaignId, listId = null, scope = listId ? "list"
     if (!window.confirm(`For ${view.campaign.name}: ${parts.join(" and ")}? They are pinned to the campaign for local presence. This happens now, separately from any unsaved changes.`)) return;
     setApplying(true);
     setResult(null);
-    const r = await applyDidPlan(campaignId, listId, opts);
+    setNote(null);
+    const r = onApply ? await onApply(opts) : await applyDidPlan(campaignId, listId, opts);
     setApplying(false);
     if (!r.ok) {
       setError(r.error);
       return;
     }
     setResult(r.result);
+    setNote((r as { note?: string }).note ?? null);
     await load(opts);
     router.refresh();
   }
@@ -134,12 +144,13 @@ export function NumbersCard({ campaignId, listId = null, scope = listId ? "list"
             <div className="rounded-md border border-emerald-900 bg-emerald-950/40 px-3 py-2 text-emerald-200">You have enough numbers for {what}.</div>
           ) : (
             <button type="button" onClick={() => void apply()} disabled={applying || loading} className="rounded-md bg-emerald-400 px-3 py-1.5 font-semibold text-emerald-950 hover:bg-emerald-300 disabled:opacity-50">
-              {applying ? "Working…" : label}
+              {applying ? "Working…" : (buttonLabel ?? label)}
             </button>
           )}
         </>
       )}
       {result ? <ResultNote r={result} /> : null}
+      {note ? <div className="rounded-md border border-sky-900 bg-sky-950/40 px-3 py-2 text-sky-100">{note}</div> : null}
       {view?.notes.length ? (
         <ul className="list-disc space-y-0.5 pl-4 text-xs text-amber-200/80">
           {view.notes.map((n) => (

@@ -239,10 +239,11 @@ export async function createWorkspace(formData: FormData) {
   const s = await platformOnly();
   const name = String(formData.get("name") ?? "").trim();
   const adminEmail = String(formData.get("adminEmail") ?? "").trim().toLowerCase() || null;
-  const r = await engine<{ ok: boolean; id: string; slug: string }>("/workspaces", { method: "POST", body: JSON.stringify({ name, adminEmail }) });
-  await prisma.auditLog.create({ data: { tenantId: s.actingFrom?.id ?? s.tenant.id, actorId: s.user.id, action: "workspace.create", target: r.id, after: { name, adminEmail } } });
+  const r = await engine<{ ok: boolean; id: string; slug: string; emailed?: boolean }>("/workspaces", { method: "POST", body: JSON.stringify({ name, adminEmail }) });
+  await prisma.auditLog.create({ data: { tenantId: s.actingFrom?.id ?? s.tenant.id, actorId: s.user.id, action: "workspace.create", target: r.id, after: { name, adminEmail, welcomeEmailed: Boolean(r.emailed) } } });
   revalidatePath("/platform");
-  redirect("/platform?msg=" + encodeURIComponent(`Workspace "${name}" created${adminEmail ? `; ${adminEmail} can sign in as its admin` : ""}.`));
+  const who = adminEmail ? (r.emailed ? `; ${adminEmail} was emailed a sign-in link that opens the setup wizard` : `; ${adminEmail} can sign in as its admin (no welcome email: the setup wizard is paused, or Crossbar email is not set up)`) : "";
+  redirect("/platform?tab=clients&msg=" + encodeURIComponent(`Workspace "${name}" created${who}.`));
 }
 
 /** Step into a client workspace: every page scopes to it until "Back". */
@@ -257,7 +258,8 @@ export async function openWorkspace(formData: FormData) {
     // Remembered so /platform can offer "Continue in <client>" next sign-in.
     prisma.user.update({ where: { id: s.user.id }, data: { lastWorkspaceId: tenantId } }),
   ]);
-  redirect("/dashboard");
+  // "Open wizard" on /platform: straight to the client's onboarding wizard.
+  redirect(formData.get("next") === "/welcome" ? "/welcome" : "/dashboard");
 }
 
 export async function leaveWorkspace() {

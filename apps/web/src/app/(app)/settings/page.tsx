@@ -3,6 +3,7 @@ import Link from "next/link";
 import { formatPhone } from "@strowger/shared";
 import { requireRole } from "@/lib/auth";
 import { Badge, Button, Card, Field, PageHeader, Table, Td, inputClass } from "@/components/ui";
+import { fcrPrefill } from "@/lib/onboarding";
 import { addAudioAsset, addCallerIds, deleteAudioAsset, saveFcrProfile, saveGames, saveGoals, saveLevelRights, saveTexting, setCallerIdStatus, turnOffTestPhones, turnOnTestPhones, setCampaignAudio, uploadAudio } from "./actions";
 import { AGENT_RIGHTS, LEVELS, rightsForLevel } from "@strowger/shared/games";
 import { storageConfigured } from "@/lib/storage";
@@ -28,7 +29,17 @@ export default async function SettingsPage() {
 
   return (
     <div>
-      <PageHeader title="Settings" subtitle={`${s.tenant.name} · workspace ${s.tenant.slug}`} />
+      <PageHeader
+        title="Settings"
+        subtitle={`${s.tenant.name} · workspace ${s.tenant.slug}`}
+        actions={
+          s.roles.includes("ADMIN") && !(s.tenant.isPlatform && !s.actingFrom) ? (
+            <Link href="/welcome" className="rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-zinc-200 hover:bg-zinc-800">
+              Setup wizard
+            </Link>
+          ) : null
+        }
+      />
       <div className="grid gap-6 lg:grid-cols-2">
         <Card title="Audio files">
           <p className="mb-3 text-xs text-zinc-500">
@@ -347,7 +358,8 @@ export default async function SettingsPage() {
             const seed: Record<string, string> = /national solar/i.test(s.tenant.name)
               ? { contactEmail: "numbers@crossbar.digital", companyName: "National Solar Resolutions", address1: "75 South Broadway", address2: "4th Floor", city: "White Plains", state: "NY", zip: "10601", website: "https://nationalsolarresolutions.com", contactPhone: "8336770003", category: "telemarketing", callCount: "10001" }
               : {};
-            const f = { ...seed, ...saved };
+            // Prefilled from the onboarding wizard's Business step; what was saved here wins.
+            const f = { ...seed, ...fcrPrefill(s.tenant), ...saved };
             const v = (k: string) => (typeof f[k] === "string" ? (f[k] as string) : "");
             const last = f.lastSubmission as { feedbackId?: string; at?: string; count?: number } | undefined;
             return (

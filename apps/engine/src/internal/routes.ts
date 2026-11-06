@@ -39,6 +39,9 @@ import { log } from "../log";
 import { saveVendorAccount, syncAllVendors, vendorSpend } from "../billing/vendor";
 import { deleteFixedCost, platformAccounting, saveAccountingSettings, saveFixedCost } from "../billing/accounting";
 import { createWorkspace, moveCampaign } from "../workspaces";
+import { checkAndKeepWebsite, registrationStatus, reserveNumbers, startPayment, submitRegistration, welcomeEmail } from "../onboarding";
+import { applyPaymentEvents, paymentProvider } from "../payments";
+import { ONBOARDING_WIZARD_LIVE } from "@strowger/shared/onboarding";
 import { clampOutcomesPerCard, parsePokerRule, type WagerKind } from "@strowger/shared/games";
 
 const Ids = z.object({ tenantId: z.string(), userId: z.string() });
@@ -440,9 +443,59 @@ export async function registerInternalRoutes(app: FastifyInstance): Promise<void
   app.post("/internal/workspaces", async (req, reply) => {
     const b = z.object({ name: z.string().min(2).max(80), adminEmail: z.string().email().nullable() }).parse(req.body);
     try {
-      return { ok: true, ...(await createWorkspace(b.name, b.adminEmail)) };
+      const w = await createWorkspace(b.name, b.adminEmail);
+      // The client's admin gets a sign-in link that lands on the onboarding wizard (/welcome).
+      const emailed = b.adminEmail && ONBOARDING_WIZARD_LIVE ? await welcomeEmail(w.id, b.adminEmail).catch(() => false) : false;
+      return { ok: true, ...w, emailed };
     } catch (e) {
       return reply.code(400).send({ ok: false, error: e instanceof Error ? e.message : String(e) });
+    }
+  });
+  // ---- Client onboarding wizard (/welcome; docs/HANDOFF.md "Client onboarding wizard")
+  app.post("/internal/onboarding/website", async (req) => {
+    const b = z.object({ tenantId: z.string(), website: z.string().max(300), names: z.array(z.string().max(120)).max(4) }).parse(req.body);
+    return checkAndKeepWebsite(b.tenantId, b.website, b.names);
+  });
+  app.post("/internal/onboarding/register", async (req, reply) => {
+    const b = Ids.parse(req.body);
+    try {
+      return { ok: true, status: await submitRegistration(b.tenantId, b.userId) };
+    } catch (e) {
+      return reply.code(400).send({ ok: false, error: e instanceof Error ? e.message : String(e) });
+    }
+  });
+  app.get("/internal/onboarding/registration", async (req) => registrationStatus(z.object({ tenantId: z.string() }).parse(req.query).tenantId));
+  app.post("/internal/onboarding/reserve", async (req, reply) => {
+    const b = Ids.extend({ requestedBy: z.string().optional(), poolFirst: z.boolean().default(true), exactOnly: z.boolean().default(false) }).parse(req.body);
+    try {
+      return { ok: true, ...(await reserveNumbers(b)) };
+    } catch (e) {
+      return reply.code(400).send({ ok: false, error: e instanceof Error ? e.message : String(e) });
+    }
+  });
+  app.post("/internal/onboarding/payment", async (req, reply) => {
+    const b = Ids.extend({ amountCents: z.number().int().min(100).max(100_000_000), email: z.string().email(), returnUrl: z.string().url() }).parse(req.body);
+    try {
+      return { ok: true, ...(await startPayment(b)) };
+    } catch (e) {
+      return reply.code(400).send({ ok: false, error: e instanceof Error ? e.message : String(e) });
+    }
+  });
+  // ---- Card payments (provider-agnostic; NONE until a processor is added: apps/engine/src/payments)
+  app.get("/internal/payments/provider", async () => {
+    const p = paymentProvider();
+    return { id: p.id, configured: p.configured, label: p.label };
+  });
+  /** The web route /api/webhooks/payments/<provider> forwards the raw body and headers; the provider verifies the signature. */
+  app.post("/internal/payments/webhook", async (req, reply) => {
+    const b = z.object({ provider: z.string().max(20), rawBody: z.string().max(1_000_000), headers: z.record(z.string().optional()) }).parse(req.body);
+    const p = paymentProvider();
+    if (b.provider !== p.id || !p.configured) return reply.code(404).send({ ok: false, error: "No such payment provider configured" });
+    try {
+      return { ok: true, ...(await applyPaymentEvents(await p.webhook({ rawBody: b.rawBody, headers: b.headers }), p.id)) };
+    } catch (e) {
+      log.warn({ err: e }, "payments: webhook refused");
+      return reply.code(400).send({ ok: false, error: "Webhook not accepted" });
     }
   });
   app.post("/internal/workspaces/move-campaign", async (req, reply) => {
