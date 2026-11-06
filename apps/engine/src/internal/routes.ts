@@ -26,7 +26,8 @@ import { applyDidPlan, loadDidPlan } from "../provision/plan";
 import { chatHistory, sendChat } from "../chat";
 import { acceptWager, announceCampaignBets, declineWager, endPokerRun, gamesOverview, proposeWager, setCampaignBets, startPokerRun, withdrawWager } from "../games";
 import { suggest } from "../assist";
-import { billingOverview, billingStatus, chargeSeatIfNew, outboundAllowed, platformOverview, rates, recordPayment } from "../billing";
+import { billingOverview, billingStatus, chargeSeatIfNew, outboundAllowed, platformOverview, rates, recordPayment, trialSeatRefusal } from "../billing";
+import { changeAttribution, endReferral, referralsForTenant, referralsPlatform, runReferralCredits, saveReferralSettings, setReferrerOverride, signup, signupOffer } from "../referrals";
 import { log } from "../log";
 import { syncTelnyxCosts, vendorSpend } from "../billing/vendor";
 import { createWorkspace, moveCampaign } from "../workspaces";
@@ -60,6 +61,8 @@ export async function registerInternalRoutes(app: FastifyInstance): Promise<void
     if (!campaign) return { ok: false, error: "Unknown campaign" };
     const allowed = await outboundAllowed(tenantId);
     if (!allowed.ok) return { ok: false, error: allowed.error };
+    const seatRefused = await trialSeatRefusal(tenantId, userId);
+    if (seatRefused) return { ok: false, error: seatRefused };
     await chargeSeatIfNew(tenantId, userId).catch((e) => log.warn({ err: e }, "billing: seat charge failed"));
     const existing = await getAgent(userId);
     if (existing && existing.sessionId && existing.campaignId !== campaignId) {
@@ -318,6 +321,50 @@ export async function registerInternalRoutes(app: FastifyInstance): Promise<void
     await rates();
     await prisma.platformRates.update({ where: { id: "default" }, data: b });
     return { ok: true };
+  });
+
+  // ---- Referral program and free trial (owner, 6 Nov)
+  const fail = (reply: { code: (n: number) => { send: (b: unknown) => unknown } }, e: unknown) => reply.code(400).send({ ok: false, error: e instanceof Error ? e.message : String(e) });
+  app.get("/internal/referrals", async (req) => referralsForTenant(z.object({ tenantId: z.string() }).parse(req.query).tenantId));
+  app.get("/internal/referrals/platform", async () => referralsPlatform());
+  app.post("/internal/referrals/run", async (req, reply) => {
+    const b = z.object({ period: z.string().regex(/^\d{4}-\d{2}$/), userId: z.string() }).parse(req.body);
+    try {
+      return { ok: true, ...(await runReferralCredits(b.period, b.userId)) };
+    } catch (e) {
+      return fail(reply, e);
+    }
+  });
+  app.post("/internal/referrals/settings", async (req) => {
+    const b = z.object({ referralPct: z.number().min(0).max(50), trialDays: z.number().int().min(1).max(60), trialSeats: z.number().int().min(1).max(100), trialAllowanceCents: z.number().int().min(0).max(1_000_000), trialMaxNumbers: z.number().int().min(0).max(100), trialWithoutReferral: z.boolean() }).parse(req.body);
+    await saveReferralSettings(b);
+    return { ok: true };
+  });
+  app.post("/internal/referrals/override", async (req) => {
+    const b = z.object({ tenantId: z.string(), pct: z.number().min(0).max(50).nullable() }).parse(req.body);
+    await setReferrerOverride(b.tenantId, b.pct);
+    return { ok: true };
+  });
+  app.post("/internal/referrals/attribution", async (req, reply) => {
+    const b = z.object({ referralId: z.string(), referrerTenantId: z.string() }).parse(req.body);
+    try {
+      return { ok: true, ...(await changeAttribution(b.referralId, b.referrerTenantId)) };
+    } catch (e) {
+      return fail(reply, e);
+    }
+  });
+  app.post("/internal/referrals/end", async (req) => {
+    const b = z.object({ referralId: z.string(), reason: z.string().max(200) }).parse(req.body);
+    const r = await endReferral(b.referralId, b.reason);
+    return { ok: true, referrerTenantId: r.tenantId, referredTenantId: r.referredTenantId };
+  });
+  app.get("/internal/signup/offer", async (req) => {
+    const q = z.object({ email: z.string(), ref: z.string().optional(), clerkUserId: z.string().optional(), phone: z.string().optional() }).parse(req.query);
+    return signupOffer(q.email, q.ref ?? null, q.clerkUserId ?? null, q.phone ?? null);
+  });
+  app.post("/internal/signup", async (req) => {
+    const b = z.object({ clerkUserId: z.string(), email: z.string().email(), firstName: z.string().nullable(), lastName: z.string().nullable(), companyName: z.string().max(80), businessPhone: z.string().max(30).nullable(), refCode: z.string().max(20).nullable(), acceptTrialTerms: z.boolean(), acceptUsageTerms: z.boolean(), withoutTrial: z.boolean() }).parse(req.body);
+    return signup(b);
   });
 
   // ---- Vendor costs (what we pay) and workspaces

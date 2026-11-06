@@ -1,7 +1,7 @@
 // Outbound SMS behind one interface. Commio first (same numbers as voice),
 // Telnyx as the alternative, and a log-only provider when neither is set so
 // cadences can be exercised without a carrier.
-import { chargeSms } from "../billing";
+import { activeTrial, chargeSms } from "../billing";
 import { prisma } from "@strowger/db";
 import { config } from "../config";
 import { log } from "../log";
@@ -84,6 +84,12 @@ export async function sendSms(input: { tenantId: string; campaignId: string | nu
     if (((t?.settings ?? {}) as { textingEnabled?: boolean }).textingEnabled === false) {
       await prisma.message.create({ data: { tenantId: input.tenantId, campaignId: input.campaignId, leadId: input.leadId, agentId: input.agentId ?? null, direction: "OUTBOUND", fromPhone: input.from, toPhone: input.to, body: input.body, provider: "off", purpose: input.purpose, status: "FAILED", error: "Texting is switched off in Settings" } });
       return { ok: false, error: "Texting is switched off in Settings" };
+    }
+    // Free trial: no texting (texts would go out under the platform's own 10DLC registration).
+    if (await activeTrial(input.tenantId)) {
+      const error = "Texting is off during the free trial. It opens once a prepayment is recorded and your own texting registration is in place.";
+      await prisma.message.create({ data: { tenantId: input.tenantId, campaignId: input.campaignId, leadId: input.leadId, agentId: input.agentId ?? null, direction: "OUTBOUND", fromPhone: input.from, toPhone: input.to, body: input.body, provider: "off", purpose: input.purpose, status: "FAILED", error } });
+      return { ok: false, error };
     }
   }
   const p = smsProvider();

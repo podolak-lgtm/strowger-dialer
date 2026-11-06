@@ -8,8 +8,12 @@ export const money = (cents: number) => `${cents < 0 ? "-" : ""}$${(Math.abs(cen
 
 export function BillingBadge({ b, compact = false }: { b: BillingStatus | null; compact?: boolean }) {
   if (!b || b.isPlatform) return null;
-  const tone = b.suspended || b.critical ? "border-red-500/50 bg-red-950/60 text-red-200" : b.low ? "border-amber-500/50 bg-amber-950/60 text-amber-200" : "border-zinc-700 bg-zinc-900 text-zinc-300";
-  const line = b.suspended
+  const tone = b.trial?.active && !b.critical ? "border-sky-700 bg-sky-950/60 text-sky-200" : b.suspended || b.critical ? "border-red-500/50 bg-red-950/60 text-red-200" : b.low ? "border-amber-500/50 bg-amber-950/60 text-amber-200" : "border-zinc-700 bg-zinc-900 text-zinc-300";
+  const line = b.suspended && b.suspendReason === "TRIAL_ENDED"
+    ? "Trial ended: add a prepayment to keep dialing"
+    : b.trial?.active
+      ? `Free trial · ${money(Math.max(0, b.balanceCents))} of usage left`
+      : b.suspended
     ? "Outbound paused: balance used up"
     : b.critical
       ? `Balance exhausted · outbound pauses in ${b.graceDays} day${b.graceDays === 1 ? "" : "s"}`

@@ -14,6 +14,8 @@ export type BillingStatus = {
   low: boolean;
   critical: boolean;
   suspended: boolean;
+  suspendReason: string | null;
+  trial: { active: boolean; endsAt: string; startedAt: string | null; convertedAt: string | null; reminderAt: string | null; allowanceCents: number; seats: number; maxNumbers: number } | null;
   graceDays: number;
   zeroSince: string | null;
   dailyAvgCents: number;
@@ -22,6 +24,7 @@ export type BillingStatus = {
 };
 export type BillingOverview = {
   period: string;
+  referralCreditsCents: number;
   status: BillingStatus;
   categories: { category: string; amountCents: number; quantity: number; costCents: number }[];
   entries: { id: string; kind: string; category: string; quantity: number; unitMillicents: number; amountCents: number; note: string | null; at: string; period: string }[];

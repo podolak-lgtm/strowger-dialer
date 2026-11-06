@@ -543,6 +543,156 @@ talk about returning pool DIDs idle two weeks."
   (tested). A lead's `assignedCallerId` from an earlier attempt still wins
   over `pickCallerId` in the pacer and cadence paths (unchanged).
 
+## Referral program and free trial (owner, 6 Nov)
+
+Owner: "Every client should get an invite link ... for a 1-week, 5-seat,
+free, risk-free trial. If somebody signs up, the referrer gets a percentage
+for life, but only while they stay a client too ... 5% (a $1,000 bill pays
+out $50) ... Commission is a deduction from their bill, a credit ... we
+never write out cash. Write the T&Cs."
+
+**The terms pages are drafts: the owner's lawyer must review them and fill
+in `[STATE]` before launch** (a code comment at the top of each says so):
+`apps/web/src/app/legal/referral-terms/page.tsx` and
+`.../legal/trial-terms/page.tsx` (public; the trial page carries the
+platform usage terms at `#usage`: consent and TCPA compliance are the
+client's). Their figures (rate, trial days, seats, allowance, numbers) are
+read from `PlatformRates`, so they follow the settings. Versions are
+`REFERRAL_TERMS_VERSION` / `TRIAL_TERMS_VERSION` in
+`packages/shared/src/referrals.ts`: bump on a change in substance; a client
+whose stored `referralTermsVersion` differs is asked to accept again before
+the link shows (and a link whose referrer has not accepted reads "not
+active").
+
+- **Rules are pure** in `packages/shared/src/referrals.ts`, tested in
+  `referrals.test.ts` (the owner's $1,000 → $50, the inactive-referrer case,
+  clawback, lapse, one trial per business, self-referral, trial leftover).
+  The engine (`apps/engine/src/referrals/index.ts`) only gathers figures and
+  writes; every ledger line goes through `postEntry` in `billing/index.ts`.
+- **Models** (migration `20261106180000_referrals_trial`). `Referral`:
+  `tenantId` is the **referrer** (the tenantId rule: it owns the row),
+  `referredTenantId` unique (a client is referred once), `source` link |
+  platform, `code`, `lockedAt`, `endedAt` + `endedReason`.
+  `Tenant.referredByTenantId` mirrors it (kept in step by attribution
+  changes). `ReferralPayout`: one row per relationship and month
+  (`@@unique([referralId, period])`), status CREDIT | FORFEITED, pct, base,
+  credit, reason, clawback base and amount. `TrialClaim` (tenantId, business
+  key, phone, email): every trial ever started, for one-per-business.
+  Tenant gained `referralCode` (unique), `referralTerms*`,
+  `referralPctOverride`, `businessPhone`, `trialStartedAt/EndsAt/
+  ConvertedAt/ReminderAt/ClosedAt`, `trialSeats/MaxNumbers/AllowanceCents`
+  (copied from the settings at sign-up), `trialTerms*`,
+  `usageTermsAcceptedAt`, `closedAt` (no UI closes a workspace yet; when set,
+  outbound refuses and the referrer's referrals end). `BillingKind` +
+  `TRIAL_CREDIT`, `REFERRAL_CREDIT`, `REFERRAL_CLAWBACK`; `BillingCategory`
+  + `TRIAL`, `REFERRAL`; `BillingEntry.uniqueKey` (unique, idempotency);
+  `BillingAccount.suspendReason` BALANCE | TRIAL_ENDED; `PlatformRates`
+  `referralPct` (5.00), `trialDays` 7, `trialSeats` 5,
+  `trialAllowanceCents` 5000, `trialMaxNumbers` 3, `trialWithoutReferral`
+  (false). Existing reports keyed on `kind: "CHARGE"` (revenue, statements,
+  runway) are unaffected by the new kinds.
+- **Link**: `/r/<code>` (8 characters from `REFERRAL_CODE_ALPHABET`, no
+  0/O/1/I/L; made on the client's first visit to Refer & earn by
+  `ensureReferralCode`) shows the landing page; "Start free trial" is
+  `/r/<code>/start` (route handler) which sets `strowger_ref=<code>`
+  (httpOnly, lax, 30 days) and 303s to `/sign-up?redirect_url=/onboarding`.
+  **First referrer wins**: a cookie already holding another *valid* code is
+  kept. `/r/(.*)` and `/legal/(.*)` are in the proxy's public matcher.
+  Links use `WEB_PUBLIC_URL` (else `NEXT_PUBLIC_APP_URL`).
+- **Sign-up** moved into the engine (`POST /internal/signup`, because the
+  trial allowance is a ledger entry): onboarding reads the cookie, asks
+  `GET /internal/signup/offer` what to show, and posts company name,
+  business phone and the two acceptances. The engine: self-referral
+  (`isSelfReferral`: the signer's business key matches any of the
+  referrer's people, or the same Clerk user) → no attribution; a trial is
+  offered when the link is valid and not self, or when
+  `trialWithoutReferral` is on (**decision: off by default, so the trial is
+  the referral offer**; tick it on /platform to give every sign-up a
+  trial). One trial per business (`checkTrialEligible`): the business key
+  (email domain, or the whole address for free mail in `FREE_MAIL_DOMAINS`,
+  gmail dots and +tags folded) or the phone already on any user, any
+  `Tenant.businessPhone` or any `TrialClaim` → refused with the reason; the
+  page then offers "create a workspace without a trial" (dialing waits for
+  a prepayment, as before). **A referral is recorded only for a business
+  that gets the trial** (new to Strowger), so an existing client's second
+  workspace never becomes someone's referral. Creates tenant, billing
+  account, admin user, `TrialClaim`, `Referral`, audit rows, and a
+  `TRIAL_CREDIT` of the allowance (`trial:<id>:grant`).
+- **Trial limits** (while `inTrial`: started, before `trialEndsAt`, no
+  payment yet): seats free (`chargeSeatIfNew` skips) and at most
+  `trialSeats` different agents may log in (`trialSeatRefusal`, counted from
+  `AgentSession` since the start; managers never count); `orderNumbers`
+  refuses past `trialMaxNumbers` held numbers (so does the plan's apply,
+  which orders through it); `sendSms` records a FAILED message and refuses
+  (STOP/HELP replies still go: carriers require them); `outboundAllowed`
+  refuses at once when the allowance is used up (no grace in a trial).
+  **The first payment** (`recordPayment`, positive) sets `trialConvertedAt`
+  (limits lift; seats are charged from the next agent login) and
+  `Referral.lockedAt`. Job `trials` (15 min, `trialTick`): day 5 →
+  `trialReminderAt` + audit `trial.reminder` (**in-app only: Strowger has no
+  email path; the banner turns amber from day 5**); at `trialEndsAt` the
+  unused allowance is removed (`trialLeftoverCents`: allowance less trial
+  usage, never more than the balance; `trial:<id>:expire`), and an unpaid
+  workspace is suspended with `suspendReason TRIAL_ENDED`: login, dialing,
+  transfers and number orders answer "Your trial ended: add a prepayment to
+  keep dialing." Nothing is deleted. Only a payment lifts a TRIAL_ENDED
+  suspension (`afterBalanceChange({payment})`), never a credit landing.
+- **Commission** (`computeReferralMonth`), per relationship per UTC month:
+  rate = `Tenant.referralPctOverride` of the referrer, else
+  `PlatformRates.referralPct`. Base = min(charges, money): charges = the
+  referred client's CHARGE entries in the month posted after its trial was
+  over (`trialOverAt` = first payment or end date); money = PAYMENTs in the
+  month − refunds in the month (**every negative ADJUSTMENT counts as a
+  refund**), floored at 0, + the positive balance carried in from real money
+  (sum of entries before the month excluding TRIAL_CREDIT and REFERRAL_*).
+  Credit = round(base × pct / 100): **$1,000 billed and paid at 5% = $50**.
+  Both active or the month is FORFEITED (zero row with the reason, not
+  banked): referrer not closed, not suspended at month end (suspended now
+  with `suspendedAt` before the month end), a PAYMENT in the month or a
+  positive balance at month end, and at least one SEAT charge in the month;
+  referred not closed, not in trial at month end, not suspended at month
+  end, charges > 0. An ended relationship forfeits. **Clawback**: refunds
+  beyond the month's own payments take back earlier credit at the same rate,
+  capped at the base credited before and not yet clawed back, posted as a
+  negative `REFERRAL_CLAWBACK`, even in a forfeited or ended month. Single
+  tier: only `Referral` rows count, nothing walks a chain.
+- **Payout** = credit only: `runReferralCredits(period)` posts one
+  `REFERRAL_CREDIT` per relationship on the referrer's account, note
+  "Referral credit: <referred>, <period>, <pct>% of $<base>", key
+  `ref:<referralId>:<period>:credit` (clawback `:clawback`), and the
+  payout row; a second run skips (unique). It refuses a month not yet over.
+  The ledger `period` of the entry is the month it was posted (so the
+  billing page's "Referral credits this month" is what landed this month).
+  Job `referralCredits` (first tick of each month, Redis key) runs the month
+  before; /platform has "Run referral credits for <month>" (any finished
+  month). Job `referralLapse` (daily, `endLapsedReferrers`): no PAYMENT or
+  CHARGE on the referrer for 60 days (from creation for a new one), or
+  `closedAt` → `endedAt` on every relationship where they refer, permanent.
+- **Screens.** Client: **Refer & earn** (`/refer`, ADMIN/SUPERVISOR,
+  flat nav after Billing): the terms gate on first visit
+  (`referralTermsAcceptedAt/Version/ById`, audit
+  `referral.terms.accept`), then the link with Copy, an email and an SMS
+  blurb, the program in three lines, totals, referred clients (name, joined,
+  trial / active / inactive this month with the reason / ended, this month's
+  estimate = the same computation up to now, lifetime credits) and the
+  monthly statements. Billing: the trial notice, the TRIAL_ENDED notice,
+  "Referral credits this month: $X", new kinds labelled in the ledger. A
+  trial banner above every page for supervisors (`components/
+  trial-banner.tsx`). Platform (`/platform#referrals`,
+  `platform/referrals-card.tsx`): rate and trial settings, the month run,
+  per-referrer override, every relationship (referrer, referred, since,
+  status, last month's base and credit, lifetime) with **Change**
+  attribution (refused once locked; audit `referral.attribution`) and
+  **End** (with a reason; audit `referral.end`), and the trials list. All
+  admin changes are audit-logged in the web actions
+  (`lib/referral-actions.ts`), which call `/internal/referrals/*`.
+- **Not built**: email for the day-5 reminder (no email path); a
+  "close workspace" action (`closedAt` is honoured but only settable in the
+  database); per-relationship rate overrides (the override is per referrer);
+  automatic deletion of long-suspended trial data (the terms say data is
+  kept). A trial workspace keeps being charged the monthly fee for numbers
+  it holds after an unpaid end, like any client.
+
 ## Media bucket
 
 Railway bucket `media` (S3-compatible, region sjc). The web service reads

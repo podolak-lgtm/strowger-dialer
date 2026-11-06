@@ -13,6 +13,7 @@ import { idlePoolCheck, restoreRestedNumbers } from "../provision/plan";
 import { endExpiredRuns, settlePeriodWagers, weeklyTopUp } from "../games";
 import { chargeAllDids, suspendOverdue } from "../billing";
 import { syncTelnyxCosts } from "../billing/vendor";
+import { endLapsedReferrers, monthlyReferralCredits, trialTick } from "../referrals";
 import { config } from "../config";
 
 interface Job {
@@ -81,6 +82,22 @@ async function dailyIdlePool(): Promise<void> {
   await redis.set("job:idlePool:last", today);
 }
 
+/** First tick of each month: referral credits for the month before (idempotent per relationship and month). */
+async function monthlyReferrals(): Promise<void> {
+  const key = new Date().toISOString().slice(0, 7);
+  if ((await redis.get("job:referralCredits:last")) === key) return;
+  await monthlyReferralCredits();
+  await redis.set("job:referralCredits:last", key);
+}
+
+/** Once a day: referrers idle 60 days lose their referrals for good. */
+async function dailyReferralLapse(): Promise<void> {
+  const today = new Date().toISOString().slice(0, 10);
+  if ((await redis.get("job:referralLapse:last")) === today) return;
+  await endLapsedReferrers();
+  await redis.set("job:referralLapse:last", today);
+}
+
 const JOBS: Job[] = [
   { name: "scrub", everyMs: 2 * 60_000, run: scrubAllTenants },
   { name: "dailyReset", everyMs: 10 * 60_000, run: dailyReset },
@@ -95,6 +112,9 @@ const JOBS: Job[] = [
   { name: "weeklyTopUp", everyMs: 10 * 60_000, run: mondayTopUp },
   { name: "billingSuspend", everyMs: 60 * 60_000, run: () => suspendOverdue() },
   { name: "monthlyDids", everyMs: 30 * 60_000, run: monthlyDids },
+  { name: "referralCredits", everyMs: 30 * 60_000, run: monthlyReferrals },
+  { name: "referralLapse", everyMs: 60 * 60_000, run: dailyReferralLapse },
+  { name: "trials", everyMs: 15 * 60_000, run: () => trialTick() },
   { name: "telnyxCosts", everyMs: 60 * 60_000, run: () => (config.TELNYX_API_KEY ? syncTelnyxCosts("last_2_days") : Promise.resolve()) },
 ];
 

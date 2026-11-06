@@ -1,9 +1,12 @@
 import { requireClientWorkspace } from "@/lib/auth";
 import { billingOverview } from "@/lib/billing-actions";
 import { money } from "@/components/billing-badge";
+import Link from "next/link";
 import { Badge, Card, Notice, PageHeader, Table, Td } from "@/components/ui";
 
-const CATEGORY_LABEL: Record<string, string> = { SEAT: "Seats", MINUTES: "Minutes", DID: "Phone numbers", SCRUB: "Scrub records", SMS: "Texts", OTHER: "Other", PAYMENT: "Payments" };
+const CATEGORY_LABEL: Record<string, string> = { SEAT: "Seats", MINUTES: "Minutes", DID: "Phone numbers", SCRUB: "Scrub records", SMS: "Texts", OTHER: "Other", PAYMENT: "Payments", TRIAL: "Free trial", REFERRAL: "Referral program" };
+const KIND_LABEL: Record<string, string> = { TRIAL_CREDIT: "trial allowance", REFERRAL_CREDIT: "referral credit", REFERRAL_CLAWBACK: "referral clawback" };
+const KIND_TONE: Record<string, "green" | "amber" | "zinc" | "blue" | "red"> = { PAYMENT: "green", ADJUSTMENT: "amber", TRIAL_CREDIT: "blue", REFERRAL_CREDIT: "green", REFERRAL_CLAWBACK: "red" };
 const cents = (c: number) => money(c);
 const rate = (millicents: number) => `${(millicents / 1000).toFixed(millicents % 1000 === 0 ? 0 : 2)}¢`;
 
@@ -18,7 +21,16 @@ export default async function BillingPage({ searchParams }: PageProps<"/billing"
   return (
     <div>
       <PageHeader title="Billing" subtitle={`${s.tenant.name} · prepaid. Seats are charged on an agent's first login each month; minutes, numbers, scrub records and texts as they happen.`} />
-      {b.suspended ? (
+      {b.suspended && b.suspendReason === "TRIAL_ENDED" ? (
+        <Notice kind="error">Your trial ended: add a prepayment to keep dialing. Everything you set up is kept; dialing resumes the moment the payment is recorded.</Notice>
+      ) : b.trial?.active ? (
+        <Notice kind="warn">
+          Free trial until {new Date(b.trial.endsAt).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" })}: {b.trial.seats} seats at no charge and a {cents(b.trial.allowanceCents)} usage allowance (not money: it cannot be withdrawn and any unused part is removed when the trial ends). Up to {b.trial.maxNumbers} numbers, no texting. A prepayment ends the trial limits; without one, dialing pauses when the trial ends.{" "}
+          <Link href="/legal/trial-terms" className="underline">
+            Trial Terms
+          </Link>
+        </Notice>
+      ) : b.suspended ? (
         <Notice kind="error">Outbound calling is paused: the balance has been at or below zero for more than {b.graceDays} days. Add a payment and it resumes automatically.</Notice>
       ) : b.critical ? (
         <Notice kind="error">The balance is used up. Outbound keeps running for {b.graceDays} day{b.graceDays === 1 ? "" : "s"} of grace, then pauses until a payment lands.</Notice>
@@ -82,6 +94,18 @@ export default async function BillingPage({ searchParams }: PageProps<"/billing"
         </Card>
       </div>
 
+      <div className="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-zinc-800 bg-zinc-900 px-5 py-3 text-sm">
+        <span>
+          Referral credits this month: <b className={`tabular-nums ${o.referralCreditsCents > 0 ? "text-emerald-300" : ""}`}>{cents(o.referralCreditsCents)}</b>
+        </span>
+        <span className="text-xs text-zinc-500">
+          Account credit for clients you referred, posted on the 1st for the month before. Credit only, never cash.{" "}
+          <Link href="/refer" className="underline">
+            Refer &amp; earn
+          </Link>
+        </span>
+      </div>
+
       <Card title={`This month by category (${o.period})`} className="mt-6">
         <Table head={["Category", "Quantity", "Amount"]}>
           {o.categories.map((c) => (
@@ -116,7 +140,7 @@ export default async function BillingPage({ searchParams }: PageProps<"/billing"
             <tr key={e.id}>
               <Td className="text-xs text-zinc-400">{new Date(e.at).toLocaleString()}</Td>
               <Td>
-                <Badge tone={e.kind === "PAYMENT" ? "green" : e.kind === "ADJUSTMENT" ? "amber" : "zinc"}>{e.kind.toLowerCase()}</Badge>
+                <Badge tone={KIND_TONE[e.kind] ?? "zinc"}>{KIND_LABEL[e.kind] ?? e.kind.toLowerCase()}</Badge>
               </Td>
               <Td className="text-xs">{CATEGORY_LABEL[e.category] ?? e.category}</Td>
               <Td className="text-xs text-zinc-300">{e.note ?? ""}</Td>

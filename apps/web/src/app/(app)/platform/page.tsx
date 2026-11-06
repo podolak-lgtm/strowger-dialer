@@ -4,6 +4,8 @@ import { requireRole } from "@/lib/auth";
 import { createWorkspace, moveCampaignToWorkspace, openWorkspace, platformOverview, recordPayment, savePlan, saveRates, syncVendorCosts, vendorSpend } from "@/lib/billing-actions";
 import { money } from "@/components/billing-badge";
 import { Badge, Button, Card, Field, Notice, PageHeader, Table, Td, inputClass } from "@/components/ui";
+import { platformReferrals } from "@/lib/referral-actions";
+import { ReferralsCard } from "./referrals-card";
 
 // The owner's view (platform workspace only): every client's balance, this
 // month's revenue, cost and margin; record prepayments; set each client's
@@ -21,7 +23,7 @@ export default async function PlatformPage({ searchParams }: PageProps<"/platfor
   const period = typeof sp.period === "string" ? sp.period : undefined;
   const msg = typeof sp.msg === "string" ? sp.msg : null;
   const kind = sp.kind === "error" ? "error" : "ok";
-  const [o, v, campaigns] = await Promise.all([platformOverview(period), vendorSpend(period), prisma.campaign.findMany({ where: { tenantId: s.tenant.id, status: { not: "ARCHIVED" } }, select: { id: true, name: true }, orderBy: { name: "asc" } })]);
+  const [o, v, refs, campaigns] = await Promise.all([platformOverview(period), vendorSpend(period), platformReferrals(), prisma.campaign.findMany({ where: { tenantId: s.tenant.id, status: { not: "ARCHIVED" } }, select: { id: true, name: true }, orderBy: { name: "asc" } })]);
   const totals = o.tenants.reduce((t, x) => ({ revenue: t.revenue + x.revenueCents, cost: t.cost + x.costCents, balance: t.balance + x.balanceCents }), { revenue: 0, cost: 0, balance: 0 });
   const platformTenantId = s.actingFrom?.id ?? s.tenant.id;
   // No client opened yet: offer the one they used last (or the only one),
@@ -113,6 +115,8 @@ export default async function PlatformPage({ searchParams }: PageProps<"/platfor
         </Table>
         <p className="mt-2 text-xs text-zinc-500">A negative amount is an adjustment (credit back or correction). Payments lift a pause immediately. &ldquo;Open&rdquo; steps you into that client&rsquo;s workspace as its admin until you come back.</p>
       </Card>
+
+      <ReferralsCard r={refs} />
 
       <div className="mt-6 grid gap-6 lg:grid-cols-[1fr_1fr]">
         <Card title="New client workspace">

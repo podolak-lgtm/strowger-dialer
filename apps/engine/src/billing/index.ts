@@ -2,7 +2,8 @@
 // BillingEntry as it happens and moves the account balance; the platform
 // workspace records payments by hand (no cards yet). Below zero for longer
 // than the grace period, outbound stops until a payment arrives.
-import { prisma, type BillingCategory } from "@strowger/db";
+import { prisma, type BillingCategory, type BillingKind, type Prisma } from "@strowger/db";
+import { inTrial } from "@strowger/shared/referrals";
 import { log } from "../log";
 import { emitToTenant } from "../realtime";
 
@@ -44,19 +45,50 @@ export async function charge(input: ChargeInput): Promise<number> {
 export async function recordPayment(tenantId: string, amountCents: number, note: string, createdById: string): Promise<void> {
   if (!Number.isInteger(amountCents) || amountCents === 0) throw new Error("Amount must be a whole number of cents");
   await ensureAccount(tenantId);
+  const now = new Date();
   await prisma.$transaction([
     prisma.billingEntry.create({ data: { tenantId, kind: amountCents > 0 ? "PAYMENT" : "ADJUSTMENT", category: amountCents > 0 ? "PAYMENT" : "OTHER", quantity: 1, unitMillicents: amountCents * 1000, amountCents, note, period: period(), createdById } }),
     prisma.billingAccount.update({ where: { tenantId }, data: { balanceCents: { increment: amountCents } } }),
+    // The first real payment ends the trial's limits and locks who referred this client.
+    ...(amountCents > 0
+      ? [
+          prisma.tenant.updateMany({ where: { id: tenantId, trialEndsAt: { not: null }, trialConvertedAt: null }, data: { trialConvertedAt: now } }),
+          prisma.referral.updateMany({ where: { referredTenantId: tenantId, lockedAt: null }, data: { lockedAt: now } }),
+        ]
+      : []),
   ]);
-  await afterBalanceChange(tenantId);
+  await afterBalanceChange(tenantId, { payment: amountCents > 0 });
 }
 
-/** Lift a suspension once the balance is back above zero; start the clock when it drops to zero. */
-async function afterBalanceChange(tenantId: string): Promise<void> {
+/**
+ * One ledger line that is not a usage charge (trial allowance, referral
+ * credit or clawback), with the balance moved in the same transaction. A
+ * `uniqueKey` makes it idempotent: a second post with the same key is a no-op.
+ */
+export async function postEntry(input: { tenantId: string; kind: BillingKind; category: BillingCategory; amountCents: number; note: string; refId?: string | null; uniqueKey?: string | null; createdById?: string | null }, tx?: Prisma.TransactionClient): Promise<boolean> {
+  if (!Number.isInteger(input.amountCents) || input.amountCents === 0) return false;
+  const write = async (db: Prisma.TransactionClient) => {
+    if (input.uniqueKey && (await db.billingEntry.findUnique({ where: { uniqueKey: input.uniqueKey } }))) return false;
+    await db.billingAccount.upsert({ where: { tenantId: input.tenantId }, create: { tenantId: input.tenantId }, update: {} });
+    await db.billingEntry.create({ data: { tenantId: input.tenantId, kind: input.kind, category: input.category, quantity: 1, unitMillicents: input.amountCents * 1000, amountCents: input.amountCents, note: input.note, refId: input.refId ?? null, uniqueKey: input.uniqueKey ?? null, period: period(), createdById: input.createdById ?? null } });
+    await db.billingAccount.update({ where: { tenantId: input.tenantId }, data: { balanceCents: { increment: input.amountCents } } });
+    return true;
+  };
+  const done = tx ? await write(tx) : await prisma.$transaction((t) => write(t));
+  if (done && !tx) await afterBalanceChange(input.tenantId);
+  return done;
+}
+
+/**
+ * Lift a suspension once the balance is back above zero; start the clock
+ * when it drops to zero. A trial that ended unpaid is lifted only by a
+ * payment, never by a credit landing on the account.
+ */
+export async function afterBalanceChange(tenantId: string, opts: { payment?: boolean } = {}): Promise<void> {
   const a = await prisma.billingAccount.findUnique({ where: { tenantId } });
   if (!a) return;
-  if (a.balanceCents > 0 && (a.suspended || a.zeroSince)) {
-    await prisma.billingAccount.update({ where: { tenantId }, data: { suspended: false, suspendedAt: null, zeroSince: null } });
+  if (a.balanceCents > 0 && (a.suspended || a.zeroSince) && (a.suspendReason !== "TRIAL_ENDED" || opts.payment)) {
+    await prisma.billingAccount.update({ where: { tenantId }, data: { suspended: false, suspendedAt: null, suspendReason: null, zeroSince: null } });
     emitToTenant(tenantId, "billing:update", { suspended: false, balanceCents: a.balanceCents });
   } else if (a.balanceCents <= 0 && !a.zeroSince) {
     await prisma.billingAccount.update({ where: { tenantId }, data: { zeroSince: new Date() } });
@@ -69,17 +101,22 @@ export async function suspendOverdue(now = new Date()): Promise<void> {
   const due = await prisma.billingAccount.findMany({ where: { suspended: false, balanceCents: { lte: 0 }, zeroSince: { not: null } } });
   for (const a of due) {
     if (now.getTime() - a.zeroSince!.getTime() < a.graceDays * 86_400_000) continue;
-    await prisma.billingAccount.update({ where: { id: a.id }, data: { suspended: true, suspendedAt: now } });
+    await prisma.billingAccount.update({ where: { id: a.id }, data: { suspended: true, suspendedAt: now, suspendReason: "BALANCE" } });
     emitToTenant(a.tenantId, "billing:update", { suspended: true, balanceCents: a.balanceCents });
     log.warn({ tenantId: a.tenantId }, "billing: outbound suspended, balance exhausted past grace");
   }
 }
 
+export const TRIAL_ENDED_MESSAGE = "Your trial ended: add a prepayment to keep dialing.";
+
 /** Outbound allowed? Platform workspace is never billed. */
 export async function outboundAllowed(tenantId: string): Promise<{ ok: true } | { ok: false; error: string }> {
-  const t = await prisma.tenant.findUnique({ where: { id: tenantId }, select: { isPlatform: true, billing: { select: { suspended: true, balanceCents: true, zeroSince: true } } } });
+  const t = await prisma.tenant.findUnique({ where: { id: tenantId }, select: { isPlatform: true, closedAt: true, trialStartedAt: true, trialEndsAt: true, trialConvertedAt: true, billing: { select: { suspended: true, suspendReason: true, balanceCents: true, zeroSince: true } } } });
   if (!t || t.isPlatform) return { ok: true };
-  if (t.billing?.suspended) return { ok: false, error: "Outbound is paused: the prepaid balance is used up. Add a payment to continue." };
+  if (t.closedAt) return { ok: false, error: "This workspace is closed." };
+  if (t.billing?.suspended) return { ok: false, error: t.billing.suspendReason === "TRIAL_ENDED" ? TRIAL_ENDED_MESSAGE : "Outbound is paused: the prepaid balance is used up. Add a payment to continue." };
+  // The trial dials within its allowance, with no grace period after it.
+  if (inTrial(t, new Date()) && (t.billing?.balanceCents ?? 0) <= 0) return { ok: false, error: "Your free trial allowance is used up: add a prepayment to keep dialing." };
   // Never funded: a workspace someone signed up for, or a client whose first payment has not been recorded. Grace only applies after a balance has run down.
   if (!t.billing || (t.billing.balanceCents <= 0 && !t.billing.zeroSince)) return { ok: false, error: "No prepaid balance on this workspace yet. Ask your account manager to record a payment." };
   return { ok: true };
@@ -87,10 +124,32 @@ export async function outboundAllowed(tenantId: string): Promise<{ ok: true } | 
 
 // ---- The billable things
 
-/** First login of the month by an agent = a seat. Admins and managers are free. */
+/** The free trial's limits while it runs, else null. */
+export async function activeTrial(tenantId: string, now = new Date()): Promise<{ endsAt: Date; startedAt: Date; seats: number; maxNumbers: number } | null> {
+  const t = await prisma.tenant.findUnique({ where: { id: tenantId }, select: { trialStartedAt: true, trialEndsAt: true, trialConvertedAt: true, trialSeats: true, trialMaxNumbers: true } });
+  if (!t || !inTrial(t, now)) return null;
+  return { endsAt: t.trialEndsAt!, startedAt: t.trialStartedAt ?? t.trialEndsAt!, seats: t.trialSeats ?? 5, maxNumbers: t.trialMaxNumbers ?? 3 };
+}
+
+/** During the trial at most `seats` different agents may log in; a refusal message, else null. */
+export async function trialSeatRefusal(tenantId: string, userId: string): Promise<string | null> {
+  const trial = await activeTrial(tenantId);
+  if (!trial) return null;
+  const u = await prisma.user.findUnique({ where: { id: userId }, select: { roles: true } });
+  if (!u || u.roles.some((r) => (MANAGER_ROLES as readonly string[]).includes(r))) return null;
+  const sessions = await prisma.agentSession.findMany({ where: { tenantId, startedAt: { gte: trial.startedAt } }, select: { userId: true }, distinct: ["userId"] });
+  const ids = new Set(sessions.map((x) => x.userId));
+  if (ids.has(userId)) return null;
+  const people = await prisma.user.findMany({ where: { id: { in: [...ids] } }, select: { id: true, roles: true } });
+  const seats = people.filter((m) => !m.roles.some((r) => (MANAGER_ROLES as readonly string[]).includes(r))).length;
+  return seats >= trial.seats ? `The free trial includes ${trial.seats} agent seats and all ${trial.seats} are in use. Add a prepayment to add more.` : null;
+}
+
+/** First login of the month by an agent = a seat. Admins and managers are free, and so are seats during the free trial. */
 export async function chargeSeatIfNew(tenantId: string, userId: string): Promise<void> {
   const [t, u, a] = await Promise.all([prisma.tenant.findUnique({ where: { id: tenantId }, select: { isPlatform: true } }), prisma.user.findUnique({ where: { id: userId }, select: { roles: true, firstName: true, email: true } }), ensureAccount(tenantId)]);
   if (!t || t.isPlatform || !u) return;
+  if (await activeTrial(tenantId)) return;
   if (u.roles.some((r) => (MANAGER_ROLES as readonly string[]).includes(r))) return;
   const p = period();
   const existing = await prisma.billingEntry.findFirst({ where: { tenantId, category: "SEAT", period: p, refId: userId } });
@@ -147,7 +206,8 @@ export async function chargeSms(tenantId: string, messageId: string, segments = 
 // ---- Views
 
 export async function billingStatus(tenantId: string) {
-  const [t, a] = await Promise.all([prisma.tenant.findUnique({ where: { id: tenantId }, select: { isPlatform: true } }), ensureAccount(tenantId)]);
+  const [t, a] = await Promise.all([prisma.tenant.findUnique({ where: { id: tenantId }, select: { isPlatform: true, trialStartedAt: true, trialEndsAt: true, trialConvertedAt: true, trialAllowanceCents: true, trialSeats: true, trialMaxNumbers: true, trialReminderAt: true } }), ensureAccount(tenantId)]);
+  const now = new Date();
   const since = new Date(Date.now() - 30 * 86_400_000);
   const spend = await prisma.billingEntry.aggregate({ where: { tenantId, kind: "CHARGE", createdAt: { gte: since } }, _sum: { amountCents: true } });
   const spent30 = -(spend._sum.amountCents ?? 0);
@@ -160,6 +220,10 @@ export async function billingStatus(tenantId: string) {
     low: !t?.isPlatform && a.balanceCents <= a.lowBalanceCents,
     critical: !t?.isPlatform && a.balanceCents <= 0,
     suspended: a.suspended,
+    suspendReason: a.suspendReason,
+    trial: t?.trialEndsAt
+      ? { active: inTrial(t, now), endsAt: t.trialEndsAt.toISOString(), startedAt: t.trialStartedAt?.toISOString() ?? null, convertedAt: t.trialConvertedAt?.toISOString() ?? null, reminderAt: t.trialReminderAt?.toISOString() ?? null, allowanceCents: t.trialAllowanceCents ?? 0, seats: t.trialSeats ?? 0, maxNumbers: t.trialMaxNumbers ?? 0 }
+      : null,
     graceDays: a.graceDays,
     zeroSince: a.zeroSince?.toISOString() ?? null,
     dailyAvgCents: Math.round(dailyAvg),
@@ -169,14 +233,16 @@ export async function billingStatus(tenantId: string) {
 }
 
 export async function billingOverview(tenantId: string, p = period()) {
-  const [status, byCat, entries, r, months] = await Promise.all([
+  const [status, byCat, entries, r, months, referral] = await Promise.all([
     billingStatus(tenantId),
     prisma.billingEntry.groupBy({ by: ["category"], where: { tenantId, period: p, kind: "CHARGE" }, _sum: { amountCents: true, quantity: true, costCents: true } }),
     prisma.billingEntry.findMany({ where: { tenantId }, orderBy: { createdAt: "desc" }, take: 100 }),
     rates(),
     prisma.billingEntry.groupBy({ by: ["period"], where: { tenantId, kind: "CHARGE" }, _sum: { amountCents: true } }),
+    prisma.billingEntry.aggregate({ where: { tenantId, period: p, kind: { in: ["REFERRAL_CREDIT", "REFERRAL_CLAWBACK"] } }, _sum: { amountCents: true } }),
   ]);
   return {
+    referralCreditsCents: referral._sum.amountCents ?? 0,
     period: p,
     status,
     categories: byCat.map((c) => ({ category: c.category, amountCents: -(c._sum.amountCents ?? 0), quantity: Number(c._sum.quantity ?? 0), costCents: c._sum.costCents ?? 0 })),

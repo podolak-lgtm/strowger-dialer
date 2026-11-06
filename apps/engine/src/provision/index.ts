@@ -7,7 +7,7 @@ import { prisma } from "@strowger/db";
 import { stateForAreaCode } from "@strowger/shared";
 import { config } from "../config";
 import { log } from "../log";
-import { chargeDidMonthly } from "../billing";
+import { activeTrial, chargeDidMonthly } from "../billing";
 import { jambonzAdmin, type Carrier } from "./jambonz-admin";
 import { TELNYX_SIGNALLING_IPS, TELNYX_SIP_HOST, telnyx, telnyxConfigured, type BrandInput, type CampaignInput } from "./telnyx";
 
@@ -198,8 +198,14 @@ export async function searchNumbers(q: { areaCode?: string; state?: string; loca
 /** Buy numbers, attach them to the voice connection and messaging profile, then register them in jambonz. */
 export async function orderNumbers(input: { tenantId: string; phones: string[]; campaignId: string | null; areaCode: string; requestedBy?: string }) {
   const t = await prisma.tenant.findUniqueOrThrow({ where: { id: input.tenantId } });
-  if (!t.telnyxConnectionId || !t.jambonzCarrierSid) throw new Error("Run carrier setup first (voice connection and jambonz carrier are missing)");
   const phones = [...new Set(input.phones.map((p) => p.replace(/\D/g, "").replace(/^1(\d{10})$/, "$1")).filter((p) => p.length === 10))];
+  // Free trial: a few numbers only (the trial's own limit, set on /platform).
+  const trial = await activeTrial(t.id);
+  if (trial) {
+    const have = await prisma.callerIdNumber.count({ where: { tenantId: t.id, status: { not: "RETIRED" }, provisionStatus: { notIn: ["failed", "released"] } } });
+    if (have + phones.length > trial.maxNumbers) throw new Error(`The free trial allows ${trial.maxNumbers} phone numbers and this workspace has ${have}. Add a prepayment to order more.`);
+  }
+  if (!t.telnyxConnectionId || !t.jambonzCarrierSid) throw new Error("Run carrier setup first (voice connection and jambonz carrier are missing)");
   if (phones.length === 0) throw new Error("No valid numbers");
   const order = await prisma.numberOrder.create({ data: { tenantId: t.id, campaignId: input.campaignId, areaCode: input.areaCode, quantity: phones.length, requestedBy: input.requestedBy } });
   let result;

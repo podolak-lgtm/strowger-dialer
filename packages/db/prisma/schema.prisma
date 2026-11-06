@@ -40,6 +40,37 @@ model Tenant {
   isPlatform       Boolean  @default(false)
   billing          BillingAccount?
   billingEntries   BillingEntry[]
+  /// Referral program and free trial (owner, 6 Nov; docs/HANDOFF.md "Referral program and free trial").
+  /// The client's own link code (/r/<code>), made on its first visit to Refer & earn.
+  referralCode              String?   @unique
+  referralTermsAcceptedAt   DateTime?
+  referralTermsVersion      String?
+  referralTermsAcceptedById String?
+  /// Per-referrer commission percent; null = PlatformRates.referralPct.
+  referralPctOverride       Decimal?  @db.Decimal(5, 2)
+  /// Who referred this client (mirrors Referral.tenantId for the row where this tenant is referred).
+  referredByTenantId        String?
+  /// Business phone given at sign-up (ten digits): one trial per business.
+  businessPhone             String?
+  trialStartedAt            DateTime?
+  trialEndsAt               DateTime?
+  /// First payment recorded: the trial limits lift and the referral locks.
+  trialConvertedAt          DateTime?
+  trialReminderAt           DateTime?
+  /// The trial-end job has run (leftover allowance removed; suspended if never paid).
+  trialClosedAt             DateTime?
+  trialSeats                Int?
+  trialMaxNumbers           Int?
+  trialAllowanceCents       Int?
+  trialTermsAcceptedAt      DateTime?
+  trialTermsVersion         String?
+  usageTermsAcceptedAt      DateTime?
+  /// Workspace closed: referral credits stop and its referrals end.
+  closedAt                  DateTime?
+  referralsMade             Referral[]       @relation("referrer")
+  referredBy                Referral?        @relation("referred")
+  referralPayouts           ReferralPayout[]
+  trialClaims               TrialClaim[]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -1026,6 +1057,8 @@ model BillingAccount {
   graceDays            Int      @default(3)
   suspended            Boolean  @default(false)
   suspendedAt          DateTime?
+  /// BALANCE (used up past grace) or TRIAL_ENDED (free trial over, never paid).
+  suspendReason        String?
   zeroSince            DateTime?
   notes                String?
   createdAt            DateTime @default(now())
@@ -1036,6 +1069,12 @@ enum BillingKind {
   CHARGE
   PAYMENT
   ADJUSTMENT
+  /// The free trial's usage allowance (positive), and its removal at trial end (negative). Never money.
+  TRIAL_CREDIT
+  /// Commission on a referred client's paid usage, as account credit. Never cash.
+  REFERRAL_CREDIT
+  /// A refund on the referred account taking back earlier referral credit (negative).
+  REFERRAL_CLAWBACK
 }
 
 enum BillingCategory {
@@ -1046,6 +1085,8 @@ enum BillingCategory {
   SMS
   OTHER
   PAYMENT
+  TRIAL
+  REFERRAL
 }
 
 /// The ledger. Charges are negative amounts; payments positive. costCents is what we paid, for margin.
@@ -1066,6 +1107,8 @@ model BillingEntry {
   /// YYYY-MM the charge belongs to.
   period      String
   createdById String?
+  /// Idempotency for entries a job posts (referral credits: ref:<referralId>:<period>:credit).
+  uniqueKey   String?         @unique
   createdAt   DateTime        @default(now())
 
   @@index([tenantId, period, category])
@@ -1086,7 +1129,76 @@ model PlatformRates {
   telnyxBalanceCents       Int?
   telnyxBalanceAt          DateTime?
   telnyxSyncedAt           DateTime?
+  /// Referral commission, percent of the referred client's paid usage (owner, 6 Nov: 5%).
+  referralPct              Decimal  @default(5.00) @db.Decimal(5, 2)
+  trialDays                Int      @default(7)
+  trialSeats               Int      @default(5)
+  trialAllowanceCents      Int      @default(5000)
+  trialMaxNumbers          Int      @default(3)
+  /// Offer the trial to sign-ups that did not come through a referral link.
+  trialWithoutReferral     Boolean  @default(false)
   updatedAt                DateTime @updatedAt
+}
+
+/// One client referred another (single tier: never second level). tenantId is the referrer,
+/// who owns the row and earns the credit; the referred client appears once.
+model Referral {
+  id               String           @id @default(cuid())
+  tenant           Tenant           @relation("referrer", fields: [tenantId], references: [id])
+  tenantId         String
+  referred         Tenant           @relation("referred", fields: [referredTenantId], references: [id])
+  referredTenantId String           @unique
+  /// link (sign-up through /r/<code>) or platform (attribution set by a platform admin).
+  source           String           @default("link")
+  code             String?
+  createdAt        DateTime         @default(now())
+  /// The referred client's first payment: attribution can no longer change.
+  lockedAt         DateTime?
+  endedAt          DateTime?
+  endedReason      String?
+  payouts          ReferralPayout[]
+
+  @@index([tenantId])
+}
+
+/// The month run's result per relationship: a credit, or a forfeited month with its reason (zero, not banked), and any clawback.
+model ReferralPayout {
+  id                String   @id @default(cuid())
+  tenant            Tenant   @relation(fields: [tenantId], references: [id])
+  /// The referrer.
+  tenantId          String
+  referral          Referral @relation(fields: [referralId], references: [id])
+  referralId        String
+  referredTenantId  String
+  /// YYYY-MM the commission is for (the month before the run).
+  period            String
+  /// CREDIT | FORFEITED
+  status            String
+  pct               Decimal  @db.Decimal(5, 2)
+  baseCents         Int
+  creditCents       Int
+  reason            String?
+  clawbackBaseCents Int      @default(0)
+  clawbackCents     Int      @default(0)
+  createdById       String?
+  createdAt         DateTime @default(now())
+
+  @@unique([referralId, period])
+  @@index([tenantId, period])
+}
+
+/// Every trial started, kept even if the workspace goes: one trial per business (email key or phone).
+model TrialClaim {
+  id          String   @id @default(cuid())
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
+  tenantId    String
+  businessKey String
+  phone       String
+  email       String
+  createdAt   DateTime @default(now())
+
+  @@index([businessKey])
+  @@index([phone])
 }
 
 /// What vendors charge us, as pulled from their APIs or computed from token usage. One row per record (call, message, AI request) or per day for aggregates.

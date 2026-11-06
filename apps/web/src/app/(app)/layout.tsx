@@ -5,6 +5,7 @@ import { hasRole, isBarePlatform, requireSession } from "@/lib/auth";
 import { billingStatus } from "@/lib/billing-actions";
 import { BillingBadge } from "@/components/billing-badge";
 import { leaveWorkspace } from "@/lib/billing-actions";
+import { TrialBanner } from "@/components/trial-banner";
 
 export default async function AppLayout({ children }: LayoutProps<"/">) {
   const session = await requireSession();
@@ -40,6 +41,7 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
         { href: "/teams", label: "Teams & rooms", show: hasRole(session, "SUPERVISOR") },
         { href: "/partner", label: "Partner portal", show: session.roles.includes("AFFILIATE") },
         { href: "/billing", label: "Billing", show: hasRole(session, "SUPERVISOR") && !session.tenant.isPlatform },
+        { href: "/refer", label: "Refer & earn", show: hasRole(session, "SUPERVISOR") && !session.tenant.isPlatform },
         { href: "/platform", label: "Platform", show: hasRole(session) && (session.tenant.isPlatform || Boolean(acting)) },
         { href: "/settings", label: "Settings", show: hasRole(session) },
       ];
@@ -69,6 +71,7 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
           </div>
         </header>
       ) : null}
+      {billing ? <TrialBanner tenant={session.tenant} billing={billing} now={new Date()} /> : null}
       {/* Narrow screens: the sidebar folds into a menu so nothing scrolls sideways. */}
       <details className="border-b border-zinc-800 bg-zinc-900/60 md:hidden">
         <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-3 text-sm">
