@@ -426,6 +426,8 @@ export function AgentConsole(props: ConsoleProps) {
   /** The live call is a screened one (engine call:update carries screener: true); the banner's step moves say → wait → go. */
   const [screener, setScreener] = useState<{ phrase: string | null } | null>(null);
   const [screenerStep, setScreenerStep] = useState<"say" | "wait" | "go">("say");
+  /** A caller handed over by the AI answer: its summary and the conversation so far (inbound/ai). */
+  const [aiNote, setAiNote] = useState<{ summary: string; transcript: Array<{ role: string; text: string }> } | null>(null);
   const [muted, setMuted] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [notes, setNotes] = useState("");
@@ -570,6 +572,7 @@ export function AgentConsole(props: ConsoleProps) {
           });
           void callScreener(cur.currentCallId).then((info) => {
             if (info?.screener && info.status !== "ended") setScreener({ phrase: info.screenerPhrase });
+            if (info?.aiSummary) setAiNote({ summary: info.aiSummary, transcript: info.aiTranscript ?? [] });
           });
         }
       }
@@ -623,6 +626,7 @@ export function AgentConsole(props: ConsoleProps) {
         setCallId(null);
         setCallStatus("idle");
         setCallStart(null);
+        setAiNote(null);
         setScreener(null);
         setScreenerStep("say");
         setTransfer(null);
@@ -647,13 +651,14 @@ export function AgentConsole(props: ConsoleProps) {
     });
     sock.on("games:won", (w: { name: string; prize: string | null; hand: string }) => setNotice(`You won the poker run '${w.name}' with ${w.hand}${w.prize ? `: ${w.prize}` : ""}`));
     // A card earned on a disposition plays as the deal moment (games.tsx GamesLayer), held while on a call.
-    sock.on("call:update", (u: { callId: string; status: string; leadId?: string; outcome?: string; inbound?: boolean; from?: string | null; screener?: boolean; screenerPhrase?: string | null; human?: boolean; transfer?: LiveTransferView; queue?: string; queueCallback?: string; waitedSeconds?: number; survey?: boolean }) => {
+    sock.on("call:update", (u: { callId: string; status: string; leadId?: string; outcome?: string; inbound?: boolean; from?: string | null; screener?: boolean; screenerPhrase?: string | null; human?: boolean; transfer?: LiveTransferView; queue?: string; queueCallback?: string; waitedSeconds?: number; survey?: boolean; aiSummary?: string; aiTranscript?: Array<{ role: string; text: string }> }) => {
       // The queue's wrap-up timer ran out (inbound/queues.ts): the call is done, the screen clears.
       if (u.status === "wrapped") {
         if (callIdRef.current === u.callId) {
           setCallId(null);
           setCallStatus("idle");
           setCallStart(null);
+          setAiNote(null);
           setScreener(null);
           setScreenerStep("say");
           setTransfer(null);
@@ -688,7 +693,10 @@ export function AgentConsole(props: ConsoleProps) {
         // A new call: whatever the last one was, this one starts clean.
         setScreener(null);
         setScreenerStep("say");
+        setAiNote(null);
       }
+      // The AI answer spoke to this caller first: its summary (a better one may follow a second later) and transcript.
+      if (u.aiSummary || u.aiTranscript) setAiNote((cur) => ({ summary: u.aiSummary ?? cur?.summary ?? "", transcript: u.aiTranscript ?? cur?.transcript ?? [] }));
       setCallId(u.callId);
       setCallStatus(u.status);
       if (u.screener) setScreener((cur) => cur ?? { phrase: u.screenerPhrase ?? null });
@@ -1116,6 +1124,7 @@ export function AgentConsole(props: ConsoleProps) {
       setCallStart(null);
       setHeld(false);
       setTargets(null);
+      setAiNote(null);
       setScreener(null);
       setScreenerStep("say");
       setXferMenu(false);
@@ -1224,6 +1233,28 @@ export function AgentConsole(props: ConsoleProps) {
             )}
           </>
         )}
+      </div>
+    ) : null;
+
+  const aiPanel =
+    callId && aiNote ? (
+      <div className="mb-4 rounded-xl border border-violet-400/50 bg-violet-500/10 p-3" role="status">
+        <div className="text-sm text-violet-100">
+          <span className="font-semibold text-violet-300">AI summary: </span>
+          {aiNote.summary || "The automated assistant spoke with this caller first."}
+        </div>
+        {aiNote.transcript.length ? (
+          <details className="mt-1 text-xs text-zinc-300">
+            <summary className="cursor-pointer select-none text-violet-300/80">What was said ({aiNote.transcript.length})</summary>
+            <div className="mt-1 max-h-48 space-y-0.5 overflow-y-auto">
+              {aiNote.transcript.map((t, i) => (
+                <div key={i}>
+                  <span className={t.role === "caller" ? "text-sky-300" : "text-violet-300"}>{t.role === "caller" ? "Caller" : "AI"}:</span> {t.text}
+                </div>
+              ))}
+            </div>
+          </details>
+        ) : null}
       </div>
     ) : null;
 
@@ -1485,6 +1516,7 @@ export function AgentConsole(props: ConsoleProps) {
                 <>
                 <Panel title={onCall ? `Call in Progress • ${timer}` : "Call ended"} collapsible={false}>
                   {screenerBanner}
+                  {aiPanel}
                   <div className="mb-4 flex items-center justify-center gap-4">
                     <Waveform colors={["#22d3ee", "#a855f7"]} />
                   </div>
@@ -1761,6 +1793,7 @@ export function AgentConsole(props: ConsoleProps) {
           <div className="grid gap-4 xl:grid-cols-[1fr_1fr_320px]">
             <div className="space-y-4">
               {screenerBanner}
+              {aiPanel}
               <Panel title="Script" right={lead ? <span className="text-xs text-zinc-500">personalised for {leadName}</span> : null}>
                 {script ? (
                   <div className="max-h-[60vh] space-y-2 overflow-y-auto whitespace-pre-wrap text-sm leading-relaxed text-zinc-200">

@@ -191,7 +191,8 @@ const AI_PRICE_MICROCENTS_PER_TOKEN: Record<string, { input: number; output: num
 export async function recordAiUsage(tenantId: string | null, kind: string, model: string, usage: { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number | null; cache_creation_input_tokens?: number | null }, refId?: string): Promise<void> {
   const p = AI_PRICE_MICROCENTS_PER_TOKEN[model] ?? AI_PRICE_MICROCENTS_PER_TOKEN["claude-opus-5-5"]!;
   const micro = (usage.input_tokens ?? 0) * p.input + (usage.output_tokens ?? 0) * p.output + (usage.cache_read_input_tokens ?? 0) * p.cacheRead + (usage.cache_creation_input_tokens ?? 0) * p.cacheWrite;
-  const costCents = Math.round(micro / 10_000);
+  // The table is in millionths of a cent per token ($4 / MTok = 400). Until 6 Nov this divided by 10,000: every AI cost read 100× too high.
+  const costCents = Math.round(micro / 1_000_000);
   const tokens = (usage.input_tokens ?? 0) + (usage.output_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0);
   await prisma.vendorUsage.create({ data: { vendor: "anthropic", kind, costCents, day: new Date().toISOString().slice(0, 10), tenantId, refId, quantity: tokens } }).catch((e) => log.warn({ err: e }, "ai usage record failed"));
 }

@@ -175,12 +175,20 @@ export async function hangup(callId: string): Promise<{ ok: boolean }> {
 }
 
 /** Screener banner on reload: is the agent's current call a screened one, and where is it. */
-export async function callScreener(callId: string): Promise<{ screener: boolean; screenerPhrase: string | null; status: "dialing" | "answered" | "bridged" | "ended" } | null> {
+/** Banners a reload must bring back: the screener, and the AI answer's summary for a caller it handed over. */
+export async function callScreener(callId: string): Promise<{ screener: boolean; screenerPhrase: string | null; status: "dialing" | "answered" | "bridged" | "ended"; aiSummary: string | null; aiTranscript: Array<{ role: string; text: string }> | null } | null> {
   const s = await me();
-  const c = await prisma.call.findFirst({ where: { id: callId, tenantId: s.tenant.id, agentId: s.user.id }, select: { screenerDetected: true, providerData: true, answeredAt: true, bridgedAt: true, endedAt: true } });
+  const c = await prisma.call.findFirst({ where: { id: callId, tenantId: s.tenant.id, agentId: s.user.id }, select: { screenerDetected: true, providerData: true, answeredAt: true, bridgedAt: true, endedAt: true, aiHandledAt: true, aiSummary: true, aiTranscript: true } });
   if (!c) return null;
   const phrase = (c.providerData as { screenerPhrase?: unknown }).screenerPhrase;
-  return { screener: c.screenerDetected, screenerPhrase: typeof phrase === "string" ? phrase : null, status: c.endedAt ? "ended" : c.bridgedAt ? "bridged" : c.answeredAt ? "answered" : "dialing" };
+  const transcript = ((c.aiTranscript as Array<{ role: string; text: string }> | null) ?? []).slice(-12).map((t) => ({ role: t.role, text: t.text }));
+  return {
+    screener: c.screenerDetected,
+    screenerPhrase: typeof phrase === "string" ? phrase : null,
+    status: c.endedAt ? "ended" : c.bridgedAt ? "bridged" : c.answeredAt ? "answered" : "dialing",
+    aiSummary: c.aiHandledAt ? (c.aiSummary ?? "The automated assistant spoke with this caller first.") : null,
+    aiTranscript: c.aiHandledAt ? transcript : null,
+  };
 }
 
 /** The agent clicked "Said it" on the screener banner: a line on the lead's timeline. */

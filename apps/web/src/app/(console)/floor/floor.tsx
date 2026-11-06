@@ -467,7 +467,7 @@ function InboundWallboard({ board }: { board: FloorStats["inbound"] }) {
         <table className="w-full text-sm">
           <thead className="text-left text-xs uppercase tracking-wide text-zinc-500">
             <tr>
-              {["Queue", "Waiting", "Longest", "Available", "On call", "Wrap", "Today", "Service level", "ASA", "Abandon", "AHT"].map((h) => (
+              {["Queue", "Waiting", "Longest", "Available", "On call", "Wrap", "Today", "Service level", "ASA", "Abandon", "AHT", "AI"].map((h) => (
                 <th key={h} className="px-2 py-1 font-medium">
                   {h}
                 </th>
@@ -502,6 +502,16 @@ function InboundWallboard({ board }: { board: FloorStats["inbound"] }) {
                   {q.today.abandonedInForcedHold ? <span className="ml-1 text-[10px] text-zinc-500" title="Hung up during the forced hold">+{q.today.abandonedInForcedHold} in hold</span> : null}
                 </td>
                 <td className="px-2 py-1.5 tabular-nums">{q.today.answered ? mmss(q.today.ahtSeconds) : "—"}</td>
+                <td className="px-2 py-1.5 tabular-nums text-violet-200" title={q.ai.handled ? `AI today: ${q.ai.handled} answered, ${q.ai.resolved} resolved, ${q.ai.handoffs} handed to people, average ${q.ai.avgAiMinutes} min` : undefined}>
+                  {q.ai.enabled || q.ai.handled ? (
+                    <>
+                      {q.ai.now ? <span className="mr-1 font-semibold">{q.ai.now} now</span> : null}
+                      {q.ai.handled ? `${q.ai.containmentPct}% of ${q.ai.handled}` : q.ai.now ? null : "on"}
+                    </>
+                  ) : (
+                    <span className="text-zinc-600">—</span>
+                  )}
+                </td>
               </tr>
             ))}
           </tbody>

@@ -73,6 +73,26 @@ Account → call recording → configure an S3-compatible bucket (Cloudflare R2
 works) and "record all calls", or per application. Recording URLs are read
 back from jambonz's recent-calls API in Phase 3.
 
+## 7. AI answer on inbound queues (optional)
+
+Before a queue's "AI answers this queue" can be ticked (Strowger refuses it
+and says what is missing):
+
+1. Account → Speech services → Add speech service: a **speech-to-text**
+   vendor (Deepgram is the usual pick for phone audio; Google, Microsoft or
+   AssemblyAI also work), with "Use for speech-to-text" ticked. Cartesia
+   (already on the account) does the speaking.
+2. Nothing else in jambonz for Anthropic: the engine sends its
+   `ANTHROPIC_API_KEY` with each AI call. For another LLM vendor, add it
+   under Account → LLM services, or set `AI_LLM_INLINE_KEY=false` to make
+   Anthropic use a service saved there instead.
+3. No second application: the engine moves an AI call to
+   `wss://<engine>/ws/ai` with live call control, so `ENGINE_PUBLIC_URL` must
+   be the engine's https address.
+4. The account needs a jambonz release with the `agent` verb (10.1+;
+   jambonz.cloud has it). Make one test call before putting a live line on
+   it.
+
 ## Variables, by service
 
 Engine: `JAMBONZ_API_URL` (default `https://api.jambonz.cloud`),

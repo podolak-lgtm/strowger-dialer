@@ -4,7 +4,7 @@ import { money } from "@/components/billing-badge";
 import Link from "next/link";
 import { Badge, Card, Notice, PageHeader, Table, Td } from "@/components/ui";
 
-const CATEGORY_LABEL: Record<string, string> = { SEAT: "Seats", MINUTES: "Minutes", DID: "Phone numbers", SCRUB: "Scrub records", SMS: "Texts", OTHER: "Other", PAYMENT: "Payments", TRIAL: "Free trial", REFERRAL: "Referral program" };
+const CATEGORY_LABEL: Record<string, string> = { SEAT: "Seats", MINUTES: "Minutes", DID: "Phone numbers", SCRUB: "Scrub records", SMS: "Texts", OTHER: "Other", PAYMENT: "Payments", TRIAL: "Free trial", REFERRAL: "Referral program", AI: "AI answer" };
 const KIND_LABEL: Record<string, string> = { TRIAL_CREDIT: "trial allowance", REFERRAL_CREDIT: "referral credit", REFERRAL_CLAWBACK: "referral clawback" };
 const KIND_TONE: Record<string, "green" | "amber" | "zinc" | "blue" | "red"> = { PAYMENT: "green", ADJUSTMENT: "amber", TRIAL_CREDIT: "blue", REFERRAL_CREDIT: "green", REFERRAL_CLAWBACK: "red" };
 const cents = (c: number) => money(c);
@@ -83,6 +83,12 @@ export default async function BillingPage({ searchParams }: PageProps<"/billing"
                 <td className="py-2 text-zinc-400">Text messages</td>
                 <td className="py-2 text-right tabular-nums">{rate(b.rates.smsPriceMillicents)} / segment</td>
               </tr>
+              {b.rates.aiMinutePriceMillicents ? (
+                <tr>
+                  <td className="py-2 text-zinc-400">AI answer on inbound queues, by the second (on top of talk time)</td>
+                  <td className="py-2 text-right tabular-nums">{rate(b.rates.aiMinutePriceMillicents)} / minute</td>
+                </tr>
+              ) : null}
             </tbody>
           </table>
           <p className="mt-3 text-xs text-zinc-500">Supervisors and admins are free: only agents who log in to the dialer count as seats.</p>

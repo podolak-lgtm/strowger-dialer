@@ -6,6 +6,7 @@ import type { Duplex } from "node:stream";
 import { verifyRealtimeToken, type RealtimeAuth } from "@strowger/shared/secrets";
 import { Server } from "socket.io";
 import { config } from "./config";
+import { handleAiUpgrade } from "./inbound/ai/session";
 import { log } from "./log";
 
 let io: Server | null = null;
@@ -15,6 +16,8 @@ export function attachRealtime(server: HttpServer): Server {
   // Fastify, where /rt has no route: in production that 404'd every socket and the console never
   // heard a state change (owner, 5 Nov: "Ready does nothing", "the two screens aren't in sync").
   // So: take its upgrade listeners off, let Socket.IO own /rt, and hand everything else back to them.
+  // The AI answer's jambonz WebSocket (/ws/ai) goes to its own endpoint (inbound/ai/session.ts) and to nobody else:
+  // @fastify/websocket would 404 it and the jambonz SDK's endpoint destroys any upgrade it does not route.
   type UpgradeListener = (req: IncomingMessage, socket: Duplex, head: Buffer) => void;
   const prior = server.listeners("upgrade") as UpgradeListener[];
   server.removeAllListeners("upgrade");
@@ -24,12 +27,11 @@ export function attachRealtime(server: HttpServer): Server {
     // Never destroy upgrades that are not ours: the voicemail stream needs them.
     destroyUpgrade: false,
   });
-  for (const l of prior) {
-    server.on("upgrade", (req: IncomingMessage, socket: Duplex, head: Buffer) => {
-      if ((req.url ?? "").startsWith("/rt")) return;
-      l(req, socket, head);
-    });
-  }
+  server.on("upgrade", (req: IncomingMessage, socket: Duplex, head: Buffer) => {
+    if ((req.url ?? "").startsWith("/rt")) return;
+    if (handleAiUpgrade(req, socket, head)) return;
+    for (const l of prior) l(req, socket, head);
+  });
 
   io.use((socket, next) => {
     const token = socket.handshake.auth?.token as string | undefined;

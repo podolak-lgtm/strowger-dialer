@@ -1,10 +1,15 @@
 // Inbound (ACD) report queries, shared by the Reports "Inbound" tab, its CSV
 // exports and the floor wallboard. The maths is shared/inbound/metrics.ts.
 import { prisma } from "@strowger/db";
-import { occupancy, stateDurations, summarizeInbound, type InboundFact, type InboundSummary } from "@strowger/shared/inbound";
+import { occupancy, stateDurations, summarizeAi, summarizeInbound, type AiSummary, type InboundFact, type InboundSummary } from "@strowger/shared/inbound";
 import { agentName, type ReportRange } from "./reports";
 
-export type QueueReportRow = { queueId: string; name: string; slaSeconds: number } & InboundSummary & { callbacksRequested: number; callbacksDone: number; callbacksFailed: number };
+export type QueueReportRow = { queueId: string; name: string; slaSeconds: number } & InboundSummary & { callbacksRequested: number; callbacksDone: number; callbacksFailed: number; ai: AiSummary };
+
+/** Calls the AI answer took in the range (by when it took them), for its own numbers: resolved, hand-offs, minutes, containment. */
+async function aiCalls(tenantId: string, from: Date, to: Date, queueId?: string | null) {
+  return prisma.call.findMany({ where: { tenantId, aiHandledAt: { gte: from, lte: to }, ...(queueId ? { queueId } : {}) }, select: { queueId: true, aiOutcome: true, aiSeconds: true } });
+}
 export type AgentInboundRow = { agentId: string; agent: string; answered: number; ahtSeconds: number; talkSeconds: number; wrapSeconds: number; occupancyPct: number; idleSeconds: number; busySeconds: number; surveyAvg: number | null };
 
 export async function inboundCalls(r: ReportRange, queueId?: string | null) {
@@ -42,10 +47,11 @@ async function laterInbound(tenantId: string, phones: string[], from: Date, to: 
 }
 
 export async function inboundReport(r: ReportRange, queueId?: string | null) {
-  const [calls, queues, callbacks] = await Promise.all([
+  const [calls, queues, callbacks, ai] = await Promise.all([
     inboundCalls(r, queueId),
     prisma.queue.findMany({ where: { tenantId: r.tenantId, ...(queueId ? { id: queueId } : {}) }, orderBy: { name: "asc" }, select: { id: true, name: true, slaSeconds: true } }),
     prisma.queueCallback.findMany({ where: { tenantId: r.tenantId, requestedAt: { gte: r.from, lte: r.to }, ...(queueId ? { queueId } : {}) }, select: { queueId: true, status: true } }),
+    aiCalls(r.tenantId, r.from, r.to, queueId),
   ]);
   const offered = calls.filter(isOffered);
   // Answers include queue callbacks that connected (their leg is OUTBOUND with the queue on it).
@@ -65,6 +71,7 @@ export async function inboundReport(r: ReportRange, queueId?: string | null) {
       callbacksRequested: cbs.length,
       callbacksDone: cbs.filter((c) => c.status === "DONE").length,
       callbacksFailed: cbs.filter((c) => c.status === "FAILED").length,
+      ai: summarizeAi(ai.filter((c) => c.queueId === q.id)),
     };
   });
 
@@ -92,7 +99,7 @@ export async function inboundReport(r: ReportRange, queueId?: string | null) {
     })
     .sort((a, b) => b.answered - a.answered || a.agent.localeCompare(b.agent));
   const occ = occupancy({ READY: agents.reduce((n, a) => n + a.idleSeconds, 0), ON_CALL: agents.reduce((n, a) => n + a.busySeconds, 0) });
-  return { calls, offered, overall, byQueue, agents, callbacks: { requested: callbacks.length, done: callbacks.filter((c) => c.status === "DONE").length, failed: callbacks.filter((c) => c.status === "FAILED").length }, occupancyPct: occ.occupancyPct, idleSeconds: agents.reduce((n, a) => n + a.idleSeconds, 0) };
+  return { calls, offered, overall, ai: summarizeAi(ai), byQueue, agents, callbacks: { requested: callbacks.length, done: callbacks.filter((c) => c.status === "DONE").length, failed: callbacks.filter((c) => c.status === "FAILED").length }, occupancyPct: occ.occupancyPct, idleSeconds: agents.reduce((n, a) => n + a.idleSeconds, 0) };
 }
 
 export type WallboardQueue = {
@@ -111,6 +118,8 @@ export type WallboardQueue = {
   wrapUp: number;
   slaSeconds: number;
   today: Pick<InboundSummary, "offered" | "answered" | "serviceLevelPct" | "asaSeconds" | "abandonRatePct" | "ahtSeconds" | "abandonedInForcedHold">;
+  /** AI answer today, and callers talking to it now. */
+  ai: Pick<AiSummary, "handled" | "resolved" | "handoffs" | "containmentPct" | "avgAiMinutes"> & { now: number; enabled: boolean };
 };
 export type Wallboard = { queues: WallboardQueue[]; holdMessage: string | null; at: number | null };
 
@@ -118,14 +127,19 @@ type EngineLive = { at: number; queues: Array<Omit<WallboardQueue, "today" | "mi
 
 /** The floor's inbound section: the engine's live numbers per queue (refreshed every second) and today's from the calls. */
 export async function wallboard(tenantId: string, live: EngineLive, since: Date): Promise<Wallboard> {
-  const queues = await prisma.queue.findMany({ where: { tenantId }, orderBy: { name: "asc" }, select: { id: true, name: true, slaSeconds: true, minHoldSeconds: true } });
+  const queues = await prisma.queue.findMany({ where: { tenantId }, orderBy: { name: "asc" }, select: { id: true, name: true, slaSeconds: true, minHoldSeconds: true, aiEnabled: true } });
   if (queues.length === 0) return { queues: [], holdMessage: null, at: live?.at ?? null };
   const calls = await prisma.call.findMany({
     where: { tenantId, queueId: { not: null }, queuedAt: { gte: since } },
     select: { queueId: true, direction: true, outcome: true, phone: true, queuedAt: true, dialedAt: true, bridgedAt: true, endedAt: true, surveyStartedAt: true, wrapEndedAt: true, abandonedInQueue: true, waitSeconds: true, surveyScore: true, forcedHoldSeconds: true, abandonedInForcedHold: true },
   });
+  const [aiToday, aiNow] = await Promise.all([
+    aiCalls(tenantId, since, new Date()),
+    prisma.call.groupBy({ by: ["queueId"], where: { tenantId, aiHandledAt: { not: null }, aiEndedAt: null, endedAt: null, dialedAt: { gte: new Date(Date.now() - 3 * 3_600_000) } }, _count: { _all: true } }),
+  ]);
   const rows = queues.map((q) => {
     const l = live?.queues.find((x) => x.queueId === q.id);
+    const a = summarizeAi(aiToday.filter((c) => c.queueId === q.id));
     const mine = calls.filter((c) => c.queueId === q.id && (isOffered(c) || (c.direction === "OUTBOUND" && c.bridgedAt)));
     const facts: InboundFact[] = mine.map((c) => ({ phone: c.phone, queuedAt: (c.queuedAt ?? c.dialedAt).getTime(), bridgedAt: c.bridgedAt?.getTime() ?? null, talkEndedAt: (c.surveyStartedAt ?? c.endedAt)?.getTime() ?? null, wrapEndedAt: c.wrapEndedAt?.getTime() ?? null, abandonedInQueue: c.abandonedInQueue, waitSeconds: c.waitSeconds, surveyScore: c.surveyScore, forcedHoldSeconds: c.forcedHoldSeconds, abandonedInForcedHold: c.abandonedInForcedHold }));
     const s = summarizeInbound(facts, { slaSeconds: q.slaSeconds });
@@ -144,6 +158,7 @@ export async function wallboard(tenantId: string, live: EngineLive, since: Date)
       wrapUp: l?.wrapUp ?? 0,
       slaSeconds: q.slaSeconds,
       today: { offered: s.offered, answered: s.answered, serviceLevelPct: s.serviceLevelPct, asaSeconds: s.asaSeconds, abandonRatePct: s.abandonRatePct, ahtSeconds: s.ahtSeconds, abandonedInForcedHold: s.abandonedInForcedHold },
+      ai: { handled: a.handled, resolved: a.resolved, handoffs: a.handoffs, containmentPct: a.containmentPct, avgAiMinutes: a.avgAiMinutes, now: aiNow.find((x) => x.queueId === q.id)?._count._all ?? 0, enabled: q.aiEnabled },
     };
   });
   return { queues: rows, holdMessage: live?.holds.message ?? null, at: live?.at ?? null };

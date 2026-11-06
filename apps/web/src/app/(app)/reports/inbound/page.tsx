@@ -75,6 +75,14 @@ export default async function InboundReportPage({ searchParams }: PageProps<"/re
             ["Callbacks", `${rep.callbacks.requested} asked · ${rep.callbacks.done} done · ${rep.callbacks.failed} failed`],
             ["Survey", o.surveyAvg === null ? "—" : `${o.surveyAvg} / 5 (${o.surveys})`],
             ["Overflowed", o.overflowed],
+            ...(rep.ai.handled
+              ? ([
+                  ["AI answered", `${rep.ai.handled} · ${rep.ai.resolved} resolved`],
+                  ["AI containment", `${rep.ai.containmentPct}% (${rep.ai.contained} without a person)`],
+                  ["AI hand-offs", `${rep.ai.handoffs} · ${rep.ai.messages} messages · ${rep.ai.callbacks} callbacks`],
+                  ["AI minutes", `${rep.ai.aiMinutes} · avg ${rep.ai.avgAiMinutes}`],
+                ] as const)
+              : []),
           ] as const
         ).map(([label, v]) => (
           <div key={label} className="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
@@ -86,7 +94,7 @@ export default async function InboundReportPage({ searchParams }: PageProps<"/re
 
       <div className="grid grid-cols-1 gap-6">
         <Card title="By queue">
-          <Table head={["Queue", "Offered", "Answered", "SL", "ASA", "Abandon", "In forced hold", "AHT", "Longest", "FCR", "Callbacks", "Survey"]}>
+          <Table head={["Queue", "Offered", "Answered", "SL", "ASA", "Abandon", "In forced hold", "AHT", "Longest", "FCR", "Callbacks", "Survey", "AI"]}>
             {rep.byQueue.map((x) => (
               <tr key={x.queueId}>
                 <Td>{x.name}</Td>
@@ -107,6 +115,15 @@ export default async function InboundReportPage({ searchParams }: PageProps<"/re
                   {x.callbacksRequested} / {x.callbacksDone}
                 </Td>
                 <Td className="tabular-nums">{x.surveyAvg ?? "—"}</Td>
+                <Td className="tabular-nums">
+                  {x.ai.handled ? (
+                    <>
+                      {x.ai.handled} · {x.ai.containmentPct}% <span className="text-xs text-zinc-500">contained · {x.ai.handoffs} to people · avg {x.ai.avgAiMinutes} min</span>
+                    </>
+                  ) : (
+                    "—"
+                  )}
+                </Td>
               </tr>
             ))}
           </Table>

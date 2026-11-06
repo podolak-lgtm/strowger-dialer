@@ -2,10 +2,11 @@
 // priority, announcements, callback, blending, limits, survey. A plain form
 // posting to `saveQueue`; every field has its default when left blank.
 import type { Queue } from "@strowger/db";
-import { QUEUE_STRATEGIES, STRATEGY_LABEL } from "@strowger/shared/inbound";
+import { AI_GREETING_MAX, AI_INSTRUCTIONS_MAX, AI_KNOWLEDGE_MAX, AI_LLM_VENDORS, AI_MODES, AI_MODE_LABEL, DEFAULT_AI_MODEL, DEFAULT_HANDOFF_PHRASES, QUEUE_STRATEGIES, STRATEGY_LABEL } from "@strowger/shared/inbound";
 import Link from "next/link";
 import { Button, Field, inputClass } from "@/components/ui";
-import { deleteQueue, saveQueue } from "./actions";
+import { deleteQueue, saveQueue, type AiReadiness } from "./actions";
+import { AiPromptTest } from "./ai-test";
 
 type Opt = { id: string; name: string };
 type Req = { skillId: string; minLevel: number };
@@ -44,7 +45,23 @@ function AudioSelect({ name, value, audio, empty }: { name: string; value: strin
   );
 }
 
-export function QueueForm({ q, queues, skills, campaigns, audio, boxes, schedules }: { q: Queue | null; queues: Opt[]; skills: Opt[]; campaigns: Opt[]; audio: Opt[]; boxes: Opt[]; schedules: Opt[] }) {
+/** What the AI answer needs on the jambonz account, as the page found it. */
+function AiSetup({ ready }: { ready: AiReadiness | null }) {
+  if (!ready) return <p className="text-xs text-amber-300">The engine did not answer, so the jambonz account could not be checked. The AI answer cannot be turned on until it does.</p>;
+  if (ready.ok) return <p className="text-xs text-emerald-300">jambonz is ready: speech-to-text {ready.stt}, speech {ready.tts}.</p>;
+  return (
+    <div className="space-y-1 text-xs text-amber-200">
+      <p className="font-medium">The AI answer stays off until this is fixed:</p>
+      <ul className="list-disc space-y-0.5 pl-4">
+        {ready.problems.map((p) => (
+          <li key={p}>{p}</li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+export function QueueForm({ q, queues, skills, campaigns, audio, boxes, schedules, aiReady }: { q: Queue | null; queues: Opt[]; skills: Opt[]; campaigns: Opt[]; audio: Opt[]; boxes: Opt[]; schedules: Opt[]; aiReady: AiReadiness | null }) {
   const req = (q?.requiredSkills as Req[] | null) ?? [];
   const others = queues.filter((x) => x.id !== q?.id);
   return (
@@ -57,6 +74,7 @@ export function QueueForm({ q, queues, skills, campaigns, audio, boxes, schedule
               {STRATEGY_LABEL[q.strategy].split(":")[0]} · max wait {q.maxWaitSeconds}s{q.minHoldSeconds ? ` · forced hold ${q.minHoldSeconds}s` : ""}{q.announce ? " · announces" : ""}
               {q.callbackEnabled ? " · callback" : ""}
               {q.surveyEnabled ? " · survey" : ""}
+              {q.aiEnabled ? ` · AI ${q.aiMode.toLowerCase()}` : ""}
             </span>
           </span>
         ) : (
@@ -250,6 +268,81 @@ export function QueueForm({ q, queues, skills, campaigns, audio, boxes, schedule
             <Field label="Question recording">
               <AudioSelect name="surveyAudioId" value={q?.surveyAudioId} audio={audio} empty="spoken" />
             </Field>
+          </div>
+        </Section>
+
+        <Section
+          title="AI answer"
+          hint="A built-in AI customer service answers the call. It says it is an automated assistant, never takes card numbers, and stays inside your instructions. A caller who says a hand-off phrase goes straight to a person, ahead of the line and with no forced hold; the agent's screen shows the AI's summary."
+        >
+          <div className="space-y-2">
+            <AiSetup ready={aiReady} />
+            <div className="flex flex-wrap items-end gap-3">
+              <Check name="aiEnabled" label="AI answers this queue" defaultChecked={q?.aiEnabled ?? false} />
+              <Field label="When">
+                <select name="aiMode" defaultValue={q?.aiMode ?? "FIRST"} className={sel}>
+                  {AI_MODES.map((m) => (
+                    <option key={m} value={m}>
+                      {AI_MODE_LABEL[m]}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Overflow after (s)" hint="Overflow mode: no agent free this long. 0 = at once.">
+                <input name="aiAfterSeconds" type="number" min="0" max="3600" defaultValue={q?.aiAfterSeconds ?? 60} className={`${num} w-24`} />
+              </Field>
+              <Field label="Hand off after (min)">
+                <input name="aiMaxMinutes" type="number" min="1" max="60" defaultValue={q?.aiMaxMinutes ?? 10} className={`${num} w-20`} />
+              </Field>
+            </div>
+            <Field label="Greeting" hint="The first words. If it does not say so, “I'm an automated assistant.” is added.">
+              <input name="aiGreeting" maxLength={AI_GREETING_MAX} defaultValue={q?.aiGreeting ?? ""} placeholder="Thanks for calling Exit Solar. How can I help you today?" className={inputClass} />
+            </Field>
+            <Field label="Instructions" hint="Who the assistant is, what the business does, the tone, what it may and may not do. Fixed safety rules always come first.">
+              <textarea name="aiInstructions" rows={4} maxLength={AI_INSTRUCTIONS_MAX} defaultValue={q?.aiInstructions ?? ""} placeholder="You are Sunny, the help line for Exit Solar. Callers are homeowners with a solar contract. Be warm and brief. You can explain how the review works and book a call back; anything about money goes to a person." className={inputClass} />
+            </Field>
+            <Field label={`Knowledge (FAQ, up to ${AI_KNOWLEDGE_MAX.toLocaleString()} characters)`} hint="Paste your FAQ. The assistant answers from it and says it is not sure otherwise.">
+              <textarea name="aiKnowledge" rows={4} maxLength={AI_KNOWLEDGE_MAX} defaultValue={q?.aiKnowledge ?? ""} placeholder="Hours: Monday to Friday, 9 to 6 Eastern…" className={inputClass} />
+            </Field>
+            <Field label="Hand-off phrases" hint="Commas or lines. Said by the caller = straight to a person, before the AI answers.">
+              <textarea name="aiHandoffPhrases" rows={2} defaultValue={(q?.aiHandoffPhrases.length ? q.aiHandoffPhrases : DEFAULT_HANDOFF_PHRASES).join(", ")} className={inputClass} />
+            </Field>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+              <Field label="Speech-to-text vendor" hint="Blank = the account's (Deepgram first).">
+                <input name="aiSttVendor" defaultValue={q?.aiSttVendor ?? ""} placeholder={aiReady?.stt ?? "deepgram"} className={num} />
+              </Field>
+              <Field label="Speech vendor" hint="Blank = the account's (Cartesia first).">
+                <input name="aiTtsVendor" defaultValue={q?.aiTtsVendor ?? ""} placeholder={aiReady?.tts ?? "cartesia"} className={num} />
+              </Field>
+              <Field label="Voice" hint="The vendor's voice id; blank = its default.">
+                <input name="aiVoice" defaultValue={q?.aiVoice ?? ""} className={num} />
+              </Field>
+              <Field label="Language">
+                <input name="aiLanguage" defaultValue={q?.aiLanguage ?? "en-US"} className={num} />
+              </Field>
+              <Field label="LLM vendor" hint="Anthropic uses the engine's key; others need an LLM service in jambonz.">
+                <select name="aiLlmVendor" defaultValue={q?.aiLlmVendor ?? "anthropic"} className={sel}>
+                  {AI_LLM_VENDORS.map((v) => (
+                    <option key={v} value={v}>
+                      {v}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Model">
+                <input name="aiModel" defaultValue={q?.aiModel ?? DEFAULT_AI_MODEL} className={num} />
+              </Field>
+            </div>
+            <AiPromptTest />
+            <details className="text-xs text-zinc-500">
+              <summary className="cursor-pointer select-none text-zinc-400">What has to be set up in jambonz first</summary>
+              <ol className="mt-1 list-decimal space-y-0.5 pl-4">
+                <li>Account → Speech services: a speech-to-text vendor with “Use for speech-to-text” ticked (Deepgram is the usual pick for phone calls). Cartesia is already there for speech.</li>
+                <li>The engine&apos;s public URL must be https: jambonz opens wss://…/ws/ai on it for each AI call (nothing to add in jambonz; no second application is needed).</li>
+                <li>Anthropic: nothing in jambonz, the engine sends its own key. Any other LLM vendor: Account → LLM services → add it.</li>
+                <li>The jambonz account must be on a release with the agent verb (jambonz.cloud has it). Make one test call before putting a live line on it.</li>
+              </ol>
+            </details>
           </div>
         </Section>
 

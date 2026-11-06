@@ -1,10 +1,52 @@
 "use server";
 
-import { prisma, type InboundRoute, type QueueStrategy } from "@strowger/db";
-import { QUEUE_STRATEGIES, holdConflict, parseAreaCodes, parseHolidays, parseRangesText, parseStates, zonedTimeToUtc, type Holiday } from "@strowger/shared/inbound";
+import { prisma, type InboundRoute, type QueueAiMode, type QueueStrategy } from "@strowger/db";
+import { AI_GREETING_MAX, AI_INSTRUCTIONS_MAX, AI_KNOWLEDGE_MAX, AI_LLM_VENDORS, AI_MAX_MINUTES_CAP, AI_MODES, DEFAULT_AI_MODEL, QUEUE_STRATEGIES, aiQueueConflict, holdConflict, parseHandoffPhrases, parseAreaCodes, parseHolidays, parseRangesText, parseStates, zonedTimeToUtc, type Holiday } from "@strowger/shared/inbound";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { requireRole } from "@/lib/auth";
+import { engine } from "@/lib/engine";
+
+export type AiReadiness = { ok: boolean; problems: string[]; stt: string | null; tts: string | null };
+
+/** What the jambonz account lacks before the AI answer may go on (engine: inbound/ai/control.ts). Null = the engine did not answer. */
+export async function aiReadiness(v: { stt?: string | null; tts?: string | null; llm?: string | null } = {}): Promise<AiReadiness | null> {
+  const qs = new URLSearchParams({ ...(v.stt ? { stt: v.stt } : {}), ...(v.tts ? { tts: v.tts } : {}), llm: v.llm || "anthropic" });
+  try {
+    return await engine<AiReadiness>(`/inbound/ai/readiness?${qs}`);
+  } catch {
+    return null;
+  }
+}
+
+export type AiTestResult = { ok: true; opening: string; reply: string; tools: Array<{ name: string; input: unknown }>; handoffPhrase: string | null } | { ok: false; error: string };
+
+/** The queue form's "Test the prompt": the form's AI fields as they are now, one caller line, the assistant's reply. */
+export async function testAiPrompt(formData: FormData): Promise<AiTestResult> {
+  const s = await sup();
+  const line = str(formData, "testLine").slice(0, 1000);
+  if (!line) return { ok: false, error: "Type what a caller might say." };
+  const mode = AI_MODES.includes(str(formData, "aiMode") as (typeof AI_MODES)[number]) ? str(formData, "aiMode") : "FIRST";
+  try {
+    return await engine<AiTestResult>("/inbound/ai/test", {
+      method: "POST",
+      body: JSON.stringify({
+        tenantId: s.tenant.id,
+        queueName: str(formData, "name"),
+        mode,
+        greeting: opt(formData, "aiGreeting"),
+        instructions: opt(formData, "aiInstructions")?.slice(0, AI_INSTRUCTIONS_MAX) ?? null,
+        knowledge: opt(formData, "aiKnowledge")?.slice(0, AI_KNOWLEDGE_MAX) ?? null,
+        handoffPhrases: str(formData, "aiHandoffPhrases").slice(0, 2000),
+        model: str(formData, "aiModel") || DEFAULT_AI_MODEL,
+        campaignId: opt(formData, "campaignId"),
+        line,
+      }),
+    });
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
 
 async function sup() {
   return requireRole("SUPERVISOR");
@@ -139,12 +181,38 @@ export async function saveQueue(formData: FormData) {
     // Survey
     surveyEnabled: on(formData, "surveyEnabled"),
     surveyAudioId: opt(formData, "surveyAudioId"),
+    // AI answer
+    aiEnabled: on(formData, "aiEnabled"),
+    aiMode: (AI_MODES.includes(str(formData, "aiMode") as (typeof AI_MODES)[number]) ? str(formData, "aiMode") : "FIRST") as QueueAiMode,
+    aiAfterSeconds: int(formData, "aiAfterSeconds", 60, 0, 3600),
+    aiMaxMinutes: int(formData, "aiMaxMinutes", 10, 1, AI_MAX_MINUTES_CAP),
+    aiGreeting: opt(formData, "aiGreeting")?.slice(0, AI_GREETING_MAX) ?? null,
+    aiInstructions: opt(formData, "aiInstructions")?.slice(0, AI_INSTRUCTIONS_MAX) ?? null,
+    aiKnowledge: opt(formData, "aiKnowledge")?.slice(0, AI_KNOWLEDGE_MAX) ?? null,
+    aiHandoffPhrases: parseHandoffPhrases(str(formData, "aiHandoffPhrases")),
+    aiSttVendor: opt(formData, "aiSttVendor")?.toLowerCase() ?? null,
+    aiTtsVendor: opt(formData, "aiTtsVendor")?.toLowerCase() ?? null,
+    aiVoice: opt(formData, "aiVoice"),
+    aiLanguage: str(formData, "aiLanguage") || "en-US",
+    aiLlmVendor: (AI_LLM_VENDORS as readonly string[]).includes(str(formData, "aiLlmVendor")) ? str(formData, "aiLlmVendor") : "anthropic",
+    aiModel: str(formData, "aiModel") || DEFAULT_AI_MODEL,
   };
-  const conflict = holdConflict(data);
+  const conflict = holdConflict(data) ?? aiQueueConflict(data);
   if (conflict) redirect(`/inbound?msg=${encodeURIComponent(`${name}: not saved. ${conflict}`)}&kind=error#queues`);
+  // The AI answer goes on only when the jambonz account can carry it (speech-to-text above all): otherwise the rest
+  // saves, the AI stays off, and the page says what to add in jambonz. A live call never finds it half set up.
+  let aiRefused: string | null = null;
+  if (data.aiEnabled) {
+    const r = await aiReadiness({ stt: data.aiSttVendor, tts: data.aiTtsVendor, llm: data.aiLlmVendor });
+    if (!r?.ok) {
+      data.aiEnabled = false;
+      aiRefused = r ? r.problems.join(" ") : "The engine did not answer, so the jambonz account could not be checked.";
+    }
+  }
   if (id) await prisma.queue.updateMany({ where: { id, tenantId: s.tenant.id }, data });
   else await prisma.queue.create({ data });
   revalidatePath("/inbound");
+  if (aiRefused) redirect(`/inbound?msg=${encodeURIComponent(`${name}: saved, but the AI answer was not turned on. ${aiRefused}`)}&kind=error#queues`);
 }
 
 export async function deleteQueue(formData: FormData) {

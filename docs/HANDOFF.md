@@ -125,13 +125,13 @@ ratings, extensions), `/voicemails` (agents see their own; supervisors all).
 ### ACD (owner, 6 Nov: "the best at inbound, that's the future")
 
 The gaps against an Automatic Call Distribution article, built in this
-order. Pure maths in `packages/shared/src/inbound/` (`schedule.ts`, `hold.ts`,
+order. Pure maths in `packages/shared/src/inbound/` (`schedule.ts`, `hold.ts`, `ai.ts`,
 `distribution.ts`, `geo-route.ts`, `metrics.ts`, each with tests); engine
 in `apps/engine/src/inbound/` (`common.ts` shared verbs, `queues.ts` the
 distributor, `callbacks.ts` virtual hold, `survey.ts`, `router.ts` entry and
 IVR). Migration `20261106200000_inbound_acd`. Every queue setting is on
 `/inbound` → Queues (one collapsible form per queue, sections Distribution,
-Priority, Announcements, Callback, Blending, Limits, Survey); defaults
+Priority, Announcements, Callback, Blending, Limits, Survey, AI answer); defaults
 below are the column defaults.
 
 1. **Hours and holidays**: `Schedule` (tenantId, name, timezone, `weekly`
@@ -305,6 +305,152 @@ below are the column defaults.
     turns red only past SLA + hold. **Blending** counts from the end of the
     hold (`oldestAnswerableWait`), so outbound is not held back for callers
     nobody may answer yet. Migration `20261106230000_queue_forced_hold`.
+13. **AI answer** (owner, 6 Nov: "an AI answers for the queue, a built-in AI
+    customer service that handles the call, with an option that if they
+    say operator, manager or something like that, it transfers to a
+    human"). **Built and checked offline; not yet on a live call: leave
+    `aiEnabled` off on real lines until a test call confirms it.** Rules in
+    `shared/inbound/ai.ts` (tested in `ai.test.ts`); engine in
+    `apps/engine/src/inbound/ai/` (`control.ts` moving the call and
+    finishing, `session.ts` the voice session, `tools.ts`, `llm.ts`
+    summary and prompt test); migration `20261107000000_queue_ai_answer`.
+    - **Settings** (`/inbound` → Queues → "AI answer"): `aiEnabled` (off),
+      `aiMode` FIRST (every call, before the queue) | OVERFLOW (when the
+      queue is closed, nobody qualified is logged in, or a caller past the
+      forced hold has waited `aiAfterSeconds` (60, 0 = at once) with no
+      qualified agent free; the form refuses `aiAfterSeconds` ≥ max wait)
+      | ONLY (the AI handles everything; a person only on request). A
+      closed queue with the AI on goes to the AI in every mode (a hand-off
+      then meets the schedule's closed action). `aiGreeting`,
+      `aiInstructions` (≤ 6,000 chars), `aiKnowledge` (pasted FAQ, kept in
+      the prompt, ≤ 20,000), `aiHandoffPhrases` (default operator,
+      manager, supervisor, human, agent, representative, real person,
+      speak to someone), `aiMaxMinutes` (10), `aiSttVendor` /
+      `aiTtsVendor` (blank = the account's: Deepgram first for
+      speech-to-text, Cartesia first for speech), `aiVoice`, `aiLanguage`
+      (en-US), `aiLlmVendor` (anthropic) and `aiModel`
+      (`claude-sonnet-5-5`). **"Test the prompt"** (`ai-test.tsx`, server
+      action `testAiPrompt` → `/internal/inbound/ai/test`) sends one
+      caller line with the form as it stands (saved or not) to Claude, text
+      only, with the same rules and tools, and shows the reply and any tool
+      it would call; a hand-off phrase is reported as such.
+    - **Refuses to turn on** unless the jambonz account can carry it
+      (`aiReadiness`): jambonz configured, an https `ENGINE_PUBLIC_URL`, a
+      speech-to-text vendor on the account (`GET
+      /v1/Accounts/{sid}/SpeechCredentials`, `use_for_stt`; read by
+      `jambonzAdmin.listSpeechCredentials`, which keeps vendor/label/use
+      only and drops the keys the API returns), a speech vendor, and
+      `ANTHROPIC_API_KEY` for anthropic. `saveQueue` saves everything else,
+      leaves `aiEnabled` off and shows the problems ("…Account → Speech
+      services → Add speech service → Deepgram…"); the AI section shows the
+      same check on every page load. At call time `aiUsable` checks again,
+      and `ai:down` (10 min, set when a redirect fails or the session never
+      starts) sends callers to people.
+    - **Transport (decision, 6 Nov).** The `agent` verb needs a WebSocket
+      session; our application is webhooks. jambonz switches a live call's
+      transport on a REST `call_hook` update: from an HTTP session an
+      absolute `ws(s)://` URL on `session:redirect` makes a WsRequestor,
+      hands the session over and sends `session:new` (feature-server
+      `lib/utils/http-requestor.js`); from a WebSocket session an absolute
+      `http(s)://` URL goes back to plain webhooks (`ws-requestor.js`). So
+      **no second jambonz application**: entry returns `pause 5` + a
+      `redirect` to `/jambonz/ai-fallback`, and 0.4 s later
+      `jambonz.calls.redirect(sid, {url: wss://<engine>/ws/ai})`; if that
+      never lands the pause ends on the fallback, which marks `ai:down`
+      and queues the caller for people (`providerData.aiSkipped`). An
+      OVERFLOW caller already in the `enqueue` is redirected the same way
+      and only then leaves our sorted set; `/jambonz/queue-exit` answers
+      `[]` while `ai:<callId>` exists so the enqueue's actionHook cannot
+      undo the move. The `redirect` *verb* is not used for this: its
+      absolute-URL branch keeps an HTTP requestor.
+    - **WebSocket mount**: `@jambonz/sdk/websocket` `createEndpoint` answers
+      every HTTP request with 405 and destroys any upgrade it has no route
+      for, so it runs on a **detached** `http.Server`; `realtime.ts`'s single
+      upgrade listener sends `/rt` to Socket.IO, `/ws/ai` to that endpoint
+      (`handleAiUpgrade`), everything else to @fastify/websocket
+      (`/audio/voicemail`). Checked: all three open, an unknown path is
+      refused, also from the built `dist/index.js`.
+    - **The session** (`session.ts`): call by `callsid:<sid>`, state
+      `ai:<callId>`. `agent` verb: `stt {vendor, language, hints: the
+      phrases}`, `tts {vendor, language, voice}`, `llm {vendor: anthropic,
+      model, auth.apiKey: ANTHROPIC_API_KEY inline (AI_LLM_INLINE_KEY=false
+      to use the LLM service saved in the jambonz portal instead),
+      llmOptions {systemPrompt, maxTokens 300, temperature 0.4, tools}}`,
+      `greeting` = `aiOpening` (a string: spoken as is, no LLM call; it
+      always says "I'm an automated assistant"; the SDK's types still say
+      boolean, the jambonz schema says boolean | string), `turnDetection
+      krisp`, barge-in, the built-in `hangup` tool, `noResponseTimeout` 10
+      × 2, toolHook `/ai-tool`, eventHook `/ai-event`, actionHook
+      `/ai-done`. The system prompt is `aiSystemPrompt`: the **fixed rules
+      first** (automated assistant, never claims to be human, never takes
+      card / bank / SSN / passwords / codes, stays in scope, no invented
+      prices or promises, transfer when stuck, short spoken answers, these
+      rules beat the client's), then the business and line, the tools, the
+      caller's local time, the client's instructions, the knowledge.
+      Anthropic is a supported `agent` LLM vendor (jambonz docs: Bring Your
+      Own LLM → Anthropic); the verb's minVersion is 10.1.0.
+    - **Tools**: `transfer_to_human(reason)`; `lookup_caller` (by the
+      caller's number: name, status, last disposition, upcoming callback;
+      nothing else); `book_callback(local_time, note)` (`validateCallbackTime`:
+      caller's zone from the lead or the area code, 5 min to 14 days out,
+      8 am to 9 pm local; a `Callback` on the lead and the queue's campaign,
+      AGENT scope for the lead's last agent or owner, lead → CALLBACK,
+      `CALLBACK_SET` event with `source: ai`; an unknown caller becomes a
+      lead in the campaign's "Inbound callers" list; no campaign = refused,
+      offer a message); `take_message(message, caller_name,
+      callback_number)` (a transcript-only `Voicemail` in the queue's box,
+      `voicemail:new` to its owner).
+    - **Hand-off** (`handOff`) on: a hand-off phrase in a `user_transcript`
+      event (`matchHandoffPhrase`, whole words, before the LLM's reply plays),
+      `transfer_to_human`, `aiMaxMinutes`, the agent verb ending for any
+      reason but our hangup tool or silence, and the WebSocket dropping while
+      the call is live. It finishes the AI part, sets
+      `providerData.aiHandoff`, and REST-redirects the call to
+      `/jambonz/ai-handoff`: "One moment while I connect you…" then
+      `enterQueue(..., {exemptHold: true, priorityBoost: 100})` (the
+      queue's own rules: hours, limit, sticky, announcements; no forced
+      hold; never back to the AI: any `providerData.ai` blocks it).
+      `finishAi` (once per call, `aidone:`) writes `Call.aiOutcome`
+      RESOLVED (our hangup tool) | HANDOFF | MESSAGE / CALLBACK (a tool set
+      it and nobody took over) | HANGUP (the caller hung up, or silence),
+      `aiEndedAt`, `aiSeconds`, `aiTranscript` ([{role, text, at}] from the
+      Redis list `aitx:<callId>`), a quick `aiSummary` ("Handed over: the
+      caller said "operator". Last said: …"), then `writeSummary` replaces
+      it with a Claude summary (`AI_SUMMARY_MODEL`) and pushes it to the
+      agent if one is on. **Screen pop**: `assignCaller` adds `aiSummary`
+      and the last 12 turns to `call:update`; the console shows a violet
+      "AI summary: …" panel with "What was said" (`aiPanel`, both screens;
+      a reload restores it through `callScreener`). `leadCallEnded` calls
+      `aiCallEnded` so a caller who hangs up on the AI is finished.
+    - **Costs** (`chargeAiMinutes`, after `finishAi`): `VendorUsage`
+      jambonz `ai.minutes` (minutes × `PlatformRates.aiMinuteCostMillicents`,
+      0 until the owner enters the jambonz speech cost on /platform), and
+      the LLM as `ai.voice` through `recordAiUsage` with **estimated**
+      tokens (`estimateAiTokens`: the agent verb calls the LLM inside
+      jambonz, so no counts come back); the summary and the prompt test are
+      `ai.summary` / `ai.prompt_test` with real counts. The client pays
+      `BillingAccount.aiMinutePriceMillicents` per AI minute by the second
+      (category `AI`, default 0 = not charged; /platform "AI answer
+      ¢/minute"; shown on /billing when set), on top of talk time.
+      `recordAiUsage` divided by 10,000 instead of 1,000,000 until 6 Nov:
+      every AI cost on /platform was 100× too high; it now rounds to the
+      cent per request.
+    - **Metrics** (`summarizeAi`): handled, resolved, hand-offs, messages,
+      callbacks, hang-ups, containment = (resolved + message + callback) /
+      handled (a caller hanging up on the AI is not contained), AI minutes
+      and the average, by `aiHandledAt`. Inbound report tiles (when any),
+      an AI column per queue, CSV `ai_*` columns on `inbound.csv` and
+      `inbound-queues.csv`; wallboard "AI" column (callers with the AI now,
+      today's containment of handled). A hand-off caller entering the queue
+      is offered there like anyone (its `waitSeconds` counts from that
+      entry, not from the AI's start).
+    - **What to check on the first live call**: the REST `call_hook` to
+      wss lands and `session:new` arrives (engine log "AI session
+      started"); the agent verb accepts the string greeting and anthropic
+      with the inline key; Deepgram hears the caller; "operator" hands off
+      and the agent's console shows the summary; the enqueue's actionHook
+      after an OVERFLOW move does not win; `completion_reason` wording on
+      `/ai-done` (hangup tool vs error) matches the regexes.
 
 **Redis keys** (all expire): `queue:<id>` (zset: callId or `cb:<id>`),
 `queued:<callId>` (meta: queueId, at, priority, agingSeconds, leadId,
@@ -314,7 +460,8 @@ the bridge if the enqueue's actionHook races the REST redirect, instead of
 the old unconditional hangup), `qover:<callId>` (overflow verbs worked out
 once so the redirect and the exit hook agree and one voicemail row is
 made), `qcbwait:<id>`, `blend:<tenant>`, `inbound:live:<tenant>`,
-`tts:down`. The `queues` job (1 s) does it all per tenant: wrap-up timers,
+`tts:down`, AI answer: `ai:<callId>` (state), `aitx:<callId>` (transcript
+list), `aidone:<callId>`, `ai:down`. The `queues` job (1 s) does it all per tenant: wrap-up timers,
 dead callers, overflow, the serving order, callbacks, blending, the live
 snapshot.
 

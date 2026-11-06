@@ -1052,30 +1052,32 @@ model PokerCard {
 /// scrub records (cost + margin) and texts are charged as they happen. Prices
 /// are in millicents (1/1000 of a cent) so 1.2¢/min is 1200.
 model BillingAccount {
-  id                    String    @id @default(cuid())
-  tenant                Tenant    @relation(fields: [tenantId], references: [id])
-  tenantId              String    @unique
-  balanceCents          Int       @default(0)
-  seatMonthlyCents      Int       @default(7000)
-  perMinuteMillicents   Int       @default(1200)
+  id                      String    @id @default(cuid())
+  tenant                  Tenant    @relation(fields: [tenantId], references: [id])
+  tenantId                String    @unique
+  balanceCents            Int       @default(0)
+  seatMonthlyCents        Int       @default(7000)
+  perMinuteMillicents     Int       @default(1200)
   /// Markup on the DID monthly cost, percent (50 = cost + 50%).
-  didMarkupPct          Int       @default(50)
+  didMarkupPct            Int       @default(50)
   /// Added on top of our scrub cost, per record.
-  scrubMarginMillicents Int       @default(500)
+  scrubMarginMillicents   Int       @default(500)
   /// Per text segment sent, price to the client.
-  smsPriceMillicents    Int       @default(1500)
+  smsPriceMillicents      Int       @default(1500)
+  /// Per minute the AI answer is on a call, price to the client; 0 = not charged (owner sets it).
+  aiMinutePriceMillicents Int       @default(0)
   /// Warn below this balance.
-  lowBalanceCents       Int       @default(20000)
+  lowBalanceCents         Int       @default(20000)
   /// Days the balance may sit at or below zero before outbound is paused.
-  graceDays             Int       @default(3)
-  suspended             Boolean   @default(false)
-  suspendedAt           DateTime?
+  graceDays               Int       @default(3)
+  suspended               Boolean   @default(false)
+  suspendedAt             DateTime?
   /// BALANCE (used up past grace) or TRIAL_ENDED (free trial over, never paid).
-  suspendReason         String?
-  zeroSince             DateTime?
-  notes                 String?
-  createdAt             DateTime  @default(now())
-  updatedAt             DateTime  @updatedAt
+  suspendReason           String?
+  zeroSince               DateTime?
+  notes                   String?
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
 }
 
 enum BillingKind {
@@ -1098,6 +1100,8 @@ enum BillingCategory {
   SMS
   OTHER
   PAYMENT
+  /// AI answer minutes on inbound queues.
+  AI
   TRIAL
   REFERRAL
 }
@@ -1136,6 +1140,8 @@ model PlatformRates {
   didMonthlyCents           Int       @default(110)
   scrubCostMillicents       Int       @default(500)
   smsCostMillicents         Int       @default(400)
+  /// What an AI-answer minute costs us in speech (jambonz STT + TTS), recorded as vendor usage; the LLM is costed from tokens.
+  aiMinuteCostMillicents    Int       @default(0)
   /// Shown to clients on their billing page: how to prepay.
   prepayInstructions        String?
   /// Last Telnyx account balance seen (GET /v2/balance) and when.
@@ -1370,11 +1376,50 @@ model Queue {
   surveyEnabled Boolean @default(false)
   surveyAudioId String?
 
+  // AI answer (shared/inbound/ai.ts; engine inbound/ai). Off until the jambonz account has speech-to-text.
+  aiEnabled        Boolean     @default(false)
+  aiMode           QueueAiMode @default(FIRST)
+  /// OVERFLOW: the AI takes a caller who has waited this long with no agent free; 0 = at once.
+  aiAfterSeconds   Int         @default(60)
+  aiGreeting       String?
+  /// The client's system prompt: who the assistant is, the business, the tone. Fixed safety rules go ahead of it.
+  aiInstructions   String?
+  /// FAQ text the client pastes; kept in the prompt, capped (AI_KNOWLEDGE_MAX).
+  aiKnowledge      String?
+  /// Said by the caller = straight to a person, matched on the transcript before the LLM.
+  aiHandoffPhrases String[]    @default(["operator", "manager", "supervisor", "human", "agent", "representative", "real person", "speak to someone"])
+  /// Then hand off to a person.
+  aiMaxMinutes     Int         @default(10)
+  /// jambonz speech vendors; null = the account's (deepgram first for speech-to-text, cartesia first for speech).
+  aiSttVendor      String?
+  aiTtsVendor      String?
+  aiVoice          String?
+  aiLanguage       String      @default("en-US")
+  aiLlmVendor      String      @default("anthropic")
+  aiModel          String      @default("claude-sonnet-5-5")
+
   calls      Call[]
   callbacks  QueueCallback[]
   geoTargets GeoRoute[]      @relation("GeoTarget")
 
   @@unique([tenantId, name])
+}
+
+enum QueueAiMode {
+  /// The AI answers every call before the queue.
+  FIRST
+  /// The AI answers only when no agent is free, the queue is closed, or the wait passes aiAfterSeconds.
+  OVERFLOW
+  /// The AI handles everything; a person only when the caller asks.
+  ONLY
+}
+
+enum AiOutcome {
+  RESOLVED
+  HANDOFF
+  MESSAGE
+  CALLBACK
+  HANGUP
 }
 
 enum QueueStrategy {
@@ -1616,22 +1661,32 @@ model Call {
   transfers Transfer[]
 
   /// Inbound queue facts for the ACD metrics (shared/inbound/metrics.ts).
-  queue            Queue?    @relation(fields: [queueId], references: [id], onDelete: SetNull)
-  queueId          String?
-  queuedAt         DateTime?
+  queue                 Queue?    @relation(fields: [queueId], references: [id], onDelete: SetNull)
+  queueId               String?
+  queuedAt              DateTime?
   /// Seconds in the queue before an agent took it, or before the caller hung up.
-  waitSeconds      Int?
-  abandonedInQueue Boolean   @default(false)
+  waitSeconds           Int?
+  abandonedInQueue      Boolean   @default(false)
   /// The queue's forced hold this caller was given, seconds (null = none); the SLA is measured after it.
   forcedHoldSeconds     Int?
   /// Hung up before the forced hold ended (inside abandonedInQueue too).
-  abandonedInForcedHold Boolean @default(false)
+  abandonedInForcedHold Boolean   @default(false)
+
+  /// AI answer (inbound/ai): when it took the call, when it let go, how it ended, what was said.
+  aiHandledAt     DateTime?
+  aiEndedAt       DateTime?
+  aiOutcome       AiOutcome?
+  aiSeconds       Int?
+  /// The summary the agent's screen pop shows on a hand-off.
+  aiSummary       String?
+  /// [{ role: "caller" | "ai", text, at }]
+  aiTranscript    Json?
   /// The agent's wrap-up ended (disposition or the queue's wrap-up timer).
-  wrapEndedAt      DateTime?
+  wrapEndedAt     DateTime?
   /// The agent left and the caller went to the post-call survey; talk ends here.
-  surveyStartedAt  DateTime?
+  surveyStartedAt DateTime?
   /// 1 to 5 from the post-call survey.
-  surveyScore      Int?
+  surveyScore     Int?
 
   @@index([tenantId, dialedAt])
   @@index([queueId, queuedAt])

@@ -31,6 +31,7 @@ import { inboundHolds, queueCallbackChoice, queueExitVerbs } from "../inbound/qu
 import { queueCallbackAnswered } from "../inbound/callbacks";
 import { surveyPending, surveyResult, surveyVerbs } from "../inbound/survey";
 import { markTtsDown } from "../inbound/common";
+import { aiFallbackVerbs, aiHandoffVerbs } from "../inbound/ai/control";
 import { log } from "../log";
 import { agentRoom, hookUrl, jambonz } from "./client";
 
@@ -463,6 +464,17 @@ export async function registerJambonzRoutes(app: FastifyInstance): Promise<void>
     const call = callId ? await prisma.call.findUnique({ where: { id: callId } }) : null;
     if (!call || !agentId) return reply.send([{ verb: "hangup" }]);
     return reply.send(joinAgentVerbs(call.id, call.tenantId, agentId));
+  });
+  // AI answer (inbound/ai): the call coming back from the AI's WebSocket session to the queue's people, ahead of the line.
+  app.post("/jambonz/ai-handoff", async (req, reply) => {
+    const { callId } = req.query as { callId?: string };
+    log.info({ callId }, "AI hand-off to the queue");
+    return reply.send(callId ? await aiHandoffVerbs(callId) : [{ verb: "hangup" }]);
+  });
+  // The redirect to the AI never landed while the caller waited on the entry pause: people take the call.
+  app.post("/jambonz/ai-fallback", async (req, reply) => {
+    const { callId } = req.query as { callId?: string };
+    return reply.send(callId ? await aiFallbackVerbs(callId) : [{ verb: "hangup" }]);
   });
   app.post("/jambonz/overflow", async (req, reply) => {
     const { queueId, callId } = req.query as { queueId?: string; callId?: string };

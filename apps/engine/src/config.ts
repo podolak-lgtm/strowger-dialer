@@ -62,6 +62,17 @@ export const config = readEnv({
   TTS_VOICE: z.string().optional(),
   TTS_LANGUAGE: z.string().default("en-US"),
 
+  /**
+   * AI answer on inbound queues (inbound/ai). The queue picks the voice model; this one writes the hand-off summary
+   * for the agent's screen pop and answers the queue form's "Test the prompt".
+   */
+  AI_SUMMARY_MODEL: z.string().default("claude-sonnet-5-5"),
+  /** Send ANTHROPIC_API_KEY inline on the jambonz agent verb. Off = use the LLM service saved in the jambonz portal. */
+  AI_LLM_INLINE_KEY: z
+    .string()
+    .default("true")
+    .transform((v) => v !== "false" && v !== "0"),
+
   // Media bucket (voicemail recordings). Same bucket the web app serves prompts from.
   S3_ENDPOINT: z.string().optional(),
   S3_BUCKET: z.string().optional(),

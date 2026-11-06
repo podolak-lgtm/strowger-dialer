@@ -20,7 +20,7 @@ export type BillingStatus = {
   zeroSince: string | null;
   dailyAvgCents: number;
   runwayDays: number | null;
-  rates: { seatMonthlyCents: number; perMinuteMillicents: number; didMarkupPct: number; scrubMarginMillicents: number; smsPriceMillicents: number };
+  rates: { seatMonthlyCents: number; perMinuteMillicents: number; didMarkupPct: number; scrubMarginMillicents: number; smsPriceMillicents: number; aiMinutePriceMillicents: number };
 };
 export type BillingOverview = {
   period: string;
@@ -33,7 +33,7 @@ export type BillingOverview = {
 };
 export type PlatformOverview = {
   period: string;
-  rates: { telnyxOutMillicentsPerMin: number; telnyxInMillicentsPerMin: number; didMonthlyCents: number; scrubCostMillicents: number; smsCostMillicents: number; prepayInstructions: string | null };
+  rates: { telnyxOutMillicentsPerMin: number; telnyxInMillicentsPerMin: number; didMonthlyCents: number; scrubCostMillicents: number; smsCostMillicents: number; aiMinuteCostMillicents: number; prepayInstructions: string | null };
   tenants: {
     id: string;
     name: string;
@@ -46,7 +46,7 @@ export type PlatformOverview = {
     revenueCents: number;
     costCents: number;
     marginCents: number;
-    plan: { seatMonthlyCents: number; perMinuteMillicents: number; didMarkupPct: number; scrubMarginMillicents: number; smsPriceMillicents: number; lowBalanceCents: number; graceDays: number } | null;
+    plan: { seatMonthlyCents: number; perMinuteMillicents: number; didMarkupPct: number; scrubMarginMillicents: number; smsPriceMillicents: number; aiMinutePriceMillicents: number; lowBalanceCents: number; graceDays: number } | null;
   }[];
 };
 
@@ -173,6 +173,7 @@ export async function savePlan(formData: FormData) {
       didMarkupPct: Math.round(n("didMarkup")),
       scrubMarginMillicents: Math.round(n("scrubMargin") * 1000),
       smsPriceMillicents: Math.round(n("smsPrice") * 1000),
+      aiMinutePriceMillicents: Math.round(n("aiMinutePrice") * 1000),
       lowBalanceCents: Math.round(n("lowBalance") * 100),
       graceDays: Math.round(n("graceDays")),
     }),
@@ -191,6 +192,7 @@ export async function saveRates(formData: FormData) {
       didMonthlyCents: Math.round(n("didMonthly") * 100),
       scrubCostMillicents: Math.round(n("scrubCost") * 1000),
       smsCostMillicents: Math.round(n("smsCost") * 1000),
+      aiMinuteCostMillicents: Math.round(n("aiMinuteCost") * 1000),
       prepayInstructions: String(formData.get("prepayInstructions") ?? "").trim() || null,
     }),
   });

@@ -19,6 +19,9 @@ import { agentLeaveTransfer, cancelTransfer, liveTransfer, startExternalTransfer
 import { nightlyRecordings } from "../recordings/export";
 import { releaseLead, reserveNextLead } from "../dialer/hopper";
 import { inboundLive } from "../inbound/queues";
+import { aiReadyFor } from "../inbound/ai/control";
+import { testPrompt } from "../inbound/ai/llm";
+import { AI_MODES, parseHandoffPhrases } from "@strowger/shared/inbound";
 import { jambonz, jambonzConfigured } from "../jambonz/client";
 import { assignNumbersToCampaign, createBrand, createTenDlcCampaign, orderNumbers, provisionStatus, releaseNumber, searchNumbers, setupCarrier, syncNumbers, tenDlcStatus, usecaseFees } from "../provision";
 import type { BrandInput, CampaignInput } from "../provision/telnyx";
@@ -120,6 +123,19 @@ export async function registerInternalRoutes(app: FastifyInstance): Promise<void
   app.get("/internal/floor", async (req) => {
     const { tenantId } = req.query as { tenantId: string };
     return { agents: await listAgents(tenantId) };
+  });
+
+  // AI answer (inbound/ai): what the jambonz account lacks before a queue may turn it on, and the form's prompt test.
+  app.get("/internal/inbound/ai/readiness", async (req) => {
+    const q = z.object({ stt: z.string().optional(), tts: z.string().optional(), llm: z.string().default("anthropic") }).parse(req.query);
+    return aiReadyFor({ aiSttVendor: q.stt || null, aiTtsVendor: q.tts || null, aiLlmVendor: q.llm });
+  });
+  app.post("/internal/inbound/ai/test", async (req) => {
+    const b = z
+      .object({ tenantId: z.string(), queueId: z.string().nullable().optional(), queueName: z.string().max(200), mode: z.enum(AI_MODES), greeting: z.string().max(2000).nullable(), instructions: z.string().max(20_000).nullable(), knowledge: z.string().max(60_000).nullable(), handoffPhrases: z.string().max(2000), model: z.string().max(100), campaignId: z.string().nullable().optional(), line: z.string().min(1).max(1000) })
+      .parse(req.body);
+    const tenant = await prisma.tenant.findUniqueOrThrow({ where: { id: b.tenantId }, select: { name: true } });
+    return testPrompt({ tenantId: b.tenantId, business: tenant.name, queueName: b.queueName || "Support", mode: b.mode, greeting: b.greeting, instructions: b.instructions, knowledge: b.knowledge, handoffPhrases: parseHandoffPhrases(b.handoffPhrases), canBookCallback: Boolean(b.campaignId), model: b.model, line: b.line });
   });
 
   // Inbound wallboard: per-queue waiting, longest wait, agents, and the blending holds (inbound/queues.ts, refreshed every second).
@@ -318,13 +334,13 @@ export async function registerInternalRoutes(app: FastifyInstance): Promise<void
     }
   });
   app.post("/internal/billing/plan", async (req) => {
-    const b = z.object({ tenantId: z.string(), seatMonthlyCents: z.number().int().min(0), perMinuteMillicents: z.number().int().min(0), didMarkupPct: z.number().int().min(0), scrubMarginMillicents: z.number().int().min(0), smsPriceMillicents: z.number().int().min(0), lowBalanceCents: z.number().int().min(0), graceDays: z.number().int().min(0).max(60) }).parse(req.body);
+    const b = z.object({ tenantId: z.string(), seatMonthlyCents: z.number().int().min(0), perMinuteMillicents: z.number().int().min(0), didMarkupPct: z.number().int().min(0), scrubMarginMillicents: z.number().int().min(0), smsPriceMillicents: z.number().int().min(0), aiMinutePriceMillicents: z.number().int().min(0).default(0), lowBalanceCents: z.number().int().min(0), graceDays: z.number().int().min(0).max(60) }).parse(req.body);
     const { tenantId, ...plan } = b;
     await prisma.billingAccount.upsert({ where: { tenantId }, create: { tenantId, ...plan }, update: plan });
     return { ok: true };
   });
   app.post("/internal/billing/rates", async (req) => {
-    const b = z.object({ telnyxOutMillicentsPerMin: z.number().int().min(0), telnyxInMillicentsPerMin: z.number().int().min(0), didMonthlyCents: z.number().int().min(0), scrubCostMillicents: z.number().int().min(0), smsCostMillicents: z.number().int().min(0), prepayInstructions: z.string().max(2000).nullable() }).parse(req.body);
+    const b = z.object({ telnyxOutMillicentsPerMin: z.number().int().min(0), telnyxInMillicentsPerMin: z.number().int().min(0), didMonthlyCents: z.number().int().min(0), scrubCostMillicents: z.number().int().min(0), smsCostMillicents: z.number().int().min(0), aiMinuteCostMillicents: z.number().int().min(0).default(0), prepayInstructions: z.string().max(2000).nullable() }).parse(req.body);
     await rates();
     await prisma.platformRates.update({ where: { id: "default" }, data: b });
     return { ok: true };

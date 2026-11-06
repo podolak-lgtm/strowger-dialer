@@ -18,6 +18,8 @@
 // works out which agents the ratio pacer must leave alone (blending).
 import { prisma, type Call, type Queue, type QueueCallback, type Schedule } from "@strowger/db";
 import {
+  aiOnEntry,
+  aiOverflowDue,
   announcementDue,
   announcementText,
   blendHolds,
@@ -44,6 +46,7 @@ import { redis } from "../redis";
 import { emitToAgent, emitToTenant } from "../realtime";
 import { audio, boxForQueue, claimAgent, gatherPrompt, isFree, ivrVerbs, joinAgentVerbs, promptVerb, sayVerb, ttsAvailable, voicemailVerbs, type Verbs } from "./common";
 import { placeQueueCallback } from "./callbacks";
+import { aiEntryVerbs, aiState, aiTakeWaiting } from "./ai/control";
 
 const QKEY = (queueId: string) => `queue:${queueId}`;
 const QMETA = (callId: string) => `queued:${callId}`;
@@ -177,6 +180,17 @@ export async function enterQueue(queue: Queue & { schedule?: Schedule | null }, 
   const call = await prisma.call.findUnique({ where: { id: callId }, include: { lead: true } });
   if (!call) return [{ verb: "hangup" }];
   const st = scheduleState(q.schedule);
+  // AI answer (inbound/ai): FIRST and ONLY take every caller; OVERFLOW when closed or nobody qualified is logged in.
+  // A call the AI has already had (a hand-off, a fallback) never goes back to it.
+  if (q.aiEnabled && !(call.providerData as { ai?: unknown } | null)?.ai) {
+    const onFloor = (await listAgents(q.tenantId)).filter((a) => a.state !== "LOGGED_OUT");
+    const qualifiedOnFloor = qualifiedFrom(q, onFloor, await loadRatings(onFloor.map((a) => a.userId)), false).length;
+    if (aiOnEntry({ enabled: true, ready: true, alreadyHandled: false, mode: q.aiMode, open: st.open, qualifiedOnFloor })) {
+      const reason = !st.open ? "queue closed" : q.aiMode === "OVERFLOW" ? "no agents on the floor" : "answers first";
+      const verbs = await aiEntryVerbs(q, callId, reason);
+      if (verbs) return verbs;
+    }
+  }
   if (!st.open && q.schedule) return closedVerbs(q.schedule, st, callId, call.phone, depth);
   if (q.maxWaiting > 0 && (await liveCount(q.id)) >= q.maxWaiting) {
     log.info({ queueId: q.id, callId, maxWaiting: q.maxWaiting }, "queue full");
@@ -227,7 +241,7 @@ async function fullVerbs(q: Queue, call: Call, depth: number): Promise<Verbs> {
 }
 
 /** Leave the waiting room. `hangup` = the caller gave up: counted as abandoned in the queue. */
-export async function leaveQueue(callId: string, reason: "hangup" | "assigned" | "overflow" | "callback" | "other" = "other"): Promise<void> {
+export async function leaveQueue(callId: string, reason: "hangup" | "assigned" | "overflow" | "callback" | "ai" | "other" = "other"): Promise<void> {
   const raw = await redis.get(QMETA(callId));
   if (!raw) return;
   const meta = JSON.parse(raw) as QueueMeta;
@@ -300,6 +314,8 @@ const CALLBACK_OFFER = "To get a call back without losing your place in line, pr
 export async function queueExitVerbs(queueId: string, callId: string, result: string | undefined): Promise<Verbs> {
   const call = await prisma.call.findUnique({ where: { id: callId } });
   if (!call) return [{ verb: "hangup" }];
+  // The caller was moved to the AI answer (OVERFLOW) and this hook raced the redirect: nothing, so the AI session stands.
+  if (await aiState(callId)) return [];
   // An agent took the call and the REST redirect raced this hook: answer with the bridge, never a hangup.
   const agentId = await redis.get(BRIDGING(callId));
   if (agentId) return joinAgentVerbs(callId, call.tenantId, agentId);
@@ -431,7 +447,9 @@ async function assignCaller(q: Queue, w: Waiting, agent: AgentLive, now: number)
   const waited = Math.round((now - w.arrivalMs) / 1000);
   await leaveQueue(call.id, "assigned");
   await redis.set(BRIDGING(call.id), agent.userId, "EX", 120);
-  await claimAgent(agent, call.id, call.leadId, { queue: q.name, waitedSeconds: waited, from: call.phone });
+  // A caller handed over by the AI answer: its summary and transcript go up with the screen pop.
+  const ai = call.aiHandledAt ? { aiSummary: call.aiSummary ?? "The automated assistant spoke with this caller first.", aiTranscript: ((call.aiTranscript as Array<{ role: string; text: string }> | null) ?? []).slice(-12).map((t) => ({ role: t.role, text: t.text })) } : {};
+  await claimAgent(agent, call.id, call.leadId, { queue: q.name, waitedSeconds: waited, from: call.phone, ...ai });
   await prisma.call.update({ where: { id: call.id }, data: { waitSeconds: waited } });
   await recordAnswer(q.id, call.id, waited, agent.userId, now);
   log.info({ queueId: q.id, callId: call.id, agentId: agent.userId, waited, strategy: q.strategy, sticky: w.meta?.stickyAgentId === agent.userId }, "queue caller assigned");
@@ -559,6 +577,15 @@ async function tickTenant(tenantId: string, queues: QueueWithSchedule[], now: nu
     const qualified = qualifiedFrom(q, onFloor, ratings, false)
       .map((x) => x.agent)
       .sort((a, b) => Number(isFree(b)) - Number(isFree(a)) || a.since - b.since);
+    // AI answer, OVERFLOW: a caller past the forced hold, with no qualified agent free, who has waited aiAfterSeconds.
+    if (q.aiEnabled && q.aiMode === "OVERFLOW") {
+      const free = qualified.filter(isFree).length;
+      for (const w of stillWaiting) {
+        if ((w.call?.providerData as { ai?: unknown } | null)?.ai) continue;
+        if (!aiOverflowDue({ enabled: true, ready: true, mode: "OVERFLOW", inForcedHold: inForcedHold(w.meta?.holdUntil, now), waitedSeconds: (now - w.arrivalMs) / 1000, afterSeconds: q.aiAfterSeconds, freeQualified: free })) continue;
+        if (await aiTakeWaiting(q, w.member, "waited past the limit")) await leaveQueue(w.member, "ai");
+      }
+    }
     blend.push({ queueId: q.id, name: q.name, open: st.open, oldestWaitSeconds: oldestAnswerable, blendWaitSeconds: q.blendWaitSeconds, reserveAgents: q.reserveAgents, qualified: qualified.map((a) => a.userId) });
     live.push({
       queueId: q.id,

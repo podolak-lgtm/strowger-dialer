@@ -19,6 +19,7 @@ import { leaveQueue, wrapAfterQueueCall } from "../inbound/queues";
 import { queueCallbackEnded } from "../inbound/callbacks";
 import { startSurveyInsteadOfHangup } from "../inbound/survey";
 import { endLiveTransfersForCall } from "./transfers";
+import { aiCallEnded } from "../inbound/ai/control";
 
 const sidKey = (sid: string) => `callsid:${sid}`;
 
@@ -183,6 +184,8 @@ export async function leadCallEnded(callId: string, status: string, sipStatus: n
   });
   if (call.campaignId) await removeInflight(call.campaignId, callId);
   await leaveQueue(callId, "hangup").catch(() => undefined);
+  // The caller hung up on the AI answer: its part of the call is finished (outcome, transcript, minutes).
+  await aiCallEnded(callId).catch((e) => log.warn({ err: e, callId }, "finishing the AI part failed"));
   // A destination still ringing or in the three-way has nobody to talk to now.
   await endLiveTransfersForCall(callId).catch((e) => log.warn({ err: e, callId }, "ending transfers after the lead left failed"));
   void chargeCallMinutes(callId).catch((e) => log.warn({ err: e, callId }, "billing: minutes charge failed"));

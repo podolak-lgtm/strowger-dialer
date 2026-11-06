@@ -3,7 +3,7 @@ import { formatPhone } from "@strowger/shared";
 import Link from "next/link";
 import { requireClientWorkspace } from "@/lib/auth";
 import { Badge, Button, Card, Field, Notice, PageHeader, Table, inputClass } from "@/components/ui";
-import { deleteBox, deleteIvr, saveBox, saveIvr, setNumberRoute } from "./actions";
+import { aiReadiness, deleteBox, deleteIvr, saveBox, saveIvr, setNumberRoute } from "./actions";
 import { GeoRoutes } from "./geo-routes";
 import { QueueForm } from "./queue-form";
 import { ScheduleForm } from "./schedules";
@@ -35,7 +35,7 @@ export default async function InboundPage({ searchParams }: PageProps<"/inbound"
   const msg = typeof sp.msg === "string" ? sp.msg : "";
   const msgKind = sp.kind === "error" ? "error" : "ok";
   const t = s.tenant.id;
-  const { numbers, ivrs, queues, boxes, skills, people, campaigns, audio, schedules, geoRoutes, now } = await load(t);
+  const [{ numbers, ivrs, queues, boxes, skills, people, campaigns, audio, schedules, geoRoutes, now }, aiReady] = await Promise.all([load(t), aiReadiness()]);
   const opts = (xs: Array<{ id: string; name: string }>) => xs.map(({ id, name }) => ({ id, name }));
   const nameOf = (p: { firstName: string | null; lastName: string | null; email: string }) => (p.firstName ? `${p.firstName} ${p.lastName ?? ""}`.trim() : p.email);
 
@@ -241,7 +241,7 @@ export default async function InboundPage({ searchParams }: PageProps<"/inbound"
           <Card title="Queues" id="queues">
             <div className="space-y-3">
               {[...queues, null].map((q) => (
-                <QueueForm key={q?.id ?? "new"} q={q} queues={opts(queues)} skills={opts(skills)} campaigns={campaigns} audio={opts(audio)} boxes={opts(boxes)} schedules={opts(schedules)} />
+                <QueueForm key={q?.id ?? "new"} q={q} queues={opts(queues)} skills={opts(skills)} campaigns={campaigns} audio={opts(audio)} boxes={opts(boxes)} schedules={opts(schedules)} aiReady={aiReady} />
               ))}
             </div>
           </Card>

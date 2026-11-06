@@ -52,7 +52,18 @@ export interface JzNumber {
   application_sid: string | null;
 }
 
+/** A speech service on the account. The API also returns the decrypted keys: only these fields are ever kept. */
+export interface SpeechCredentialRow {
+  vendor: string;
+  label?: string | null;
+  use_for_stt?: number | boolean;
+  use_for_tts?: number | boolean;
+}
+
 export const jambonzAdmin = {
+  /** Speech services (STT/TTS) on the account and its service provider; keys are dropped here, never logged or returned. */
+  listSpeechCredentials: async () =>
+    (await call<SpeechCredentialRow[]>("GET", `/Accounts/${acct()}/SpeechCredentials`)).map((c) => ({ vendor: String(c.vendor), label: c.label ?? null, stt: Boolean(c.use_for_stt), tts: Boolean(c.use_for_tts) })),
   listCarriers: () => call<Carrier[]>("GET", `/Accounts/${acct()}/VoipCarriers`),
   createCarrier: async (c: { name: string; register_username?: string; register_password?: string }) => {
     const r = await call<{ sid: string }>("POST", "/VoipCarriers", {
