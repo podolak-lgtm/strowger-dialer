@@ -1521,7 +1521,80 @@ export function AgentConsole(props: ConsoleProps) {
                   </div>
                 )}
               </Panel>
-
+              {/* Dispositions under the lead profile (owner, 6 Nov): a smaller box on the left. On a live call a disposition hangs up first. */}
+              {onCall || wrapUp ? (
+                  <Panel title="Call Dispositions" collapsible={false} right={wrapUp ? <span className="rounded bg-fuchsia-500/20 px-1.5 text-xs text-fuchsia-200">wrap-up</span> : onCall ? <span className="text-xs text-zinc-500">ends the call</span> : null}>
+                    {!campaign ? null : (
+                      <div className="space-y-2">
+                        {wrapUp && transfer?.agentLeftAt ? (
+                          <div className="flex flex-wrap items-center gap-2 rounded-lg border border-violet-400/30 bg-violet-400/10 px-3 py-2 text-xs text-violet-100">
+                            <span>
+                              Transferred to {transfer.destinationName} ({transfer.mode.toLowerCase()}){transfer.state === "ended" ? ", now finished" : ", still talking"}. Dispositioned &ldquo;{transfer.dispositionLabel ?? "Transferred"}&rdquo;: keep it, or pick another below.
+                            </span>
+                            <button onClick={() => transfer.dispositionId && sendDisposition(transfer.dispositionId)} disabled={busy || !transfer.dispositionId} className="rounded-lg bg-violet-400 px-3 py-1 text-xs font-semibold text-violet-950 disabled:opacity-40">
+                              Keep &ldquo;{transfer.dispositionLabel ?? "Transferred"}&rdquo;
+                            </button>
+                          </div>
+                        ) : null}
+                        {wrapUp && live.suggestedDisposition && campaign.dispositions.some((d) => d.id === live.suggestedDisposition?.dispositionId) ? (
+                          <div className="flex flex-wrap items-center gap-2 rounded-lg border border-cyan-400/30 bg-cyan-400/10 px-3 py-2 text-xs text-cyan-100">
+                            <span className="flex-1">
+                              Suggested: <b>{live.suggestedDisposition.label}</b>
+                              {live.suggestedDisposition.reason ? ` · ${live.suggestedDisposition.reason}` : ""}
+                            </span>
+                            <button onClick={() => live.suggestedDisposition && sendDisposition(live.suggestedDisposition.dispositionId)} disabled={busy || !callId} className="rounded-lg bg-cyan-400 px-3 py-1 text-xs font-semibold text-cyan-950 disabled:opacity-40">
+                              Confirm &ldquo;{live.suggestedDisposition.label}&rdquo;
+                            </button>
+                          </div>
+                        ) : null}
+                        {wrapUp && live.summary ? <p className="rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-xs text-zinc-300"><span className="text-zinc-500">AI summary (added to the lead&apos;s notes): </span>{live.summary}</p> : null}
+                        <div className="grid grid-cols-2 gap-2">
+                          {campaign.dispositions
+                            .filter((d) => !d.isCallback)
+                            .map((d) => (
+                              <button
+                                key={d.id}
+                                onClick={() => dispo(d)}
+                                disabled={busy || !callId}
+                                className={`rounded-lg border px-2 py-2 text-left text-xs disabled:opacity-40 ${wrapUp && live.suggestedDisposition?.dispositionId === d.id ? "ring-2 ring-cyan-400 " : ""}${d.isSale ? "border-emerald-400/40 bg-emerald-400/10 text-emerald-200" : d.isDnc ? "border-red-400/40 bg-red-400/10 text-red-200" : "border-white/10 bg-white/5 text-zinc-200"} hover:bg-white/10`}
+                              >
+                                <div className="font-semibold">
+                                  {d.label}
+                                  {d.hotkey ? <span className="ml-1 rounded bg-black/30 px-1 font-mono text-[10px] text-zinc-400">{d.hotkey}</span> : null}
+                                </div>
+                                <div className="font-mono text-[10px] text-zinc-500">{d.code}</div>
+                              </button>
+                            ))}
+                          <button onClick={callbackNow} disabled={busy || !callId} title={`Back to you, due in ${campaign.callbackOwnerMinutes || 60} min`} className="rounded-lg border border-sky-400/40 bg-sky-400/10 px-2 py-2 text-left text-xs text-sky-200 hover:bg-white/10 disabled:opacity-40">
+                            <div className="font-semibold">Callback</div>
+                            <div className="font-mono text-[10px] text-zinc-500">any time · {campaign.callbackOwnerMinutes || 60} min</div>
+                          </button>
+                          <button onClick={() => setScheduling((v) => !v)} disabled={busy || !callId} className={`rounded-lg border px-2 py-2 text-left text-xs hover:bg-white/10 disabled:opacity-40 ${scheduling ? "border-sky-300 bg-sky-400/25 text-sky-100" : "border-sky-400/40 bg-sky-400/10 text-sky-200"}`}>
+                            <div className="font-semibold">
+                              Scheduled callback
+                              {campaign.dispositions.find((d) => d.isCallback)?.hotkey ? <span className="ml-1 rounded bg-black/30 px-1 font-mono text-[10px] text-zinc-400">{campaign.dispositions.find((d) => d.isCallback)?.hotkey}</span> : null}
+                            </div>
+                            <div className="font-mono text-[10px] text-zinc-500">pick a date & time</div>
+                          </button>
+                        </div>
+                        {scheduling ? (
+                          <div className="flex flex-wrap items-end gap-2 rounded-xl border border-sky-400/20 bg-black/30 p-3">
+                            <label className="flex-1 text-xs text-zinc-400">
+                              Callback time
+                              <input type="datetime-local" value={callbackAt} onChange={(e) => setCallbackAt(e.target.value)} onKeyDown={(e) => e.key === "Enter" && void callbackScheduled()} className="mt-1 w-full rounded-lg border border-white/10 bg-black/30 px-2 py-1.5 text-sm text-zinc-100" />
+                            </label>
+                            <button onClick={callbackScheduled} disabled={busy || !callId || !callbackAt} className="rounded-lg bg-sky-400 px-3 py-2 text-sm font-semibold text-sky-950 disabled:opacity-40">
+                              Submit
+                            </button>
+                            <button onClick={() => { setScheduling(false); setCallbackAt(""); }} disabled={busy} className="rounded-lg border border-white/15 px-3 py-2 text-sm text-zinc-300 hover:bg-white/10">
+                              Cancel
+                            </button>
+                          </div>
+                        ) : null}
+                      </div>
+                    )}
+                  </Panel>
+              ) : null}
             </div>
 
             {/* Call in progress / waiting feed */}
@@ -1648,104 +1721,9 @@ export function AgentConsole(props: ConsoleProps) {
                   ) : null}
                 </Panel>
 
-                {/* Dispositions sit directly under the call controls: one block. On a live call a disposition hangs up first. */}
-                <Panel title="Call Dispositions" collapsible={false} right={wrapUp ? <span className="rounded bg-fuchsia-500/20 px-1.5 text-xs text-fuchsia-200">wrap-up</span> : onCall ? <span className="text-xs text-zinc-500">ends the call</span> : null}>
-                  {!campaign ? null : (
-                    <div className="space-y-2">
-                      {wrapUp && transfer?.agentLeftAt ? (
-                        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-violet-400/30 bg-violet-400/10 px-3 py-2 text-xs text-violet-100">
-                          <span>
-                            Transferred to {transfer.destinationName} ({transfer.mode.toLowerCase()}){transfer.state === "ended" ? ", now finished" : ", still talking"}. Dispositioned &ldquo;{transfer.dispositionLabel ?? "Transferred"}&rdquo;: keep it, or pick another below.
-                          </span>
-                          <button onClick={() => transfer.dispositionId && sendDisposition(transfer.dispositionId)} disabled={busy || !transfer.dispositionId} className="rounded-lg bg-violet-400 px-3 py-1 text-xs font-semibold text-violet-950 disabled:opacity-40">
-                            Keep &ldquo;{transfer.dispositionLabel ?? "Transferred"}&rdquo;
-                          </button>
-                        </div>
-                      ) : null}
-                      {wrapUp && live.suggestedDisposition && campaign.dispositions.some((d) => d.id === live.suggestedDisposition?.dispositionId) ? (
-                        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-cyan-400/30 bg-cyan-400/10 px-3 py-2 text-xs text-cyan-100">
-                          <span className="flex-1">
-                            Suggested: <b>{live.suggestedDisposition.label}</b>
-                            {live.suggestedDisposition.reason ? ` · ${live.suggestedDisposition.reason}` : ""}
-                          </span>
-                          <button onClick={() => live.suggestedDisposition && sendDisposition(live.suggestedDisposition.dispositionId)} disabled={busy || !callId} className="rounded-lg bg-cyan-400 px-3 py-1 text-xs font-semibold text-cyan-950 disabled:opacity-40">
-                            Confirm &ldquo;{live.suggestedDisposition.label}&rdquo;
-                          </button>
-                        </div>
-                      ) : null}
-                      {wrapUp && live.summary ? <p className="rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-xs text-zinc-300"><span className="text-zinc-500">AI summary (added to the lead&apos;s notes): </span>{live.summary}</p> : null}
-                      <div className="grid grid-cols-2 gap-2 md:grid-cols-3">
-                        {campaign.dispositions
-                          .filter((d) => !d.isCallback)
-                          .map((d) => (
-                            <button
-                              key={d.id}
-                              onClick={() => dispo(d)}
-                              disabled={busy || !callId}
-                              className={`rounded-lg border px-2 py-2 text-left text-xs disabled:opacity-40 ${wrapUp && live.suggestedDisposition?.dispositionId === d.id ? "ring-2 ring-cyan-400 " : ""}${d.isSale ? "border-emerald-400/40 bg-emerald-400/10 text-emerald-200" : d.isDnc ? "border-red-400/40 bg-red-400/10 text-red-200" : "border-white/10 bg-white/5 text-zinc-200"} hover:bg-white/10`}
-                            >
-                              <div className="font-semibold">
-                                {d.label}
-                                {d.hotkey ? <span className="ml-1 rounded bg-black/30 px-1 font-mono text-[10px] text-zinc-400">{d.hotkey}</span> : null}
-                              </div>
-                              <div className="font-mono text-[10px] text-zinc-500">{d.code}</div>
-                            </button>
-                          ))}
-                        <button onClick={callbackNow} disabled={busy || !callId} title={`Back to you, due in ${campaign.callbackOwnerMinutes || 60} min`} className="rounded-lg border border-sky-400/40 bg-sky-400/10 px-2 py-2 text-left text-xs text-sky-200 hover:bg-white/10 disabled:opacity-40">
-                          <div className="font-semibold">Callback</div>
-                          <div className="font-mono text-[10px] text-zinc-500">any time · {campaign.callbackOwnerMinutes || 60} min</div>
-                        </button>
-                        <button onClick={() => setScheduling((v) => !v)} disabled={busy || !callId} className={`rounded-lg border px-2 py-2 text-left text-xs hover:bg-white/10 disabled:opacity-40 ${scheduling ? "border-sky-300 bg-sky-400/25 text-sky-100" : "border-sky-400/40 bg-sky-400/10 text-sky-200"}`}>
-                          <div className="font-semibold">
-                            Scheduled callback
-                            {campaign.dispositions.find((d) => d.isCallback)?.hotkey ? <span className="ml-1 rounded bg-black/30 px-1 font-mono text-[10px] text-zinc-400">{campaign.dispositions.find((d) => d.isCallback)?.hotkey}</span> : null}
-                          </div>
-                          <div className="font-mono text-[10px] text-zinc-500">pick a date & time</div>
-                        </button>
-                      </div>
-                      {scheduling ? (
-                        <div className="flex flex-wrap items-end gap-2 rounded-xl border border-sky-400/20 bg-black/30 p-3">
-                          <label className="flex-1 text-xs text-zinc-400">
-                            Callback time
-                            <input type="datetime-local" value={callbackAt} onChange={(e) => setCallbackAt(e.target.value)} onKeyDown={(e) => e.key === "Enter" && void callbackScheduled()} className="mt-1 w-full rounded-lg border border-white/10 bg-black/30 px-2 py-1.5 text-sm text-zinc-100" />
-                          </label>
-                          <button onClick={callbackScheduled} disabled={busy || !callId || !callbackAt} className="rounded-lg bg-sky-400 px-3 py-2 text-sm font-semibold text-sky-950 disabled:opacity-40">
-                            Submit
-                          </button>
-                          <button onClick={() => { setScheduling(false); setCallbackAt(""); }} disabled={busy} className="rounded-lg border border-white/15 px-3 py-2 text-sm text-zinc-300 hover:bg-white/10">
-                            Cancel
-                          </button>
-                        </div>
-                      ) : null}
-                    </div>
-                  )}
-                </Panel>
                 </>
               ) : null}
-              {lead ? (
-                leadCard
-              ) : (
-                <Panel title="System & Queue Activity" collapsible={false}>
-                  <div className="mb-4 rounded-xl bg-gradient-to-b from-cyan-500/10 to-transparent p-6 text-center">
-                    <Waveform colors={["#22d3ee", "#0ea5e9"]} className="mx-auto mb-3 justify-center" />
-                    <div className="text-lg font-medium">{ready ? (campaign?.dialMode === "PREVIEW" ? "Ready to work the next lead" : "Scanning and dialing… Please remain ready") : state === "PAUSED" ? "Paused" : "Not dialing"}</div>
-                    <div className="mt-1 text-sm text-zinc-400">
-                      Queue depth <span className="text-cyan-300">{stats?.queueDepth ?? "—"}</span> · callbacks due <span className="text-cyan-300">{stats?.callbacksDue ?? "—"}</span>
-                    </div>
-                  </div>
-                  <div className="space-y-2 text-sm">
-                    <div className="rounded-lg bg-black/30 p-3">
-                      <div className="text-xs text-zinc-500">Campaign</div>
-                      <div>{campaign ? `${campaign.name} · ${campaign.dialMode === "RATIO" ? "ratio dialing" : "preview dialing"}` : "none"}</div>
-                    </div>
-                    <div className="rounded-lg bg-black/30 p-3">
-                      <div className="text-xs text-zinc-500">Your line</div>
-                      <div>{phone === "in-room" ? "Up and in your room" : phone === "registered" ? "Registered, idle" : phoneError ?? "Offline"}</div>
-                    </div>
-                  </div>
-                </Panel>
-              )}
-
+              {/* SMS sits between the call and the lead card (owner, 6 Nov). */}
               {lead ? (
                 <Panel title="SMS" right={<span className="text-xs text-zinc-500">{thread.length} messages</span>}>
                   <div className="mb-2 max-h-56 space-y-1 overflow-y-auto pr-1 text-sm">
@@ -1779,6 +1757,31 @@ export function AgentConsole(props: ConsoleProps) {
                   </div>
                 </Panel>
               ) : null}
+
+              {lead ? (
+                leadCard
+              ) : (
+                <Panel title="System & Queue Activity" collapsible={false}>
+                  <div className="mb-4 rounded-xl bg-gradient-to-b from-cyan-500/10 to-transparent p-6 text-center">
+                    <Waveform colors={["#22d3ee", "#0ea5e9"]} className="mx-auto mb-3 justify-center" />
+                    <div className="text-lg font-medium">{ready ? (campaign?.dialMode === "PREVIEW" ? "Ready to work the next lead" : "Scanning and dialing… Please remain ready") : state === "PAUSED" ? "Paused" : "Not dialing"}</div>
+                    <div className="mt-1 text-sm text-zinc-400">
+                      Queue depth <span className="text-cyan-300">{stats?.queueDepth ?? "—"}</span> · callbacks due <span className="text-cyan-300">{stats?.callbacksDue ?? "—"}</span>
+                    </div>
+                  </div>
+                  <div className="space-y-2 text-sm">
+                    <div className="rounded-lg bg-black/30 p-3">
+                      <div className="text-xs text-zinc-500">Campaign</div>
+                      <div>{campaign ? `${campaign.name} · ${campaign.dialMode === "RATIO" ? "ratio dialing" : "preview dialing"}` : "none"}</div>
+                    </div>
+                    <div className="rounded-lg bg-black/30 p-3">
+                      <div className="text-xs text-zinc-500">Your line</div>
+                      <div>{phone === "in-room" ? "Up and in your room" : phone === "registered" ? "Registered, idle" : phoneError ?? "Offline"}</div>
+                    </div>
+                  </div>
+                </Panel>
+              )}
+
 
               <Panel title="Live Activity Feed">
                 <ul className="space-y-2 text-sm">

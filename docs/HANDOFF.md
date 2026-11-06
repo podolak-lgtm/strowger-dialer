@@ -2033,6 +2033,10 @@ room, supervisors and admins everything (`floorStats`).
   (the engine's one-line rule hangs up the stale leg). ON_CALL or WRAP_UP
   shows a notice instead, since a new line would end the room and drop the
   lead.
+- **Main screen layout (owner, 6 Nov)**: left column = Lead Profile, then
+  Call Dispositions (a smaller box, two buttons a row, only on a call or in
+  wrap-up); middle = Call in Progress, SMS, the full Lead card, Live
+  Activity Feed, Lead history; right = team, assist, chat, games, sprint.
 - **A reload mid-call keeps the lead card**: the console's restore-on-load
   path set the call but left the lead card empty (the lead only arrived with
   a later `agent:state` event). It now calls `leadForCall(currentCallId)`
