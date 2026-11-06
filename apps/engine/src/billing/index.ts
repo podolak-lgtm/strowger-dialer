@@ -6,6 +6,7 @@ import { prisma, type BillingCategory, type BillingKind, type Prisma } from "@st
 import { inTrial } from "@strowger/shared/referrals";
 import { log } from "../log";
 import { emitToTenant } from "../realtime";
+import { lowBalanceEmail, suspendedEmail } from "../email";
 
 export const period = (d = new Date()) => d.toISOString().slice(0, 7);
 const MANAGER_ROLES = ["ADMIN", "SUPERVISOR", "ROOM_SUPERVISOR"] as const;
@@ -93,6 +94,11 @@ export async function afterBalanceChange(tenantId: string, opts: { payment?: boo
   } else if (a.balanceCents <= 0 && !a.zeroSince) {
     await prisma.billingAccount.update({ where: { tenantId }, data: { zeroSince: new Date() } });
   }
+  // Low-balance email (at most once a day). Not for the platform, and not during a trial, whose balance is the free allowance.
+  if (!opts.payment && a.balanceCents <= a.lowBalanceCents) {
+    const t = await prisma.tenant.findUnique({ where: { id: tenantId }, select: { isPlatform: true, trialEndsAt: true, trialConvertedAt: true } });
+    if (t && !t.isPlatform && !(t.trialEndsAt && !t.trialConvertedAt)) void lowBalanceEmail(tenantId, a.balanceCents, a.lowBalanceCents);
+  }
   emitToTenant(tenantId, "billing:update", { balanceCents: a.balanceCents, suspended: a.suspended });
 }
 
@@ -103,6 +109,7 @@ export async function suspendOverdue(now = new Date()): Promise<void> {
     if (now.getTime() - a.zeroSince!.getTime() < a.graceDays * 86_400_000) continue;
     await prisma.billingAccount.update({ where: { id: a.id }, data: { suspended: true, suspendedAt: now, suspendReason: "BALANCE" } });
     emitToTenant(a.tenantId, "billing:update", { suspended: true, balanceCents: a.balanceCents });
+    void suspendedEmail(a.tenantId);
     log.warn({ tenantId: a.tenantId }, "billing: outbound suspended, balance exhausted past grace");
   }
 }

@@ -30,6 +30,7 @@ import { normalizePhone } from "@strowger/shared";
 import { afterBalanceChange, ensureAccount, postEntry, rates, TRIAL_ENDED_MESSAGE } from "../billing";
 import { log } from "../log";
 import { emitToTenant } from "../realtime";
+import { referralStatementEmail, trialEndedEmail, trialReminderEmail } from "../email";
 
 const NOT_MONEY = ["TRIAL_CREDIT", "REFERRAL_CREDIT", "REFERRAL_CLAWBACK"] as const;
 const num = (d: Prisma.Decimal | number | null | undefined) => (d === null || d === undefined ? null : Number(d));
@@ -99,6 +100,9 @@ export async function runReferralCredits(period: string, actorId: string | null 
   const platformPct = Number(r.referralPct);
   const refs = await prisma.referral.findMany({ where: { createdAt: { lt: end } }, include: REF_INCLUDE });
   const out = { period, credited: 0, forfeited: 0, skipped: 0, creditCents: 0, clawbackCents: 0 };
+  // One statement email per referrer, sent after the run (credits, clawbacks and forfeited months).
+  const statements = new Map<string, { credit: number; clawback: number; lines: string[] }>();
+  const dollars = (c: number) => `$${(c / 100).toFixed(2)}`;
   for (const ref of refs) {
     if (await prisma.referralPayout.findUnique({ where: { referralId_period: { referralId: ref.id, period } } })) {
       out.skipped++;
@@ -122,11 +126,22 @@ export async function runReferralCredits(period: string, actorId: string | null 
       throw e;
     }
     if (result.creditCents > 0 || result.clawbackCents > 0) await afterBalanceChange(ref.tenantId);
+    const st = statements.get(ref.tenantId) ?? { credit: 0, clawback: 0, lines: [] };
+    st.credit += result.creditCents;
+    st.clawback += result.clawbackCents;
+    st.lines.push(
+      result.status === "CREDIT"
+        ? `${ref.referred.name}: ${dollars(result.creditCents)} credit (${pct}% of ${dollars(result.baseCents)}).`
+        : `${ref.referred.name}: no credit this month (${result.reason ?? "not eligible"}).`,
+    );
+    if (result.clawbackCents > 0) st.lines.push(`${ref.referred.name}: ${dollars(result.clawbackCents)} taken back for a refund.`);
+    statements.set(ref.tenantId, st);
     if (result.status === "CREDIT") out.credited++;
     else out.forfeited++;
     out.creditCents += result.creditCents;
     out.clawbackCents += result.clawbackCents;
   }
+  for (const [tenantId, st] of statements) void referralStatementEmail(tenantId, period, st.credit, st.clawback, st.lines);
   log.info(out, "referral credits run");
   return out;
 }
@@ -157,7 +172,7 @@ export async function endLapsedReferrers(now = new Date()): Promise<number> {
 
 /**
  * Hourly. Day 5: the reminder (in-app: the banner reads `trialReminderAt`;
- * there is no email path in Strowger yet). Trial over: the unused allowance
+ * and an email to the workspace's admins through Crossbar, email/index.ts). Trial over: the unused allowance
  * is removed, and a client that never paid is suspended through the billing
  * suspension with the "Your trial ended" message. Nothing is deleted.
  */
@@ -166,8 +181,10 @@ export async function trialTick(now = new Date()) {
   for (const t of open) {
     if (trialReminderDue(t, now)) {
       await prisma.tenant.update({ where: { id: t.id }, data: { trialReminderAt: now } });
-      await prisma.auditLog.create({ data: { tenantId: t.id, action: "trial.reminder", after: { endsAt: t.trialEndsAt, channel: "in-app" } } });
+      await prisma.auditLog.create({ data: { tenantId: t.id, action: "trial.reminder", after: { endsAt: t.trialEndsAt, channel: "in-app+email" } } });
       emitToTenant(t.id, "billing:update", { trialReminder: true });
+      const acct = await ensureAccount(t.id);
+      void trialReminderEmail(t.id, t.trialEndsAt!, acct.balanceCents);
     }
     if (t.trialEndsAt! > now) continue;
     const over = trialOverAt(t)!;
@@ -178,6 +195,7 @@ export async function trialTick(now = new Date()) {
     if (!t.trialConvertedAt) {
       await prisma.billingAccount.update({ where: { tenantId: t.id }, data: { suspended: true, suspendedAt: now, suspendReason: "TRIAL_ENDED" } });
       emitToTenant(t.id, "billing:update", { suspended: true, message: TRIAL_ENDED_MESSAGE });
+      void trialEndedEmail(t.id);
     }
     await prisma.auditLog.create({ data: { tenantId: t.id, action: "trial.end", after: { converted: Boolean(t.trialConvertedAt), leftoverRemovedCents: leftover } } });
     log.info({ tenantId: t.id, converted: Boolean(t.trialConvertedAt) }, "trial ended");

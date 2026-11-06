@@ -591,6 +591,23 @@ talk about returning pool DIDs idle two weeks."
   (tested). A lead's `assignedCallerId` from an earlier attempt still wins
   over `pickCallerId` in the pacer and cadence paths (unchanged).
 
+## Email (6 Nov): sent through Crossbar
+
+Strowger has no email provider of its own. `apps/engine/src/email/index.ts`
+posts to Crossbar's agent API, `POST {CROSSBAR_URL}/api/agent/email` with the
+same `CROSSBAR_AGENT_KEY` as the scrub; Crossbar sends through Resend from a
+fixed "Strowger <strowger@…>" address on its verified domain (Crossbar's
+`lib/agent/email.ts`: no from/cc/bcc/attachments, 10 recipients, 300 an
+hour). Recipients are the workspace's active admins (supervisors if it has
+none). Each message is sent once per key in Redis (`mail:<key>`), and a
+failed send clears the key so a later run retries; email never blocks the
+job that triggered it. Messages: trial ending (day 5, with the allowance
+left), trial ended (unpaid), low balance (at or under the account's
+warning level, once a day, not during a trial), outbound paused (suspended
+after grace), and the monthly referral statement (one per referrer: each
+referred client's credit or why not, clawbacks, "credit only, never cash").
+Every send is audit-logged as `email.sent`.
+
 ## Referral program and free trial (owner, 6 Nov)
 
 Owner: "Every client should get an invite link ... for a 1-week, 5-seat,
