@@ -1765,16 +1765,16 @@ container queries, `@container` / `@min-[…]:`).
 `nav.test.ts`). Change the menu there, not in the layout.
 
 - **Launchers** (top of the sidebar, sky outlined buttons with an
-  open-in-window icon, not nav items): Agent console `/agent`, Floor
-  `/floor`, Campaigns `/campaigns`. `components/app-nav.tsx` opens each in
-  its own named popup window (`strowger-agent`, `strowger-floor`,
-  `strowger-campaigns`) via `window.open("", name)`: an existing window is
-  only focused, never reloaded (mid-call console, unsaved campaign); a new
-  one is pointed at the URL. Inside the window of that name (the Campaigns
-  window's own sidebar) it navigates in place. Popup blocked → opens in the
+  open-in-window icon, not nav items): Agent console `/agent` and Floor
+  `/floor` (owner, 6 Nov: Campaigns opening a window was a slip; it is a
+  normal menu item again). `components/app-nav.tsx` opens each in its own
+  named popup window (`strowger-agent`, `strowger-floor`) via
+  `window.open("", name)`: an existing window is only focused, never
+  reloaded (mid-call console); a new one is pointed at the URL. Inside the
+  window of that name it navigates in place. Popup blocked → opens in the
   same window. Middle / cmd / ctrl / shift-click fall through to the
   browser (the `<a>` has a real `href` and `target`).
-- **Sections** (client admin sees 7: Dashboard, Leads, Numbers,
+- **Sections** (client admin sees 8: Dashboard, Campaigns, Leads, Numbers,
   Compliance, People, Billing, Settings; plus Platform when the owner is
   inside a client; Partner portal for affiliates):
   Dashboard = Overview `/dashboard` | Reports `/reports`;
@@ -1803,8 +1803,8 @@ container queries, `@container` / `@min-[…]:`).
 - 390 px: the People, Teams, Compliance and Reports grids got
   `grid-cols-1` (their wide tables used to push the page sideways; they
   now scroll inside their card) and `PageHeader` actions wrap.
-- The Campaigns window still carries the app sidebar (it is an `(app)`
-  page); Agent and Floor are full-bleed `(console)` pages.
+- Agent and Floor are full-bleed `(console)` pages; Campaigns is an
+  ordinary `(app)` page in the main window.
 
 ## Campaign builder
 

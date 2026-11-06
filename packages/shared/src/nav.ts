@@ -2,7 +2,8 @@ import type { RoleName } from "./roles";
 
 /**
  * The app's left-hand navigation as data (owner, 6 Nov: "as few items on the
- * left as possible, about 7"). Three launchers open their own windows; the
+ * left as possible, about 7"). The Agent console and Floor open their own
+ * windows (owner, 6 Nov: Campaigns opening one was a slip, it is a menu item); the
  * rest are sections whose pages share a tab bar across the top. Every tab is
  * an existing page at its existing URL, so links, redirects and
  * revalidatePath calls elsewhere keep working; `?tab=` on a section's root
@@ -35,7 +36,6 @@ const FLOOR_STAFF = ["AGENT", "TEAM_LEADER", "SUPERVISOR"] as const;
 export const NAV_LAUNCHERS: readonly NavLauncher[] = [
   { key: "agent", label: "Agent console", href: "/agent", window: "strowger-agent", roles: ["AGENT", "TEAM_LEADER"], client: true },
   { key: "floor", label: "Floor", href: "/floor", window: "strowger-floor", roles: SUPERVISING, client: true },
-  { key: "campaigns", label: "Campaigns", href: "/campaigns", window: "strowger-campaigns", roles: SUP, client: true },
 ];
 
 export const NAV_SECTIONS: readonly NavSection[] = [
@@ -47,6 +47,11 @@ export const NAV_SECTIONS: readonly NavSection[] = [
       { key: "reports", label: "Reports", href: "/reports", roles: SUPERVISING, client: true },
       { key: "inbound-report", label: "Inbound", href: "/reports/inbound", roles: SUPERVISING, client: true },
     ],
+  },
+  {
+    key: "campaigns",
+    label: "Campaigns",
+    tabs: [{ key: "campaigns", label: "Campaigns", href: "/campaigns", roles: SUP, client: true }],
   },
   {
     key: "leads",
