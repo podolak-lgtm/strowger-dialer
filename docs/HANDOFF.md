@@ -994,6 +994,10 @@ room, supervisors and admins everything (`floorStats`).
   (the engine's one-line rule hangs up the stale leg). ON_CALL or WRAP_UP
   shows a notice instead, since a new line would end the room and drop the
   lead.
+- **A reload mid-call keeps the lead card**: the console's restore-on-load
+  path set the call but left the lead card empty (the lead only arrived with
+  a later `agent:state` event). It now calls `leadForCall(currentCallId)`
+  (`agent/actions.ts`, scoped to the agent's own calls) and shows it.
 - **Only the main console window has a phone.** The two-screen assist
   window (`/agent?screen=assist`) neither registers the softphone nor
   raises the line; Ready there says to use the main window. Until 5 Nov

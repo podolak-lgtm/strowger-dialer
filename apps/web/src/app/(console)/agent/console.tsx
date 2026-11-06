@@ -32,6 +32,7 @@ import {
   hangup,
   holdCall,
   leadById,
+  leadForCall,
   leadHistory,
   leaveVoicemail,
   manualDial,
@@ -561,13 +562,17 @@ export function AgentConsole(props: ConsoleProps) {
         if (cur.currentCallId) {
           setCallId(cur.currentCallId);
           setCallStatus(cur.state === "WRAP_UP" ? "ended" : "bridged");
+          // A reload mid-call or in wrap-up brings the lead card back (agents reload after every deploy).
+          void leadForCall(cur.currentCallId).then((l) => {
+            if (l) showLead(l);
+          });
           void callScreener(cur.currentCallId).then((info) => {
             if (info?.screener && info.status !== "ended") setScreener({ phrase: info.screenerPhrase });
           });
         }
       }
     })();
-  }, []);
+  }, [showLead]);
 
   useEffect(() => {
     const first = setTimeout(() => void refreshStats(), 0);
