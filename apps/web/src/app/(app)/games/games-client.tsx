@@ -1,8 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { POKER_QUALIFIERS, WAGER_NOTE_MAX, placeLine, timeLeft } from "@strowger/shared/games";
-import { PlayingCard, PokerHand, RunLeaderboard } from "@/components/playing-card";
+import { WAGER_NOTE_MAX, outcomeNoun, placeLine } from "@strowger/shared/games";
+import { PlayingCard } from "@/components/playing-card";
+import { PokerRuleFields } from "@/components/poker-run-fields";
+import { PokerRunCard, PokerTable } from "@/components/poker-run";
 import { endPokerRun, gamesOverview, setCampaignBets, startPokerRun, wager, type GamesOverview, type RunSummary } from "@/lib/games-actions";
 
 export function GamesClient({ meId, people, canPlay, canManage, initialCampaignId }: { meId: string; people: { id: string; name: string }[]; canPlay: boolean; canManage: boolean; initialCampaignId: string | null }) {
@@ -47,9 +49,9 @@ export function GamesClient({ meId, people, canPlay, canManage, initialCampaignI
 
   const picker = (
     <div className="mb-4 flex flex-wrap items-center gap-3 text-sm">
-      <label className="flex items-center gap-2">
+      <label className="flex min-w-0 max-w-full items-center gap-2">
         <span className="text-zinc-400">Campaign</span>
-        <select value={c?.id ?? ""} onChange={(e) => setCampaignId(e.target.value || null)} className="rounded-md border border-zinc-700 bg-zinc-950 px-3 py-1.5">
+        <select value={c?.id ?? ""} onChange={(e) => setCampaignId(e.target.value || null)} className="min-w-0 max-w-full flex-1 truncate rounded-md border border-zinc-700 bg-zinc-950 px-3 py-1.5">
           {o.campaigns.map((x) => (
             <option key={x.id} value={x.id}>
               {x.name}
@@ -202,38 +204,21 @@ export function GamesClient({ meId, people, canPlay, canManage, initialCampaignI
       </section>
 
       <section className="space-y-4">
-        <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-5">
-          {o.run ? (
-            <>
-              <div className="flex items-baseline justify-between">
-                <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-400">Poker run · {o.run.name}</h2>
-                <span className="text-xs text-zinc-500">{o.run.live ? timeLeft(o.run.endsAt, new Date(now)) : o.run.daysLeft > 0 ? `starts ${new Date(o.run.startsAt).toLocaleDateString()}` : "closing"}</span>
-              </div>
-              <p className="mt-1 text-xs text-zinc-500">
-                {o.run.prize ? <span className="text-amber-200">Prize: {o.run.prize}. </span> : null}
-                {ruleText(o.run)} Best five-card hand when it ends ({new Date(o.run.endsAt).toLocaleString()}) wins.
+        {o.run ? (
+          <div>
+            <PokerRunCard run={o.run} row={canPlay ? (mine ?? null) : (o.run.rows[0] ?? null)} now={now} handTitle={canPlay ? "Your Best Hand" : `Leading hand${o.run.rows[0] ? ` (${o.run.rows[0].name})` : ""}`}>
+              <p className="mt-2 text-[11px] text-zinc-500">
+                {ruleText(o.run)} Ends {new Date(o.run.endsAt).toLocaleString()}.{canPlay ? ` ${placeLine(o.run.rows, meId)}.` : ""}
               </p>
-              {canPlay ? (
-                <div className="sw-halftone mt-3 rounded-md border-2 border-black bg-black/30 p-3 shadow-[2px_2px_0_#000]">
-                  <div className="flex justify-between text-xs text-zinc-400">
-                    <span>Your hand</span>
-                    <span>{placeLine(o.run.rows, meId)}</span>
-                  </div>
-                  <PokerHand cards={mine?.cards ?? []} best={mine?.hand?.cards} makers={mine?.hand?.makers} label={mine?.hand?.label ?? null} size="md" />
-                </div>
-              ) : null}
-              <div className="mt-3">
-                <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-zinc-500">The table ({o.run.rows.length})</div>
-                <RunLeaderboard rows={o.run.rows} meId={meId} />
-              </div>
-            </>
-          ) : (
-            <>
-              <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-400">Poker run</h2>
-              <p className="mt-1 text-sm text-zinc-500">No poker run on {c.name} right now.</p>
-            </>
-          )}
-        </div>
+            </PokerRunCard>
+            <PokerTable run={o.run} meId={meId} />
+          </div>
+        ) : (
+          <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-5">
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-400">Poker run</h2>
+            <p className="mt-1 text-sm text-zinc-500">No poker run on {c.name} right now.</p>
+          </div>
+        )}
         {o.pastRuns.length ? (
           <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-5">
             <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-zinc-400">Past runs</h2>
@@ -268,8 +253,7 @@ export function GamesClient({ meId, people, canPlay, canManage, initialCampaignI
 }
 
 function ruleText(r: RunSummary): string {
-  if (r.qualifies === "CODES") return `A card for every ${r.codes.join(", ")} disposition.`;
-  return r.qualifies === "CONTACT" ? "A card for every live contact." : "A card for every sale.";
+  return `A card for every ${outcomeNoun(r.qualifies, r.outcomesPerCard, r.codes)}, seven at most; the best five win.`;
 }
 
 /** Supervisors, admins and team leaders with `manage_games`: bets on/off and the poker run for the selected campaign. */
@@ -347,7 +331,7 @@ function ManageCard({ o, busy, setBusy, refresh, setMsg }: { o: GamesOverview; b
                 startsAt = monday.toISOString();
                 endsAt = new Date(monday.getTime() + 7 * 86_400_000).toISOString();
               }
-              void run(() => startPokerRun({ campaignId: c.id, name: String(f.get("name") ?? ""), startsAt, endsAt, prize: String(f.get("prize") ?? ""), qualifies: String(f.get("qualifies") ?? "SALE"), codes: String(f.get("codes") ?? "") }));
+              void run(() => startPokerRun({ campaignId: c.id, name: String(f.get("name") ?? ""), startsAt, endsAt, prize: String(f.get("prize") ?? ""), qualifies: String(f.get("qualifies") ?? "SALE"), codes: String(f.get("codes") ?? ""), outcomesPerCard: Number(f.get("outcomesPerCard") ?? 1) || 1 }));
             }}
           >
             <div className="grid grid-cols-2 gap-3">
@@ -374,27 +358,14 @@ function ManageCard({ o, busy, setBusy, refresh, setMsg }: { o: GamesOverview; b
                 <span className="text-zinc-400">Ends (custom)</span>
                 <input name="endsAt" type="datetime-local" defaultValue={localInput(new Date(opened.getTime() + 7 * 86_400_000))} className="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2" />
               </label>
-              <label className="block">
-                <span className="text-zinc-400">What deals a card</span>
-                <select name="qualifies" defaultValue="SALE" className="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2">
-                  {Object.entries(POKER_QUALIFIERS).map(([k, v]) => (
-                    <option key={k} value={k}>
-                      {v}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="block">
-                <span className="text-zinc-400">Disposition codes</span>
-                <input name="codes" list={`codes-${c.id}`} placeholder={o.dispositions.filter((d) => d.isSale).map((d) => d.code).join(", ") || "SALE, XFER"} className="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2" />
-                <datalist id={`codes-${c.id}`}>
-                  {o.dispositions.map((d) => (
-                    <option key={d.code} value={d.code}>
-                      {d.label}
-                    </option>
-                  ))}
-                </datalist>
-              </label>
+              <PokerRuleFields inputClass="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2" codesListId={`codes-${c.id}`} codesPlaceholder={o.dispositions.filter((d) => d.isSale).map((d) => d.code).join(", ") || "SALE, XFER"} />
+              <datalist id={`codes-${c.id}`}>
+                {o.dispositions.map((d) => (
+                  <option key={d.code} value={d.code}>
+                    {d.label}
+                  </option>
+                ))}
+              </datalist>
             </div>
             <button disabled={busy} className="rounded-md bg-amber-400 px-3 py-1.5 text-xs font-semibold text-amber-950 disabled:opacity-40">
               Start the run

@@ -42,6 +42,7 @@ export async function startRunForm(formData: FormData) {
     prize: String(formData.get("prize") ?? ""),
     qualifies: String(formData.get("qualifies") ?? "SALE"),
     codes: String(formData.get("codes") ?? ""),
+    outcomesPerCard: Number(formData.get("outcomesPerCard") ?? 1) || 1,
   });
   back(campaignId, r.ok ? undefined : r.error);
 }

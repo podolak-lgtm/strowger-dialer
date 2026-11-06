@@ -236,18 +236,12 @@ ratings, extensions), `/voicemails` (agents see their own; supervisors all).
   - **The agent sees it** (owner, 5 Nov: "The agent should actually see
     their cards. It should be graphical. It should be fun ... The same with
     the points. Agents should be able to make bets with each other.").
-    - Cards: `components/playing-card.tsx` (`PlayingCard` sm/md/lg, pure
-      CSS + SVG pips, red hearts/diamonds, a comic back for an empty slot,
-      `aria-label` "Seven of hearts"; `PokerHand` five slots, the cards that
-      make the hand lifted with an amber outline, the hand in words under it;
-      `RunLeaderboard` everyone's best five as small cards, leader on a red
-      halftone). Used by the console and `/games` (supervisors see the same
-      table). Words and ranking are shared rules, tested: `cardLabel`,
-      `describeHand` ("Two pair, kings and sevens", "Royal flush"),
-      `handMakers`, `rankStandings` (compareHands; ties share a place),
-      `placeLine` ("You're 2nd of 6"), `timeLeft` ("2 days 5 hours left").
-      The engine's `RunSummary.rows` now carry `place` and `hand.label/makers`;
-      a run's `winningHand.hand` is the described hand from now on.
+    - Cards and table: see **Seven-card stud and the run card (6 Nov)** below
+      (it replaced the 5 Nov comic `PokerHand` / `RunLeaderboard`). Words and
+      ranking are shared rules, tested: `cardLabel`, `describeHand` ("Two pair,
+      kings and sevens", "Royal flush"), `handShort` (the pill), `handMakers`,
+      `rankStandings`, `placeLine` ("You're 2nd of 6"), `timeLeft` ("2 days 5
+      hours left"). A run's `winningHand.hand` is the described hand.
     - Console wiring: `app/(console)/agent/games.tsx`. `useGames` holds one
       overview for the whole console (reloads on every `games:*`), the deal
       queue and the toasts. The Games panel is on **both** screens now (main:
@@ -279,11 +273,65 @@ ratings, extensions), `/voicemails` (agents see their own; supervisors all).
       challenge to me into a toast with Accept/Decline, and a settlement into
       "Maria won 500 pts from you on Next sale" for each side
       (`settlementLine`). Rows in the overview carry `actions` for the viewer.
-    - Look: dark console with comic touches from the landing page (2px black
+    - Look (bet board, purse, toasts): dark console with comic touches from the landing page (2px black
       outlines, hard drop shadows, `.sw-halftone` / `.sw-halftone-red` dots,
       the comic red `#c8472b` and cream `#f6efe0`). Keyframes are in
       `globals.css` (`sw-deal-*`, `sw-pop`, `sw-float-up`, `sw-toast-in`) and
       all switch off under `prefers-reduced-motion`. No sounds.
+- **Seven-card stud and the run card (owner, 6 Nov: "Redo the game like
+  this: 7 card, use this style graphics, more sexy!", with a phone mockup).**
+  - Rules (`shared/games.ts`, tested): `HAND_MAX` = 7; `dealCard(held)` returns
+    null at seven; `bestHand` already took the best five of any number (tests
+    for six and seven cards, two trips, three pairs, kickers and ties).
+    `rankStandings` orders by best hand, then cards held, then contacts; a
+    place is shared only on a tie in all three (this is also how the run's
+    winner is picked). `cardsEarned(outcomes, N)`, `cardProgress(outcomes, N,
+    held)` (the ring: outcomes since the last card ÷ N, 0 when N = 1),
+    `clampOutcomesPerCard` (1..100), `defaultOutcomesPerCard` (CONTACT 5,
+    else 1), `outcomeNoun`, `handFullLine` ("Your hand is full: 7/7").
+  - `PokerRun.outcomesPerCard Int @default(1)` (migration
+    `20261106150000_poker_outcomes_per_card`; existing runs keep one card per
+    outcome). Both run forms use `components/poker-run-fields.tsx`
+    ("Deal a card every N <sales | live contacts | qualifying dispositions>",
+    N follows the qualifier's default until typed). Posted as
+    `outcomesPerCard` to `/internal/games/run`.
+  - Dealing (`dealForOutcome`): on a qualifying disposition the engine
+    **counts** the agent's qualifying calls in the run (calls of the campaign
+    dialled before `endsAt` and dialled or ended after `startsAt`, whose
+    disposition passes `earnsCard`) and deals until the hand holds
+    `cardsEarned` cards. Counting, not a counter, so a re-disposition never
+    double-deals. A full hand emits `games:full` (console toast) instead of
+    `games:card`. Cards are dealt per player from their own deck (two players
+    can hold the same card), as before.
+  - `RunSummary` now carries `outcomesPerCard`, `handMax` and per row
+    `contacts` (calls with an `isContact` disposition in the run window),
+    `outcomes`, `progress` and `hand.short`. Rows include anyone with a
+    contact or an outcome in the run, not only card holders (no cards ranks
+    last).
+  - Look: `components/poker-run.tsx` `PokerRunCard` (navy `#12142a`, dot
+    grid, violet-to-gold glowing frame, "POKER RUN · 7 CARD STUD", time
+    left, status pill, a 5-column grid of seven slots, locked slots with the
+    violet progress ring on the next one, "Your Best Hand:" in gold, makers
+    lifted with an amber glow, spare cards beyond the best five dimmed) and
+    `PokerTable` (tabs THE TABLE: 1st/2nd/3rd gold/silver/bronze, initials
+    avatar on a gradient with a ring in the place colour, hand pill, "n/7
+    cards", contacts, the leader's row in a violet-to-gold frame;
+    LEADERBOARD: the run's contacts with a bar, and past winners). Both use
+    Tailwind container queries (`@container`, `@sm:`) so the same component
+    fits the console's 320px column and `/games`. Used by the console Games
+    panel and `/games` (managers who do not play see the leader's hand).
+  - Card faces (`components/playing-card.tsx`): one 250 × 350 SVG per face,
+    corners (rank over suit, the lower one turned), the classic pip layout
+    for 2 to 10 (`PIPS`), a big ace, and our own double-headed court figure
+    for J / Q / K (`CourtHalf`, red / blue / gold, crown, beard, sword,
+    flower, cap; no copied card art). Sizes `sm` (simplified: rank and one
+    pip) / `md` / `lg` / `fluid`. The deal overlay keeps the flip, restyled
+    to the run card's look, and the dealt card also flips into its slot
+    (`fresh`). Motion is `sw-*` / `motion-reduce:` so it stops under
+    `prefers-reduced-motion`.
+  - Checked locally (Playwright, seeded run, throwaway auth bypass not
+    committed): `/games` at 1280 and 390 (no horizontal scroll; the campaign
+    picker now shrinks), the console's Games column, the run form.
 - Other games the owner asked for ideas on (not built): outcome bingo,
   king of the hill, horse race, team boss raid, streak multiplier, mystery
   box, fantasy draft; see the reply of 5 Nov.

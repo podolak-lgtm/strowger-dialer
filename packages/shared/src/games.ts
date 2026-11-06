@@ -51,8 +51,12 @@ export const RANKS = "23456789TJQKA";
 export const SUITS = "CDHS";
 export const DECK: string[] = [...SUITS].flatMap((s) => [...RANKS].map((r) => r + s));
 
-/** A card not already in `held`, uniformly at random; null when the deck is spent. */
-export function dealCard(held: string[], random = Math.random): string | null {
+/** Seven-card stud (owner, 6 Nov): a player holds at most seven cards in a run; the best five count. */
+export const HAND_MAX = 7;
+
+/** A card not already in `held`, uniformly at random; null when the hand is full (`max`, seven by default) or the deck is spent. */
+export function dealCard(held: string[], random = Math.random, max = HAND_MAX): string | null {
+  if (held.length >= max) return null;
   const left = DECK.filter((c) => !held.includes(c));
   if (left.length === 0) return null;
   return left[Math.floor(random() * left.length)] ?? null;
@@ -161,6 +165,56 @@ export function parsePokerRule(qualifies: string | null | undefined, codes: stri
   return { qualifies: q === "CONTACT" ? "CONTACT" : "SALE", codes: [] };
 }
 
+/** "Deal a card every N qualifying outcomes": whole numbers 1..100, anything else is 1. */
+export function clampOutcomesPerCard(n: unknown): number {
+  const v = Math.round(Number(n));
+  return Number.isFinite(v) && v >= 1 ? Math.min(100, v) : 1;
+}
+
+/** The run form's starting N: sales are rare, so a card each; live contacts come often, so one every five. */
+export function defaultOutcomesPerCard(q: string): number {
+  return q === "CONTACT" ? 5 : 1;
+}
+
+/** "sale" / "5 live contacts" / "3 of those dispositions": the run form's label and the panel's rule line. */
+export function outcomeNoun(q: string, n: number, codes: string[] = []): string {
+  const one = n === 1;
+  if (q === "CONTACT") return one ? "live contact" : `${n} live contacts`;
+  if (q === "CODES") {
+    const what = codes.length ? codes.join(" / ") : "qualifying disposition";
+    return one ? what : `${n} × ${what}`;
+  }
+  return one ? "sale" : `${n} sales`;
+}
+
+/** How many cards an agent's qualifying outcomes have earned: one at every multiple of `perCard`, never past seven. */
+export function cardsEarned(outcomes: number, perCard: number): number {
+  const n = clampOutcomesPerCard(perCard);
+  return Math.min(HAND_MAX, Math.floor(Math.max(0, outcomes) / n));
+}
+
+export interface CardProgress {
+  /** Qualifying outcomes since the last card (0 when N is 1: the slot simply waits). */
+  since: number;
+  perCard: number;
+  /** since ÷ perCard, 0..1, for the ring on the next slot. */
+  fraction: number;
+  /** Seven cards held: nothing more comes. */
+  full: boolean;
+}
+/** Progress toward the next card, for the ring round the next locked slot. */
+export function cardProgress(outcomes: number, perCard: number, held: number): CardProgress {
+  const n = clampOutcomesPerCard(perCard);
+  if (held >= HAND_MAX) return { since: 0, perCard: n, fraction: 0, full: true };
+  const since = Math.max(0, outcomes) % n;
+  return { since, perCard: n, fraction: since / n, full: false };
+}
+
+/** The console's line when no more cards can come. */
+export function handFullLine(held: number): string | null {
+  return held >= HAND_MAX ? `Your hand is full: ${HAND_MAX}/${HAND_MAX}` : null;
+}
+
 /** Monday 00:00 UTC of the week holding `d`, and the following Monday: the "this week" run window. */
 export function thisWeekWindow(d = new Date()): { startsAt: Date; endsAt: Date } {
   const t = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
@@ -240,6 +294,11 @@ export function describeHand(h: HandRank): string {
   }
 }
 
+/** The hand's short name for a pill: "Royal flush", "Full house", "Pair". */
+export function handShort(h: HandRank): string {
+  return h.category === 8 && h.kickers[0] === 14 ? "Royal flush" : h.name;
+}
+
 /** The cards that make the hand (lifted on screen): the pairs/trips/quads, all five of a straight,
  *  flush or full house, or the top card of a high-card hand. */
 export function handMakers(h: HandRank): string[] {
@@ -253,12 +312,14 @@ export function handMakers(h: HandRank): string[] {
   return h.cards.filter((c) => (counts.get(c[0]!) ?? 0) >= 2);
 }
 
-/** Rank everyone on a run by best hand (compareHands), more cards breaking a dead tie on screen only.
- *  `place` is shared on an exact tie: two equal best hands are both 1st. */
-export function rankStandings<T extends { cards: string[] }>(rows: T[]): (T & { hand: HandRank | null; place: number })[] {
+/** Rank everyone on a run (owner, 6 Nov): best hand (compareHands), then cards held, then contacts.
+ *  `place` is shared only on a tie in all three. */
+export function rankStandings<T extends { cards: string[]; contacts?: number }>(rows: T[]): (T & { hand: HandRank | null; place: number })[] {
   const withHands = rows.map((r) => ({ ...r, hand: bestHand(r.cards) }));
-  const cmp = (x: { hand: HandRank | null }, y: { hand: HandRank | null }) => (x.hand && y.hand ? compareHands(y.hand, x.hand) : x.hand ? -1 : y.hand ? 1 : 0);
-  withHands.sort((x, y) => cmp(x, y) || y.cards.length - x.cards.length);
+  type R = { hand: HandRank | null; cards: string[]; contacts?: number };
+  const byHand = (x: R, y: R) => (x.hand && y.hand ? compareHands(y.hand, x.hand) : x.hand ? -1 : y.hand ? 1 : 0);
+  const cmp = (x: R, y: R) => byHand(x, y) || y.cards.length - x.cards.length || (y.contacts ?? 0) - (x.contacts ?? 0);
+  withHands.sort(cmp);
   const out: (T & { hand: HandRank | null; place: number })[] = [];
   withHands.forEach((r, i) => {
     const prev = out[i - 1];

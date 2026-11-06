@@ -30,7 +30,7 @@ import { billingOverview, billingStatus, chargeSeatIfNew, outboundAllowed, platf
 import { log } from "../log";
 import { syncTelnyxCosts, vendorSpend } from "../billing/vendor";
 import { createWorkspace, moveCampaign } from "../workspaces";
-import { parsePokerRule, type WagerKind } from "@strowger/shared/games";
+import { clampOutcomesPerCard, parsePokerRule, type WagerKind } from "@strowger/shared/games";
 
 const Ids = z.object({ tenantId: z.string(), userId: z.string() });
 
@@ -392,13 +392,14 @@ export async function registerInternalRoutes(app: FastifyInstance): Promise<void
       prize: z.string().nullable().optional(),
       qualifies: z.string().optional(),
       codes: z.string().optional(),
+      outcomesPerCard: z.union([z.number(), z.string()]).optional(),
     }).parse(req.body);
     try {
       if (b.action === "start") {
         const startsAt = new Date(b.startsAt ?? "");
         const endsAt = new Date(b.endsAt ?? "");
         if (Number.isNaN(startsAt.getTime()) || Number.isNaN(endsAt.getTime())) throw new Error("Pick when the run starts and ends");
-        return { ok: true, run: await startPokerRun(b.tenantId, b.campaignId ?? "", b.userId, { name: b.name ?? "", startsAt, endsAt, prize: b.prize ?? null, rule: parsePokerRule(b.qualifies, b.codes) }) };
+        return { ok: true, run: await startPokerRun(b.tenantId, b.campaignId ?? "", b.userId, { name: b.name ?? "", startsAt, endsAt, prize: b.prize ?? null, rule: parsePokerRule(b.qualifies, b.codes), outcomesPerCard: clampOutcomesPerCard(b.outcomesPerCard) }) };
       }
       return { ok: true, run: await endPokerRun(b.tenantId, b.runId ?? "", b.userId) };
     } catch (e) {

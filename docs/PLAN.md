@@ -386,8 +386,9 @@ theme.
 ## Gamification (owner, 5 Nov)
 
 Weekly points (10,000 every Monday) agents bet against each other on any
-stat; a poker run where every qualifying outcome deals a card and the best
-hand when the run ends wins a bonus. Built, **switched on per campaign**
+stat; a poker run where qualifying outcomes deal cards (one every N, set per
+run) and the best hand when the run ends wins a bonus. Since 6 Nov it is
+seven-card stud: seven cards at most, the best five count. Built, **switched on per campaign**
 (owner, 5 Nov): an admin or supervisor (or a team leader given the right)
 enables bets on a campaign and starts a named poker run with a period, a
 prize and what earns a card; agents on that campaign are told on their

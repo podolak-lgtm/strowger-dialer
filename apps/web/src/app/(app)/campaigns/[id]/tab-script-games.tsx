@@ -4,7 +4,8 @@
 // History of script versions) and Games (bets in the draft; the poker run
 // starts and ends at once, with a confirm).
 import { useState, type ReactNode } from "react";
-import { POKER_QUALIFIERS, prettyCard } from "@strowger/shared/games";
+import { outcomeNoun, prettyCard } from "@strowger/shared/games";
+import { PokerRuleFields } from "@/components/poker-run-fields";
 import { Badge } from "@/components/ui";
 import { endRunForm, startRunForm } from "../games-actions";
 import { AddButton, Card, FieldBox, Hint, cls, useEditor } from "./editor-ui";
@@ -109,6 +110,7 @@ export interface RunView {
   status: string;
   qualifies: string;
   qualifyingCodes: string[];
+  outcomesPerCard: number;
   window: string;
   liveLabel: string;
   live: boolean;
@@ -167,7 +169,7 @@ export function GamesTab({ campaignId, runs, error, runDefaults }: { campaignId:
               <Badge tone={active.live ? "green" : "amber"}>{active.liveLabel}</Badge>
             </div>
             <div className="text-xs text-zinc-400">
-              {active.window} · {active.prize ? `Prize: ${active.prize}` : "No prize text"} · {active.qualifies === "CODES" ? `Card for ${active.qualifyingCodes.join(", ")}` : (POKER_QUALIFIERS[active.qualifies as keyof typeof POKER_QUALIFIERS] ?? active.qualifies)}
+              {active.window} · {active.prize ? `Prize: ${active.prize}` : "No prize text"} · A card for every {outcomeNoun(active.qualifies, active.outcomesPerCard, active.qualifyingCodes)} · 7 cards max
             </div>
             <button type="submit" className="rounded-md border border-red-900 px-3 py-1.5 text-sm font-medium text-red-300 hover:bg-red-950">
               End the run now and name the winner
@@ -189,24 +191,13 @@ export function GamesTab({ campaignId, runs, error, runDefaults }: { campaignId:
                   <option value="custom">Custom dates below</option>
                 </select>
               </FieldBox>
-              <FieldBox label="What deals a card">
-                <select name="qualifies" defaultValue="SALE" className={cls(undefined)}>
-                  {Object.entries(POKER_QUALIFIERS).map(([k, v]) => (
-                    <option key={k} value={k}>
-                      {v}
-                    </option>
-                  ))}
-                </select>
-              </FieldBox>
               <FieldBox label="Starts (custom)">
                 <input name="startsAt" type="datetime-local" defaultValue={runDefaults.startsAt} className={cls(undefined)} />
               </FieldBox>
               <FieldBox label="Ends (custom)">
                 <input name="endsAt" type="datetime-local" defaultValue={runDefaults.endsAt} className={cls(undefined)} />
               </FieldBox>
-              <FieldBox label="Disposition codes (for that choice)" hint="Comma-separated, e.g. SALE, XFER" className="col-span-2">
-                <input name="codes" className={cls(undefined)} placeholder="SALE, XFER" />
-              </FieldBox>
+              <PokerRuleFields inputClass={cls(undefined)} labelClass="mb-1 block text-xs font-medium text-zinc-400" />
             </div>
             <button type="submit" className="rounded-md border border-zinc-700 px-3 py-1.5 text-sm font-medium text-zinc-200 hover:bg-zinc-800">
               Start the run

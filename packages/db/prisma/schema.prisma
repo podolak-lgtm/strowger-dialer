@@ -946,7 +946,7 @@ model PointsLedger {
 }
 
 /// Poker run: an admin starts one per campaign with a name, a window, a prize
-/// and the rule for what deals a card; the best five-card hand when it ends wins.
+/// and the rule for what deals a card; seven cards at most, the best five when it ends win.
 model PokerRun {
   id          String         @id @default(cuid())
   tenant      Tenant         @relation(fields: [tenantId], references: [id])
@@ -962,6 +962,8 @@ model PokerRun {
   qualifies   String         @default("SALE")
   /// Disposition codes that deal a card when qualifies = CODES.
   qualifyingCodes String[]   @default([])
+  /// Seven-card stud (owner, 6 Nov): a card each time the agent's qualifying outcomes in the run reach the next multiple of this.
+  outcomesPerCard Int        @default(1)
   status      PokerRunStatus @default(ACTIVE)
   createdBy   User           @relation("PokerRunCreator", fields: [createdById], references: [id])
   createdById String
