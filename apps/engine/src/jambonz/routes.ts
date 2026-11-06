@@ -24,7 +24,7 @@ import { emitToAgent } from "../realtime";
 import type { Call, Campaign } from "@strowger/db";
 import { getSupervision, supervisorJoinVerbs, supervisorLegEnded } from "../supervise";
 import { voicemailVerbs } from "../dialer/voicemail";
-import { transferConfEvent, transferIdForSid, transferJoinVerbs, transferLegStatus, transferLegVerbs } from "../dialer/transfers";
+import { movedTransferFor, transferConfEvent, transferIdForSid, transferJoinVerbs, transferLegStatus, transferLegVerbs } from "../dialer/transfers";
 import { ivrResult, joinAgentVerbs, leaveQueue, overflowVerbs, queueWaitVerbs, routeInbound } from "../inbound/router";
 import { log } from "../log";
 import { agentRoom, hookUrl, jambonz } from "./client";
@@ -395,6 +395,13 @@ export async function registerJambonzRoutes(app: FastifyInstance): Promise<void>
     const q = req.query as { callId?: string };
     const b = req.body as { call_sid?: string; call_status?: string; reason?: string; conference_sid?: string };
     log.info({ query: q, callSid: b.call_sid, callStatus: b.call_status, reason: b.reason }, "conference exit for a lead leg");
+    // The agent left a transfer and the lead was redirected to the transfer room: jambonz still runs this
+    // hook for the old room, and its answer wins. Send the lead to the transfer room, never hang it up.
+    const moved = q.callId ? await movedTransferFor(q.callId) : null;
+    if (moved) {
+      log.info({ callId: q.callId, transferId: moved }, "lead left the agent's room for its transfer room");
+      return reply.send(await transferJoinVerbs(moved, "lead"));
+    }
     return reply.send([{ verb: "hangup" }]);
   });
 

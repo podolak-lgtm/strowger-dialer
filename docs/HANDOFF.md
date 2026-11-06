@@ -505,6 +505,22 @@ warm. The customer is never put on hold: no hold music, no private consult.
   **Cancel transfer** is greyed for the first 3 s after Dial and while the
   request is in flight. Connected shows green ("introduce them, then Leave"
   for warm).
+- **Leave kept hanging up the lead** (6 Nov, Gage's warm transfer): Leave
+  REST-redirects the lead to `/jambonz/xfer-join`, but jambonz still runs
+  the old agent-room conference's `actionHook` (`/jambonz/conf-exit`) about
+  0.2 s later, and its answer wins; it answered `hangup`, so the lead and
+  then the destination (its room ends on exit) were hung up. `conf-exit`
+  now asks `movedTransferFor(callId)` and, for a lead whose agent has left
+  a live transfer, answers with `transferJoinVerbs(..., "lead")` instead.
+  In the transfer room only the destination has `endConferenceOnExit`, so
+  the lead joining twice (redirect, then exit hook) never ends the room;
+  the lead hanging up for real still drops the destination through
+  `endLiveTransfersForCall`.
+- **Two buttons on a three-way**: "Leave call · they stay connected" and
+  a red "End call for everyone" (asks first). The main End Call reads "End
+  for everyone" while a transfer is live and is disabled after Leave.
+  Dispositions refuse while a transfer is live (they hang up first) and no
+  longer hang up after Leave.
 - **Caller ID refused by Telnyx**: on 5 Nov Telnyx rejected the lead's own
   number as the `from` (SIP 403 to jambonz, CDR `CALL_REJECTED`, Telnyx
   error D51). The fallback redial from the campaign's number worked within

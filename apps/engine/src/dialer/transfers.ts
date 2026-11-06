@@ -209,13 +209,27 @@ export async function transferJoinVerbs(transferId: string, leg: "lead" | "desti
       name: transferRoom(t.id),
       memberTag: leg,
       startConferenceOnEnter: true,
-      endConferenceOnExit: true,
+      // The destination ends the room when it leaves. The lead does not: its join can run twice (the REST
+      // redirect, then its old room's exit hook), and a leave between the two must not end the room. The
+      // lead hanging up for real ends the destination through endLiveTransfersForCall.
+      endConferenceOnExit: leg === "destination",
       beep: false,
       statusHook: hookUrl("/jambonz/conf", { transferId: t.id, leg, tenantId: t.tenantId, ...(leg === "lead" ? { callId: t.callId } : {}) }),
       statusEvents: ["start", "end", "join", "leave"],
     },
     { verb: "hangup" },
   ];
+}
+
+/**
+ * The transfer the lead was moved into, when its agent has left and it is
+ * still live: the lead's old room's exit hook then rejoins it there instead
+ * of hanging up (6 Nov: Gage pressed Leave and the exit hook's hangup, fired
+ * 0.2 s after the redirect, ended the lead and so the destination).
+ */
+export async function movedTransferFor(callId: string): Promise<string | null> {
+  const t = await prisma.transfer.findFirst({ where: { callId, destinationId: { not: null }, agentLeftAt: { not: null }, endedAt: null }, select: { id: true }, orderBy: { agentLeftAt: "desc" } });
+  return t?.id ?? null;
 }
 
 /** Conference events on a transfer's legs. A cold destination joining its room is the moment the agent is dropped. */

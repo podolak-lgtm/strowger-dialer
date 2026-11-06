@@ -897,9 +897,17 @@ export function AgentConsole(props: ConsoleProps) {
       setCallStart(null);
     });
 
+  /**
+   * End Call. With a transfer live it ends the call for everyone (the lead
+   * hanging up drops the destination), so it asks first; after the agent has
+   * left a transfer the lead is no longer theirs to hang up.
+   */
   const endCall = () =>
     run(async () => {
-      if (callId) await hangup(callId);
+      if (!callId) return;
+      if (transfer?.agentLeftAt) throw new Error("You already left: the lead and the destination are talking. Disposition below.");
+      if (transfer && transfer.state !== "ended" && !window.confirm(`End the call for everyone? The lead and ${transfer.destinationName} will both be hung up. To drop off and keep them talking, use Leave call instead.`)) return;
+      await hangup(callId);
     });
 
   const send = () =>
@@ -1055,7 +1063,10 @@ export function AgentConsole(props: ConsoleProps) {
   const sendDisposition = (dispositionId: string | undefined, callback?: { at?: string; inMinutes?: number }) =>
     run(async () => {
       if (!callId) throw new Error("No call to disposition");
-      if (agent?.state === "ON_CALL") await hangup(callId);
+      // A disposition hangs the call up first. Never on a live transfer: it would end the three-way, or,
+      // after Leave, cut off the lead and the destination the agent just connected.
+      if (transfer && !transfer.agentLeftAt && transfer.state !== "ended") throw new Error("A transfer is live: use Leave call (they stay connected) or End call for everyone first");
+      if (agent?.state === "ON_CALL" && !transfer?.agentLeftAt) await hangup(callId);
       const r = await disposition({ callId, dispositionId, notes: notes || undefined, callbackAt: callback?.at, callbackInMinutes: callback?.inMinutes, callbackScope: callback ? "AGENT" : undefined });
       if (!r.ok) throw new Error(r.error);
       dispositionedRef.current = callId;
@@ -1440,8 +1451,8 @@ export function AgentConsole(props: ConsoleProps) {
                     <button onClick={dropVoicemail} disabled={!onCall || busy} className="rounded-xl bg-violet-500/20 px-3 py-3 text-sm font-medium text-violet-200 disabled:opacity-40" title="It's a machine: leave the campaign's message and move on">
                       Leave VM & next
                     </button>
-                    <button onClick={endCall} disabled={!onCall || busy} className="rounded-xl bg-red-500/80 px-3 py-3 text-sm font-semibold text-white disabled:opacity-40">
-                      End Call
+                    <button onClick={endCall} disabled={!onCall || busy || Boolean(transfer?.agentLeftAt)} className="rounded-xl bg-red-500/80 px-3 py-3 text-sm font-semibold text-white disabled:opacity-40">
+                      {transfer && !transfer.agentLeftAt && transfer.state !== "ended" ? "End for everyone" : "End Call"}
                     </button>
                   </div>
                   {onCall ? (
@@ -1459,9 +1470,14 @@ export function AgentConsole(props: ConsoleProps) {
                             ) : null}
                             <span className="flex-1" />
                             {transfer.mode === "WARM" && transfer.state === "answered" ? (
-                              <button onClick={leaveTransfer} disabled={busy} title="Drop off: the lead and the destination stay connected; you go to wrap-up" className="rounded-lg bg-violet-400 px-3 py-1.5 text-sm font-semibold text-violet-950 disabled:opacity-40">
-                                Leave
-                              </button>
+                              <>
+                                <button onClick={leaveTransfer} disabled={busy} title="Drop off: the lead and the destination stay connected; you go to wrap-up" className="rounded-lg bg-violet-400 px-3 py-1.5 text-sm font-semibold text-violet-950 disabled:opacity-40">
+                                  Leave call · they stay connected
+                                </button>
+                                <button onClick={endCall} disabled={busy} title="Hang up the lead and the destination" className="rounded-lg bg-red-500/80 px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-40">
+                                  End call for everyone
+                                </button>
+                              </>
                             ) : null}
                             {transfer.state === "ringing" || (transfer.mode === "WARM" && transfer.state === "answered") ? (
                               <CancelTransferButton onCancel={cancelXfer} disabled={busy || transfer.id === "pending"} startedAt={xferStartedAt} />
