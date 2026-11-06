@@ -1,9 +1,23 @@
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
+import { NextResponse } from "next/server";
+import { TAB_ALIASES } from "@strowger/shared/nav";
 
 const isPublic = createRouteMatcher(["/", "/sign-in(.*)", "/sign-up(.*)", "/api/health", "/api/version", "/api/v1/(.*)", "/api/webhooks/(.*)", "/cb/(.*)", "/r/(.*)", "/legal/(.*)"]);
 
 export default clerkMiddleware(async (auth, req) => {
   if (!isPublic(req)) await auth.protect();
+  // `/numbers?tab=reputation` and friends: a section tab is its own page
+  // (`@strowger/shared/nav`), the query form is an alias for it.
+  const tab = req.nextUrl.searchParams.get("tab");
+  if (tab) {
+    const alias = TAB_ALIASES.find((a) => a.source === req.nextUrl.pathname && a.tab === tab);
+    if (alias) {
+      const url = req.nextUrl.clone();
+      url.pathname = alias.destination;
+      url.searchParams.delete("tab");
+      return NextResponse.redirect(url);
+    }
+  }
 });
 
 export const config = {

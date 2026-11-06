@@ -1,7 +1,8 @@
 import { UserButton } from "@clerk/nextjs";
 import Link from "next/link";
-import { NavLink } from "@/components/nav-link";
-import { hasRole, isBarePlatform, requireSession } from "@/lib/auth";
+import { visibleNav } from "@strowger/shared/nav";
+import { AppNav } from "@/components/app-nav";
+import { hasRole, isBarePlatform, navViewer, requireSession } from "@/lib/auth";
 import { billingStatus } from "@/lib/billing-actions";
 import { BillingBadge } from "@/components/billing-badge";
 import { leaveWorkspace } from "@/lib/billing-actions";
@@ -15,36 +16,7 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
   const bare = isBarePlatform(session);
   const acting = session.actingFrom ?? null;
   const billing = hasRole(session, "SUPERVISOR") && !bare ? await billingStatus() : null;
-  const nav: Array<{ href: string; label: string; show: boolean }> = bare
-    ? [
-        { href: "/platform", label: "Platform", show: true },
-        { href: "/people", label: "People", show: true },
-        { href: "/settings", label: "Settings", show: true },
-      ]
-    : [
-        { href: "/dashboard", label: "Dashboard", show: true },
-        { href: "/agent", label: "Agent", show: hasRole(session, "AGENT", "TEAM_LEADER") },
-        { href: "/floor", label: "Floor", show: hasRole(session, "SUPERVISOR", "ROOM_SUPERVISOR", "TEAM_LEADER") },
-        { href: "/campaigns", label: "Campaigns", show: hasRole(session, "SUPERVISOR") },
-        { href: "/lists", label: "Lists", show: hasRole(session, "SUPERVISOR") },
-        { href: "/cadences", label: "Cadences", show: hasRole(session, "SUPERVISOR") },
-        { href: "/affiliates", label: "Affiliates", show: hasRole(session, "SUPERVISOR") },
-        { href: "/compliance", label: "Compliance", show: hasRole(session, "SUPERVISOR") },
-        { href: "/dids", label: "DIDs", show: hasRole(session, "SUPERVISOR") },
-        { href: "/numbers", label: "Numbers", show: hasRole(session, "SUPERVISOR") },
-        { href: "/inbound", label: "Inbound", show: hasRole(session, "SUPERVISOR") },
-        { href: "/voicemails", label: "Voicemails", show: hasRole(session, "AGENT", "TEAM_LEADER", "SUPERVISOR") },
-        { href: "/games", label: "Games", show: hasRole(session, "AGENT", "TEAM_LEADER", "SUPERVISOR") },
-        { href: "/leads", label: "Find a lead", show: hasRole(session, "SUPERVISOR", "ROOM_SUPERVISOR", "TEAM_LEADER") },
-        { href: "/reports", label: "Reports", show: hasRole(session, "SUPERVISOR", "ROOM_SUPERVISOR", "TEAM_LEADER") },
-        { href: "/people", label: "People", show: hasRole(session, "SUPERVISOR") },
-        { href: "/teams", label: "Teams & rooms", show: hasRole(session, "SUPERVISOR") },
-        { href: "/partner", label: "Partner portal", show: session.roles.includes("AFFILIATE") },
-        { href: "/billing", label: "Billing", show: hasRole(session, "SUPERVISOR") && !session.tenant.isPlatform },
-        { href: "/refer", label: "Refer & earn", show: hasRole(session, "SUPERVISOR") && !session.tenant.isPlatform },
-        { href: "/platform", label: "Platform", show: hasRole(session) && (session.tenant.isPlatform || Boolean(acting)) },
-        { href: "/settings", label: "Settings", show: hasRole(session) },
-      ];
+  const nav = visibleNav(navViewer(session));
   return (
     <div className="flex min-h-screen flex-col">
       {acting ? (
@@ -78,31 +50,17 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
           <span className="text-lg font-semibold tracking-tight">Strowger</span>
           <span className="rounded-md border border-zinc-700 px-2 py-1 text-zinc-300">Menu</span>
         </summary>
-        <nav className="flex flex-wrap gap-1 px-3 pb-3 text-sm">
-          {nav
-            .filter((n) => n.show)
-            .map((n) => (
-              <NavLink key={n.href} href={n.href} className="rounded-md px-2.5 py-1.5 text-zinc-300 hover:bg-zinc-800 hover:text-white">
-                {n.label}
-              </NavLink>
-            ))}
-        </nav>
+        <AppNav nav={nav} compact />
       </details>
       <div className="flex flex-1">
         <aside className="sticky top-0 hidden h-screen w-56 shrink-0 flex-col overflow-y-auto border-r border-zinc-800 bg-zinc-900/60 p-4 md:flex">
           <Link href={bare ? "/platform" : "/dashboard"} className="mb-4 text-lg font-semibold tracking-tight">
             Strowger
           </Link>
-          <nav className="flex flex-1 flex-col gap-0.5 text-sm">
-            {nav
-              .filter((n) => n.show)
-              .map((n) => (
-                <NavLink key={n.href} href={n.href} className="rounded-md px-3 py-1.5 text-zinc-300 hover:bg-zinc-800 hover:text-white">
-                  {n.label}
-                </NavLink>
-              ))}
-            {bare ? <p className="mt-2 rounded-md border border-dashed border-zinc-700 px-3 py-2 text-xs leading-relaxed text-zinc-500">Pick a client under Platform to work on their campaigns, lists and numbers.</p> : null}
-          </nav>
+          <AppNav
+            nav={nav}
+            footer={bare ? <p className="mt-2 rounded-md border border-dashed border-zinc-700 px-3 py-2 text-xs leading-relaxed text-zinc-500">Pick a client under Platform to work on their campaigns, lists and numbers.</p> : null}
+          />
           {billing && !acting ? <BillingBadge b={billing} /> : null}
           <div className="mt-4 flex items-center gap-3 border-t border-zinc-800 pt-4">
             <UserButton />

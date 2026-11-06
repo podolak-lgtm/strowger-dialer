@@ -13,9 +13,10 @@
 //   GamesPanel    the run (hand, place, leaderboard) and the bet board
 //
 // Rules (hand names, places, who may decline) are in @strowger/shared/games.
-import { PlayingCard, PokerHand, RunLeaderboard } from "@/components/playing-card";
-import { gamesOverview, wager, type CardEvent, type GamesOverview, type WagerEvent, type WagerRow } from "@/lib/games-actions";
-import { WAGER_NOTE_MAX, placeLine, settlementLine, timeLeft } from "@strowger/shared/games";
+import { PlayingCard } from "@/components/playing-card";
+import { PokerRunCard, PokerTable } from "@/components/poker-run";
+import { gamesOverview, wager, type CardEvent, type FullEvent, type GamesOverview, type WagerEvent, type WagerRow } from "@/lib/games-actions";
+import { WAGER_NOTE_MAX, handFullLine, placeLine, settlementLine } from "@strowger/shared/games";
 import type { Socket } from "socket.io-client";
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -25,7 +26,7 @@ type WagerInput = Parameters<typeof wager>[0];
 
 export type Games = ReturnType<typeof useGames>;
 
-const GAME_EVENTS = ["games:run", "games:bets", "games:wager", "games:card", "games:points", "games:poker"];
+const GAME_EVENTS = ["games:run", "games:bets", "games:wager", "games:card", "games:points", "games:poker", "games:full"];
 
 /** One overview for the console; the deal queue plays only off a call (`onCall` holds it). */
 export function useGames({ campaignId, socket, meId, enabled, onCall }: { campaignId: string; socket: Socket | null; meId: string; enabled: boolean; onCall: boolean }) {
@@ -70,14 +71,17 @@ export function useGames({ campaignId, socket, meId, enabled, onCall }: { campai
         if (line) pushToast({ tone: line.tone, text: line.text });
       }
     };
+    const onFull = (f: FullEvent) => pushToast({ tone: "info", text: `${handFullLine(f.held) ?? "Your hand is full"} in ${f.run}. Best five of seven win.` });
     socket?.on("games:card", onCard);
     socket?.on("games:wager", onWager);
+    socket?.on("games:full", onFull);
     return () => {
       clearTimeout(first);
       clearInterval(t);
       for (const e of GAME_EVENTS) socket?.off(e, reload);
       socket?.off("games:card", onCard);
       socket?.off("games:wager", onWager);
+      socket?.off("games:full", onFull);
     };
   }, [enabled, reload, socket, meId, pushToast]);
 
@@ -270,33 +274,30 @@ export function GamesLayer({ g }: { g: Games }) {
 /** A card flips from its back to its face and slides away toward the hand; about two seconds. */
 function DealMoment({ deal, onDismiss }: { deal: Deal; onDismiss: () => void }) {
   return (
-    <div role="status" className="sw-deal-away sw-halftone-red relative flex items-center gap-3 rounded-xl border-2 border-black bg-[#f6efe0] p-3 text-[#1b1b1f] shadow-[4px_4px_0_#000]">
-      <div className="[perspective:600px]">
-        {/* Two-sided: the back faces the agent first, the face turns over (none of it under reduced motion). */}
-        <div className="sw-deal-flip relative" style={{ transformStyle: "preserve-3d" }}>
-          <div style={{ backfaceVisibility: "hidden" }}>
-            <PlayingCard card={deal.card} size="md" />
-          </div>
-          <div className="absolute inset-0" style={{ backfaceVisibility: "hidden", transform: "rotateY(180deg)" }} aria-hidden>
-            <PlayingCard card={null} size="md" />
+    <div role="status" className="sw-deal-away rounded-2xl bg-gradient-to-br from-violet-500 via-fuchsia-500/50 to-amber-400 p-[1.5px] shadow-[0_0_24px_-6px_rgba(139,92,246,0.8)]">
+      <div className="relative flex items-center gap-3 rounded-[15px] bg-[#12142a] bg-[radial-gradient(rgba(255,255,255,0.07)_1px,transparent_1.2px)] p-3 text-white [background-size:12px_12px]">
+        <div className="[perspective:600px]">
+          {/* Two-sided: the back faces the agent first, the face turns over (none of it under reduced motion). */}
+          <div className="sw-deal-flip relative" style={{ transformStyle: "preserve-3d" }}>
+            <div style={{ backfaceVisibility: "hidden" }}>
+              <PlayingCard card={deal.card} size="lg" className="!w-16" />
+            </div>
+            <div className="absolute inset-0" style={{ backfaceVisibility: "hidden", transform: "rotateY(180deg)" }} aria-hidden>
+              <PlayingCard card={null} size="lg" className="!w-16" />
+            </div>
           </div>
         </div>
+        <div className="min-w-0 flex-1">
+          <div className="text-2xl font-black leading-none text-[#ff6a3d]">+1 card</div>
+          <div className="mt-1 truncate text-[10px] font-bold uppercase tracking-[0.15em] text-zinc-400">{deal.run}</div>
+          {deal.hand ? <div className="truncate text-sm font-bold text-amber-300">{deal.hand}</div> : null}
+        </div>
+        <button type="button" onClick={onDismiss} aria-label="Dismiss" className="absolute right-2 top-1.5 text-xs font-bold text-zinc-500 hover:text-white">
+          ✕
+        </button>
       </div>
-      <div className="min-w-0 flex-1">
-        <div className="text-2xl font-black leading-none text-[#c8472b]">+1 card</div>
-        <div className="mt-1 truncate text-xs font-bold uppercase tracking-wide">{deal.run}</div>
-        {deal.hand ? <div className="truncate text-xs">{deal.hand}</div> : null}
-      </div>
-      <button type="button" onClick={onDismiss} aria-label="Dismiss" className="absolute right-1.5 top-1 text-xs font-bold text-[#1b1b1f]/60 hover:text-[#1b1b1f]">
-        ✕
-      </button>
     </div>
   );
-}
-
-function ruleLine(run: NonNullable<GamesOverview["run"]>): string {
-  if (run.qualifies === "CODES") return `A card for every ${run.codes.join(", ")}`;
-  return run.qualifies === "CONTACT" ? "A card for every live contact" : "A card for every sale";
 }
 
 /** The Games panel: the poker run (my hand, my place, everyone's hands) and the bet board. */
@@ -321,28 +322,13 @@ export function GamesPanel({ g, meId, campaignId, Panel }: { g: Games; meId: str
   }
   const mine = run?.rows.find((r) => r.userId === meId) ?? null;
   return (
-    <Panel title="Games" right={link} className="border-2 border-black shadow-[3px_3px_0_#000]">
+    <Panel title="Games" right={link}>
       {run ? (
-        <section className="sw-halftone mb-4 rounded-lg border-2 border-black bg-gradient-to-br from-fuchsia-950/60 to-zinc-950 p-3 shadow-[2px_2px_0_#000]">
-          <div className="flex items-start justify-between gap-2">
-            <div className="min-w-0">
-              <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-[#e98a72]">Poker run</div>
-              <div className="truncate text-base font-black">{run.name}</div>
-            </div>
-            <div className="shrink-0 text-right text-xs">
-              <div className="font-semibold text-zinc-200">{run.live ? timeLeft(run.endsAt, new Date(now)) : "not running"}</div>
-              <div className="text-zinc-400">{placeLine(run.rows, meId)}</div>
-            </div>
-          </div>
-          {run.prize ? <div className="mt-1 inline-block rounded border border-black bg-amber-300 px-1.5 text-xs font-bold text-black">Prize: {run.prize}</div> : null}
-          <div className="mt-2">
-            <PokerHand cards={mine?.cards ?? []} best={mine?.hand?.cards} makers={mine?.hand?.makers} label={mine?.hand?.label ?? null} size="md" />
-          </div>
-          <div className="mt-1 text-[11px] text-zinc-500">{ruleLine(run)} · best five cards when the run ends win</div>
-          <div className="mt-3">
-            <div className="mb-1 text-[10px] font-bold uppercase tracking-wide text-zinc-400">The table</div>
-            <RunLeaderboard rows={run.rows} meId={meId} max={6} />
-          </div>
+        <section className="mb-5">
+          <PokerRunCard run={run} row={mine} now={now} fresh={g.deal?.card ?? null}>
+            <div className="mt-1 text-[11px] text-zinc-500">{placeLine(run.rows, meId)}</div>
+          </PokerRunCard>
+          <PokerTable run={run} meId={meId} max={6} pastRuns={o.pastRuns} />
         </section>
       ) : (
         <div className="mb-3 text-xs text-zinc-500">No poker run on this campaign right now.</div>

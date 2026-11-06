@@ -20,7 +20,8 @@
     "./transfers": "./src/transfers.ts",
     "./campaign-form": "./src/campaign-form.ts",
     "./campaign-draft": "./src/campaign-draft.ts",
-    "./referrals": "./src/referrals.ts"
+    "./referrals": "./src/referrals.ts",
+    "./nav": "./src/nav.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

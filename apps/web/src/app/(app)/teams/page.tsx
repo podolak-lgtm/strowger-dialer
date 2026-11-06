@@ -20,7 +20,7 @@ export default async function TeamsPage() {
   return (
     <div>
       <PageHeader title="Teams & rooms" subtitle="A room is a location or floor with a room supervisor. A team is a leader and the agents under them; a team may sit inside a room. Team leaders see their team on the floor; room supervisors see their room." />
-      <div className="grid gap-6 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <Card title="Rooms">
           <div className="space-y-2">
             {rooms.map((r) => (

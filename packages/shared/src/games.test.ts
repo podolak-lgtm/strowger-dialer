@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { cardLabel, declinePlan, describeHand, handMakers, isRed, ledgerKind, ordinal, placeLine, rankGlyph, rankStandings, settlementLine, timeLeft, wagerActions } from "./games";
+import { HAND_MAX, defaultOutcomesPerCard, outcomeNoun, cardProgress, cardsEarned, clampOutcomesPerCard, handFullLine, handShort } from "./games";
 import { AGENT_RIGHTS, DEFAULT_LEVEL_RIGHTS, OPT_IN_RIGHTS, bestHand, compareHands, daysLeft, dealCard, earnsCard, parsePokerRule, periodKeyFor, rightsForLevel, runIsLive, thisWeekWindow, weekKey } from "./games";
 
 test("poker: categories", () => {
@@ -191,4 +192,82 @@ test("bets: settlement toast for each side", () => {
   assert.deepEqual(settlementLine(e, "maria"), { text: "You won 500 pts from Joe on Next sale", tone: "won" });
   assert.equal(settlementLine(e, "ann"), null);
   assert.equal(settlementLine({ ...e, winnerId: null, stake: 1500 }, "joe")!.text, "Push on Next sale: your 1,500 pts are back");
+});
+
+// ---- Seven-card stud (owner, 6 Nov: "Redo the game like this: 7 card")
+
+test("stud: best five of six and of seven", () => {
+  // Six cards: the flush hides among them.
+  const six = bestHand(["2H", "7H", "9H", "JH", "KH", "KS"])!;
+  assert.equal(six.name, "Flush");
+  assert.equal(six.cards.length, 5);
+  assert.ok(!six.cards.includes("KS"));
+  // Seven cards: a straight flush beats the four of a kind also present.
+  const seven = bestHand(["5H", "6H", "7H", "8H", "9H", "9S", "9D"])!;
+  assert.equal(seven.name, "Straight flush");
+  assert.equal(handShort(seven), "Straight flush");
+  assert.equal(handShort(bestHand(["TS", "JS", "QS", "KS", "AS", "2D", "3C"])!), "Royal flush");
+  // Two pair from three pairs: the top two, best kicker from what is left.
+  const threePairs = bestHand(["KS", "KD", "7H", "7C", "4D", "4S", "QH"])!;
+  assert.equal(describeHand(threePairs), "Two pair, kings and sevens");
+  assert.deepEqual(threePairs.kickers, [13, 7, 12]);
+  // Full house from two trips: the higher trips, the lower as the pair.
+  assert.equal(describeHand(bestHand(["9S", "9D", "9H", "5C", "5D", "5H", "2S"])!), "Full house, nines over fives");
+  // Straight of seven consecutive cards: the top five.
+  assert.equal(describeHand(bestHand(["3C", "4D", "5H", "6S", "7C", "8D", "9H"])!), "Straight, nine high");
+});
+
+test("stud: ties and kickers across seven cards", () => {
+  const a = bestHand(["AS", "AD", "KC", "9H", "5C", "3D", "2S"])!;
+  const b = bestHand(["AH", "AC", "KD", "9S", "4C", "3H", "2D"])!;
+  assert.ok(compareHands(a, b) > 0, "fifth card decides: 5 beats 4");
+  const c = bestHand(["AH", "AC", "KD", "9S", "5D", "3H", "2D"])!;
+  assert.equal(compareHands(a, c), 0, "same five values tie whatever the suits and spare cards");
+  const flushA = bestHand(["2H", "7H", "9H", "JH", "AH", "AS", "AD"])!;
+  const flushB = bestHand(["3S", "7S", "9S", "JS", "AS", "KD", "KC"])!;
+  assert.ok(compareHands(flushB, flushA) > 0, "flush kickers compare from the top down");
+});
+
+test("stud: a hand holds seven cards at most", () => {
+  assert.equal(HAND_MAX, 7);
+  const seven = ["AS", "KS", "QS", "JS", "TS", "2D", "3C"];
+  assert.equal(dealCard(seven), null);
+  assert.ok(dealCard(seven.slice(0, 6)));
+  assert.equal(handFullLine(7), "Your hand is full: 7/7");
+  assert.equal(handFullLine(6), null);
+});
+
+test("stud: a card every N qualifying outcomes", () => {
+  assert.equal(cardsEarned(0, 3), 0);
+  assert.equal(cardsEarned(2, 3), 0);
+  assert.equal(cardsEarned(3, 3), 1);
+  assert.equal(cardsEarned(7, 3), 2);
+  assert.equal(cardsEarned(50, 3), 7, "never past seven");
+  assert.equal(cardsEarned(4, 1), 4);
+  assert.deepEqual(cardProgress(7, 3, 2), { since: 1, perCard: 3, fraction: 1 / 3, full: false });
+  assert.deepEqual(cardProgress(4, 1, 4), { since: 0, perCard: 1, fraction: 0, full: false }, "N = 1: the ring shows nothing");
+  assert.equal(cardProgress(30, 3, 7).full, true);
+  assert.equal(clampOutcomesPerCard("0"), 1);
+  assert.equal(clampOutcomesPerCard(""), 1);
+  assert.equal(clampOutcomesPerCard(4.4), 4);
+  assert.equal(clampOutcomesPerCard(1000), 100);
+  assert.equal(defaultOutcomesPerCard("CONTACT"), 5);
+  assert.equal(defaultOutcomesPerCard("SALE"), 1);
+  assert.equal(outcomeNoun("SALE", 1), "sale");
+  assert.equal(outcomeNoun("CONTACT", 5), "5 live contacts");
+  assert.equal(outcomeNoun("CODES", 3, ["XFER", "SALE"]), "3 × XFER / SALE");
+});
+
+test("stud: standings by hand, then cards held, then contacts", () => {
+  const rows = rankStandings([
+    { userId: "a", cards: ["KS", "KD", "2C"], contacts: 50 },
+    { userId: "b", cards: ["KH", "KC", "3C", "4D"], contacts: 10 },
+    { userId: "c", cards: ["KH", "KC", "3C", "5D"], contacts: 90 },
+    { userId: "d", cards: ["QS", "QD", "9C", "8D"], contacts: 200 },
+    { userId: "e", cards: [], contacts: 300 },
+    { userId: "f", cards: [], contacts: 300 },
+  ]);
+  // b and c: same pair of kings, same four cards held; c has more contacts.
+  assert.deepEqual(rows.map((r) => r.userId), ["c", "b", "a", "d", "e", "f"]);
+  assert.deepEqual(rows.map((r) => r.place), [1, 2, 3, 4, 5, 5]);
 });

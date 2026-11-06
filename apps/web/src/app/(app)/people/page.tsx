@@ -25,7 +25,7 @@ export default async function PeoplePage() {
   return (
     <div>
       <PageHeader title="People" subtitle="Everyone who signs in. Everyone who may take or supervise calls gets a softphone line when they are created." />
-      <div className="grid gap-6 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <div className="lg:col-span-2">
           <Table head={["Person", "Roles", "Campaigns", "Phone line", "Status"]}>
             {people.map((p) => (

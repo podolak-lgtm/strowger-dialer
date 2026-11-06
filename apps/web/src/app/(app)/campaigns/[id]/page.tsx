@@ -99,6 +99,7 @@ export default async function CampaignPage({ params, searchParams }: PageProps<"
         prize: r.prize,
         status: r.status,
         qualifies: r.qualifies,
+        outcomesPerCard: r.outcomesPerCard,
         qualifyingCodes: r.qualifyingCodes,
         window: `${r.startsAt.toUTCString().slice(0, 16)} → ${r.endsAt.toUTCString().slice(0, 16)}`,
         live,

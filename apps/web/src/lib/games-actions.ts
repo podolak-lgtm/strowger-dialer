@@ -17,10 +17,26 @@ export type RunSummary = {
   status: "ACTIVE" | "ENDED";
   qualifies: string;
   codes: string[];
-  /** Ranked by the engine with compareHands; `place` shared on an exact tie. `label` is "Two pair, kings and sevens"; `makers` the cards that make it. */
-  rows: { userId: string; name: string; cards: string[]; place: number; hand: { name: string; label: string; cards: string[]; makers: string[] } | null }[];
+  /** A card every N qualifying outcomes. */
+  outcomesPerCard: number;
+  /** Seven-card stud: the most cards a hand holds. */
+  handMax: number;
+  rows: StandingRow[];
   winner: { userId: string; name: string; hand: string; cards: string[] } | null;
   endedAt: string | null;
+};
+/** One player on a run, ranked by the engine (`rankStandings`: best hand, then cards held, then contacts; `place` shared only
+ *  on a tie in all three). `hand.label` is "Two pair, kings and sevens", `hand.short` the pill ("Two pair"), `makers` the cards
+ *  that make it. `progress` is toward the next card (the ring round the next locked slot). */
+export type StandingRow = {
+  userId: string;
+  name: string;
+  cards: string[];
+  place: number;
+  contacts: number;
+  outcomes: number;
+  progress: { since: number; perCard: number; fraction: number; full: boolean };
+  hand: { name: string; short: string; label: string; cards: string[]; makers: string[] } | null;
 };
 export type GamesCampaign = { id: string; name: string; status: string; betsEnabled: boolean; weeklyPoints: number; maxStake: number };
 export type GamesOverview = {
@@ -44,7 +60,9 @@ export type WagerRow = { id: string; campaignId: string | null; kind: string; la
 /** Socket.IO `games:wager` (engine `wagerEvent`). */
 export type WagerEvent = { id: string; campaignId: string | null; status: "OPEN" | "ACCEPTED" | "SETTLED" | "DECLINED" | "VOID"; kind: string; label: string; short: string; stake: number; note: string | null; proposerId: string; proposer: string; accepterId: string | null; accepter: string; winnerId: string | null; withdrawn?: boolean; declined?: boolean };
 /** Socket.IO `games:card`, to the agent the card was dealt to. */
-export type CardEvent = { card: string; runId: string; run: string; campaignId: string; hand: string | null };
+export type CardEvent = { card: string; runId: string; run: string; campaignId: string; hand: string | null; held?: number; handMax?: number };
+/** Socket.IO `games:full`: a qualifying outcome with seven cards already held. */
+export type FullEvent = { runId: string; run: string; campaignId: string; held: number; handMax: number };
 
 type Result = { ok: true } | { ok: false; error: string };
 const fail = (e: unknown): { ok: false; error: string } => {
@@ -83,7 +101,7 @@ export async function setCampaignBets(input: { campaignId: string; betsEnabled: 
   }
 }
 
-export type StartRunInput = { campaignId: string; name: string; startsAt: string; endsAt: string; prize: string; qualifies: string; codes: string };
+export type StartRunInput = { campaignId: string; name: string; startsAt: string; endsAt: string; prize: string; qualifies: string; codes: string; outcomesPerCard?: number };
 export async function startPokerRun(input: StartRunInput): Promise<Result> {
   const s = await requireSession();
   try {
