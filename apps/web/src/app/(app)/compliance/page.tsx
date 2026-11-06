@@ -4,6 +4,7 @@ import { hasRole, requireClientWorkspace } from "@/lib/auth";
 import { Badge, Button, Card, Field, PageHeader, Table, Td, inputClass } from "@/components/ui";
 import { addDncNumbers, markStateRuleVerified, removeDncEntry, runScrubNow, setScrubRequired } from "./actions";
 import { engine } from "@/lib/engine";
+import { CheckNumber } from "./check-number";
 
 const DAY = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
@@ -28,6 +29,10 @@ export default async function CompliancePage() {
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <div className="space-y-6 lg:col-span-2">
+          <Card title="Check a number">
+            <p className="mb-3 text-xs text-zinc-500">Our do-not-call list, any lead with this number, and Crossbar&apos;s scrub: TCPA litigators and do-not-call complainers.</p>
+            <CheckNumber />
+          </Card>
           <Card
             title={
               <>

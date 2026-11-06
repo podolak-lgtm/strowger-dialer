@@ -9,6 +9,7 @@ import { dialLeadForAgent, dispositionCall, hangupCall } from "../dialer/calls";
 import { onLeadPosted } from "../dialer/cadence";
 import { crossbarConfigured } from "../scrub/crossbar";
 import { scrubPendingForTenant } from "../scrub/job";
+import { checkNumber } from "../scrub/check";
 import { getSupervision, setSupervisionMode, startSupervision, stopSupervision, takeOver } from "../supervise";
 import { handleInboundText } from "../sms/inbound";
 import { sendSms } from "../sms/provider";
@@ -54,6 +55,14 @@ export async function registerInternalRoutes(app: FastifyInstance): Promise<void
     } catch (e) {
       return { ok: false, error: e instanceof Error ? e.message : String(e) };
     }
+  });
+
+  // One number checked against our DNC, its leads and Crossbar's scrub (Compliance → Check a number).
+  app.post("/internal/compliance/check", async (req) => {
+    const b = z.object({ tenantId: z.string(), phone: z.string().min(7).max(30), paid: z.boolean().default(false), userId: z.string().optional() }).parse(req.body);
+    const r = await checkNumber(b.tenantId, b.phone, b.paid);
+    if (r.ok) await prisma.auditLog.create({ data: { tenantId: b.tenantId, actorId: b.userId ?? null, action: "compliance.check-number", target: r.result.phone, after: { verdict: r.result.verdict, paid: b.paid } } }).catch(() => undefined);
+    return r;
   });
 
   app.post("/internal/scrub/run", async (req) => {

@@ -2148,6 +2148,19 @@ pnpm exec prisma migrate diff --from-migrations prisma/migrations \
 pnpm exec prisma migrate deploy && pnpm exec prisma generate
 ```
 
+## Check a number (Compliance, 6 Nov)
+
+Compliance → "Check a number" (supervisors) posts to
+`/internal/compliance/check` (`apps/engine/src/scrub/check.ts`): our
+`DncEntry` rows for the number (workspace and campaign), up to 10 leads with
+it and their scrub status, then `crossbarScrub([phone], paid)` (Crossbar's
+DNC, the licensed TCPA Litigator List, the cache, and SubscriberVerify when
+"paid" is ticked, which is charged as one scrub). Verdict: BLOCKED (any hit),
+CLEAR (Crossbar answered and nothing hit), UNKNOWN (Crossbar unreachable, or
+the free lists had nothing and the paid lookup was off). Audit-logged as
+`compliance.check-number`. The engine holds `CROSSBAR_AGENT_KEY`, so the
+check never needs the key in a browser or a chat.
+
 ## Lead intake
 
 One path, `apps/web/src/lib/intake.ts`, for uploads and posts: normalise
