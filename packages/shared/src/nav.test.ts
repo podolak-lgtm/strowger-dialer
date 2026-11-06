@@ -4,10 +4,11 @@ import { NAV_SECTIONS, TAB_ALIASES, tabOfPath, visibleNav, visibleTabs, type Nav
 
 const client = (roles: NavViewer["roles"]): NavViewer => ({ roles, bare: false, platformTenant: false, acting: false });
 
-test("a client admin gets three launchers and seven items", () => {
+test("a client admin gets two launchers and Campaigns as a menu item", () => {
   const nav = visibleNav(client(["ADMIN"]));
-  assert.deepEqual(nav.launchers.map((l) => l.href), ["/agent", "/floor", "/campaigns"]);
-  assert.deepEqual(nav.items.map((i) => i.label), ["Dashboard", "Leads", "Numbers", "Compliance", "People", "Billing", "Settings"]);
+  assert.deepEqual(nav.launchers.map((l) => l.href), ["/agent", "/floor"]);
+  assert.deepEqual(nav.items.map((i) => i.label), ["Dashboard", "Campaigns", "Leads", "Numbers", "Compliance", "People", "Billing", "Settings"]);
+  assert.equal(nav.items.find((i) => i.key === "campaigns")?.href, "/campaigns");
 });
 
 test("the owner inside a client also sees Platform; the bare platform keeps its short list", () => {
