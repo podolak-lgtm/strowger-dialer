@@ -65,8 +65,9 @@ export default async function InboundReportPage({ searchParams }: PageProps<"/re
             ["Offered", o.offered],
             ["Answered", o.answered],
             ["Service level", `${o.serviceLevelPct}%`],
-            ["ASA", mmss(o.asaSeconds)],
-            ["Abandoned", `${o.abandoned} (${o.abandonRatePct}%)`],
+            ["ASA", o.asaAfterHoldSeconds !== o.asaSeconds ? `${mmss(o.asaSeconds)} · ${mmss(o.asaAfterHoldSeconds)} after hold` : mmss(o.asaSeconds)],
+            ["Abandoned", `${o.abandoned - o.abandonedInForcedHold} (${o.abandonRatePct}%)`],
+            ["Abandoned in forced hold", `${o.abandonedInForcedHold} (${o.forcedHoldDropPct}%)`],
             ["AHT (talk + wrap)", mmss(o.ahtSeconds)],
             ["Longest wait", mmss(o.longestWaitSeconds)],
             ["First-call resolution", `${o.fcrPct}%`],
@@ -85,7 +86,7 @@ export default async function InboundReportPage({ searchParams }: PageProps<"/re
 
       <div className="grid grid-cols-1 gap-6">
         <Card title="By queue">
-          <Table head={["Queue", "Offered", "Answered", "SL", "ASA", "Abandon", "AHT", "Longest", "FCR", "Callbacks", "Survey"]}>
+          <Table head={["Queue", "Offered", "Answered", "SL", "ASA", "Abandon", "In forced hold", "AHT", "Longest", "FCR", "Callbacks", "Survey"]}>
             {rep.byQueue.map((x) => (
               <tr key={x.queueId}>
                 <Td>{x.name}</Td>
@@ -96,6 +97,9 @@ export default async function InboundReportPage({ searchParams }: PageProps<"/re
                 </Td>
                 <Td className="tabular-nums">{mmss(x.asaSeconds)}</Td>
                 <Td className="tabular-nums">{x.abandonRatePct}%</Td>
+                <Td className="tabular-nums">
+                  {x.abandonedInForcedHold} <span className="text-xs text-zinc-500">({x.forcedHoldDropPct}%)</span>
+                </Td>
                 <Td className="tabular-nums">{mmss(x.ahtSeconds)}</Td>
                 <Td className="tabular-nums">{mmss(x.longestWaitSeconds)}</Td>
                 <Td className="tabular-nums">{x.fcrPct}%</Td>

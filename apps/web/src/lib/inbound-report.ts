@@ -29,6 +29,8 @@ export function factOf(c: InboundCallRow): InboundFact {
     abandonedInQueue: c.abandonedInQueue,
     waitSeconds: c.waitSeconds,
     surveyScore: c.surveyScore,
+    forcedHoldSeconds: c.forcedHoldSeconds,
+    abandonedInForcedHold: c.abandonedInForcedHold,
   };
 }
 
@@ -99,30 +101,33 @@ export type WallboardQueue = {
   open: boolean;
   closedReason: string | null;
   waiting: number;
+  /** Of `waiting`, still in the forced hold. */
+  inForcedHold: number;
+  minHoldSeconds: number;
   callbacksWaiting: number;
   longestWaitSeconds: number;
   available: number;
   onCall: number;
   wrapUp: number;
   slaSeconds: number;
-  today: Pick<InboundSummary, "offered" | "answered" | "serviceLevelPct" | "asaSeconds" | "abandonRatePct" | "ahtSeconds">;
+  today: Pick<InboundSummary, "offered" | "answered" | "serviceLevelPct" | "asaSeconds" | "abandonRatePct" | "ahtSeconds" | "abandonedInForcedHold">;
 };
 export type Wallboard = { queues: WallboardQueue[]; holdMessage: string | null; at: number | null };
 
-type EngineLive = { at: number; queues: Array<Omit<WallboardQueue, "today">>; holds: { message: string | null } } | null;
+type EngineLive = { at: number; queues: Array<Omit<WallboardQueue, "today" | "minHoldSeconds">>; holds: { message: string | null } } | null;
 
 /** The floor's inbound section: the engine's live numbers per queue (refreshed every second) and today's from the calls. */
 export async function wallboard(tenantId: string, live: EngineLive, since: Date): Promise<Wallboard> {
-  const queues = await prisma.queue.findMany({ where: { tenantId }, orderBy: { name: "asc" }, select: { id: true, name: true, slaSeconds: true } });
+  const queues = await prisma.queue.findMany({ where: { tenantId }, orderBy: { name: "asc" }, select: { id: true, name: true, slaSeconds: true, minHoldSeconds: true } });
   if (queues.length === 0) return { queues: [], holdMessage: null, at: live?.at ?? null };
   const calls = await prisma.call.findMany({
     where: { tenantId, queueId: { not: null }, queuedAt: { gte: since } },
-    select: { queueId: true, direction: true, outcome: true, phone: true, queuedAt: true, dialedAt: true, bridgedAt: true, endedAt: true, surveyStartedAt: true, wrapEndedAt: true, abandonedInQueue: true, waitSeconds: true, surveyScore: true },
+    select: { queueId: true, direction: true, outcome: true, phone: true, queuedAt: true, dialedAt: true, bridgedAt: true, endedAt: true, surveyStartedAt: true, wrapEndedAt: true, abandonedInQueue: true, waitSeconds: true, surveyScore: true, forcedHoldSeconds: true, abandonedInForcedHold: true },
   });
   const rows = queues.map((q) => {
     const l = live?.queues.find((x) => x.queueId === q.id);
     const mine = calls.filter((c) => c.queueId === q.id && (isOffered(c) || (c.direction === "OUTBOUND" && c.bridgedAt)));
-    const facts: InboundFact[] = mine.map((c) => ({ phone: c.phone, queuedAt: (c.queuedAt ?? c.dialedAt).getTime(), bridgedAt: c.bridgedAt?.getTime() ?? null, talkEndedAt: (c.surveyStartedAt ?? c.endedAt)?.getTime() ?? null, wrapEndedAt: c.wrapEndedAt?.getTime() ?? null, abandonedInQueue: c.abandonedInQueue, waitSeconds: c.waitSeconds, surveyScore: c.surveyScore }));
+    const facts: InboundFact[] = mine.map((c) => ({ phone: c.phone, queuedAt: (c.queuedAt ?? c.dialedAt).getTime(), bridgedAt: c.bridgedAt?.getTime() ?? null, talkEndedAt: (c.surveyStartedAt ?? c.endedAt)?.getTime() ?? null, wrapEndedAt: c.wrapEndedAt?.getTime() ?? null, abandonedInQueue: c.abandonedInQueue, waitSeconds: c.waitSeconds, surveyScore: c.surveyScore, forcedHoldSeconds: c.forcedHoldSeconds, abandonedInForcedHold: c.abandonedInForcedHold }));
     const s = summarizeInbound(facts, { slaSeconds: q.slaSeconds });
     return {
       queueId: q.id,
@@ -130,13 +135,15 @@ export async function wallboard(tenantId: string, live: EngineLive, since: Date)
       open: l?.open ?? true,
       closedReason: l?.closedReason ?? null,
       waiting: l?.waiting ?? 0,
+      inForcedHold: l?.inForcedHold ?? 0,
+      minHoldSeconds: q.minHoldSeconds,
       callbacksWaiting: l?.callbacksWaiting ?? 0,
       longestWaitSeconds: l?.longestWaitSeconds ?? 0,
       available: l?.available ?? 0,
       onCall: l?.onCall ?? 0,
       wrapUp: l?.wrapUp ?? 0,
       slaSeconds: q.slaSeconds,
-      today: { offered: s.offered, answered: s.answered, serviceLevelPct: s.serviceLevelPct, asaSeconds: s.asaSeconds, abandonRatePct: s.abandonRatePct, ahtSeconds: s.ahtSeconds },
+      today: { offered: s.offered, answered: s.answered, serviceLevelPct: s.serviceLevelPct, asaSeconds: s.asaSeconds, abandonRatePct: s.abandonRatePct, ahtSeconds: s.ahtSeconds, abandonedInForcedHold: s.abandonedInForcedHold },
     };
   });
   return { queues: rows, holdMessage: live?.holds.message ?? null, at: live?.at ?? null };

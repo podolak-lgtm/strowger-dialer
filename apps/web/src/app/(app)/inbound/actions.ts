@@ -1,8 +1,9 @@
 "use server";
 
 import { prisma, type InboundRoute, type QueueStrategy } from "@strowger/db";
-import { QUEUE_STRATEGIES, parseAreaCodes, parseHolidays, parseRangesText, parseStates, zonedTimeToUtc, type Holiday } from "@strowger/shared/inbound";
+import { QUEUE_STRATEGIES, holdConflict, parseAreaCodes, parseHolidays, parseRangesText, parseStates, zonedTimeToUtc, type Holiday } from "@strowger/shared/inbound";
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { requireRole } from "@/lib/auth";
 
 async function sup() {
@@ -111,6 +112,8 @@ export async function saveQueue(formData: FormData) {
     // Distribution
     strategy: (QUEUE_STRATEGIES as readonly string[]).includes(strategy) ? strategy : "LONGEST_IDLE",
     stickySeconds: int(formData, "stickySeconds", 20, 0, 300),
+    minHoldSeconds: int(formData, "minHoldSeconds", 0, 0, 600),
+    minHoldBypassVip: on(formData, "minHoldBypassVip"),
     // Priority
     priority: int(formData, "priority", 0, -100, 100),
     vipPriority: int(formData, "vipPriority", 10, 0, 100),
@@ -137,6 +140,8 @@ export async function saveQueue(formData: FormData) {
     surveyEnabled: on(formData, "surveyEnabled"),
     surveyAudioId: opt(formData, "surveyAudioId"),
   };
+  const conflict = holdConflict(data);
+  if (conflict) redirect(`/inbound?msg=${encodeURIComponent(`${name}: not saved. ${conflict}`)}&kind=error#queues`);
   if (id) await prisma.queue.updateMany({ where: { id, tenantId: s.tenant.id }, data });
   else await prisma.queue.create({ data });
   revalidatePath("/inbound");

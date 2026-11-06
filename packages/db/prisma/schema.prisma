@@ -1333,6 +1333,10 @@ model Queue {
   agingSeconds      Int           @default(60)
   /// Offer a returning caller to the agent who last handled their lead for this long first; 0 = off.
   stickySeconds     Int           @default(20)
+  /// Forced hold: no agent is offered the caller until they have waited this long (counted from their first queue); 0 = off.
+  minHoldSeconds    Int           @default(0)
+  /// VIP leads skip the forced hold.
+  minHoldBypassVip  Boolean       @default(true)
 
   // Announcements (text to speech `say` between hold music)
   announce             Boolean @default(false)
@@ -1618,6 +1622,10 @@ model Call {
   /// Seconds in the queue before an agent took it, or before the caller hung up.
   waitSeconds      Int?
   abandonedInQueue Boolean   @default(false)
+  /// The queue's forced hold this caller was given, seconds (null = none); the SLA is measured after it.
+  forcedHoldSeconds     Int?
+  /// Hung up before the forced hold ended (inside abandonedInQueue too).
+  abandonedInForcedHold Boolean @default(false)
   /// The agent's wrap-up ended (disposition or the queue's wrap-up timer).
   wrapEndedAt      DateTime?
   /// The agent left and the caller went to the post-call survey; talk ends here.

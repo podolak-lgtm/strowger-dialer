@@ -456,7 +456,7 @@ export function FloorConsole({ me, view, initialCampaignId, engineUrl, rtToken, 
 
 /** Inbound queues on the wall: who is waiting and for how long, who can take them, and today's service level. */
 function InboundWallboard({ board }: { board: FloorStats["inbound"] }) {
-  const tone = (q: FloorStats["inbound"]["queues"][number]) => (q.longestWaitSeconds > q.slaSeconds ? "text-red-300" : q.waiting ? "text-amber-200" : "text-zinc-200");
+  const tone = (q: FloorStats["inbound"]["queues"][number]) => (q.longestWaitSeconds > q.slaSeconds + q.minHoldSeconds ? "text-red-300" : q.waiting ? "text-amber-200" : "text-zinc-200");
   return (
     <Panel
       title="Inbound queues"
@@ -484,6 +484,7 @@ function InboundWallboard({ board }: { board: FloorStats["inbound"] }) {
                 <td className={`px-2 py-1.5 text-lg font-semibold tabular-nums ${tone(q)}`}>
                   {q.waiting}
                   {q.callbacksWaiting ? <span className="ml-1 text-xs font-normal text-zinc-400">+{q.callbacksWaiting} cb</span> : null}
+                  {q.inForcedHold ? <span className="ml-1 text-xs font-normal text-zinc-400" title={`Forced hold ${q.minHoldSeconds}s: not offered to agents yet`}>{q.inForcedHold} in hold</span> : null}
                 </td>
                 <td className={`px-2 py-1.5 tabular-nums ${tone(q)}`}>{mmss(q.longestWaitSeconds)}</td>
                 <td className="px-2 py-1.5 tabular-nums text-emerald-300">{q.available}</td>
@@ -496,7 +497,10 @@ function InboundWallboard({ board }: { board: FloorStats["inbound"] }) {
                   {q.today.offered ? `${q.today.serviceLevelPct}%` : "—"} <span className="text-[10px] text-zinc-500">in {q.slaSeconds}s</span>
                 </td>
                 <td className="px-2 py-1.5 tabular-nums">{q.today.answered ? mmss(q.today.asaSeconds) : "—"}</td>
-                <td className="px-2 py-1.5 tabular-nums">{q.today.offered ? `${q.today.abandonRatePct}%` : "—"}</td>
+                <td className="px-2 py-1.5 tabular-nums">
+                  {q.today.offered ? `${q.today.abandonRatePct}%` : "—"}
+                  {q.today.abandonedInForcedHold ? <span className="ml-1 text-[10px] text-zinc-500" title="Hung up during the forced hold">+{q.today.abandonedInForcedHold} in hold</span> : null}
+                </td>
                 <td className="px-2 py-1.5 tabular-nums">{q.today.answered ? mmss(q.today.ahtSeconds) : "—"}</td>
               </tr>
             ))}

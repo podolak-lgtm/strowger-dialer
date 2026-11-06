@@ -125,7 +125,7 @@ ratings, extensions), `/voicemails` (agents see their own; supervisors all).
 ### ACD (owner, 6 Nov: "the best at inbound, that's the future")
 
 The gaps against an Automatic Call Distribution article, built in this
-order. Pure maths in `packages/shared/src/inbound/` (`schedule.ts`,
+order. Pure maths in `packages/shared/src/inbound/` (`schedule.ts`, `hold.ts`,
 `distribution.ts`, `geo-route.ts`, `metrics.ts`, each with tests); engine
 in `apps/engine/src/inbound/` (`common.ts` shared verbs, `queues.ts` the
 distributor, `callbacks.ts` virtual hold, `survey.ts`, `router.ts` entry and
@@ -275,9 +275,40 @@ below are the column defaults.
     check live: the caller hears the question once, the score lands, the
     call ends after the thanks.
 
+12. **Forced hold** (owner, 6 Nov: "force hold time … if people hold 2
+    minutes a good percentage fall off, which reduces customer service
+    costs. It's just an option"). `Queue.minHoldSeconds` (0 = off, form
+    max 600) and `minHoldBypassVip` (on): `enterQueue` stores
+    `queued:<callId>.holdUntil` = the caller's **first** `queuedAt` +
+    the hold (`forcedHoldUntil` in `shared/inbound/hold.ts`; an overflow
+    into another queue does not restart it), and the tick does not offer
+    the caller to any agent, sticky included, before it (`inForcedHold`).
+    Sticky's window opens at the end of the hold. Announcements, hold
+    music, the callback offer and overflow run as before; the form refuses
+    `maxWaitSeconds` below the hold (`holdConflict`, the page shows the
+    message via `?msg=`). No hold for VIP leads (when ticked), queue
+    callbacks (their leg never enters a queue) and AI hand-offs
+    (`enterQueue(..., { exemptHold: true })` or `providerData.aiHandoff`).
+    `Call.forcedHoldSeconds` records the hold given; a hangup before
+    `holdUntil` sets `Call.abandonedInForcedHold` as well as
+    `abandonedInQueue`. **Metrics** (`summarizeInbound`, tested in
+    `hold.test.ts`): `abandonedInForcedHold` and `forcedHoldDropPct`
+    (of offered) on their own; `slaOffered` = offered − abandoned in hold
+    is the base of service level and abandon rate (nobody was allowed to
+    answer those callers); service level counts wait − hold ≤ SLA;
+    `asaSeconds` and `longestWaitSeconds` stay total wait,
+    `asaAfterHoldSeconds` is beside them. Report tile "Abandoned in forced
+    hold", queue table column, CSV columns `forced_hold_seconds`,
+    `abandoned_in_forced_hold`, `forced_hold_drop_pct`,
+    `asa_after_hold_seconds`; wallboard "n in hold" under Waiting (live
+    `inForcedHold`) and "+n in hold" under Abandon; the longest-wait colour
+    turns red only past SLA + hold. **Blending** counts from the end of the
+    hold (`oldestAnswerableWait`), so outbound is not held back for callers
+    nobody may answer yet. Migration `20261106230000_queue_forced_hold`.
+
 **Redis keys** (all expire): `queue:<id>` (zset: callId or `cb:<id>`),
 `queued:<callId>` (meta: queueId, at, priority, agingSeconds, leadId,
-sticky), `qann:` last announcement, `qcboffer:` / `qcbprompt:` the offer,
+sticky, holdUntil), `qann:` last announcement, `qcboffer:` / `qcbprompt:` the offer,
 `qbridge:<callId>` (agent being bridged: `/jambonz/queue-exit` answers with
 the bridge if the enqueue's actionHook races the REST redirect, instead of
 the old unconditional hangup), `qover:<callId>` (overflow verbs worked out

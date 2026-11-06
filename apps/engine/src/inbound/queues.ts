@@ -26,6 +26,9 @@ import {
   effectivePriority,
   estimateWaitSeconds,
   evaluateSchedule,
+  forcedHoldUntil,
+  inForcedHold,
+  oldestAnswerableWait,
   orderAgents,
   parseHolidays,
   parseWeekly,
@@ -68,6 +71,15 @@ export interface QueueMeta {
   leadId: string | null;
   stickyAgentId?: string | null;
   stickyUntil?: number | null;
+  /** Forced hold: not offered to any agent before this, ms (shared/inbound/hold.ts). */
+  holdUntil?: number | null;
+}
+
+export interface EnterOptions {
+  /** Already waited or talked (an AI hand-off): no forced hold. */
+  exemptHold?: boolean;
+  /** Added to the caller's priority (an AI hand-off goes to the front). */
+  priorityBoost?: number;
 }
 
 type QueueWithSchedule = Queue & { schedule: Schedule | null };
@@ -159,8 +171,8 @@ async function liveCount(queueId: string): Promise<number> {
   return members.filter((m) => !m.startsWith("cb:")).length;
 }
 
-/** Put a caller in a queue: hours first, then the limit, then priority and stickiness; hold music from the waitHook. */
-export async function enterQueue(queue: Queue & { schedule?: Schedule | null }, callId: string, depth = 0): Promise<Verbs> {
+/** Put a caller in a queue: hours first, then the limit, then priority, the forced hold and stickiness; hold music from the waitHook. */
+export async function enterQueue(queue: Queue & { schedule?: Schedule | null }, callId: string, depth = 0, opts: EnterOptions = {}): Promise<Verbs> {
   const q: QueueWithSchedule = queue.schedule !== undefined ? (queue as QueueWithSchedule) : await prisma.queue.findUniqueOrThrow({ where: { id: queue.id }, include: { schedule: true } });
   const call = await prisma.call.findUnique({ where: { id: callId }, include: { lead: true } });
   if (!call) return [{ verb: "hangup" }];
@@ -173,19 +185,33 @@ export async function enterQueue(queue: Queue & { schedule?: Schedule | null }, 
   }
   const lead = call.lead;
   const now = Date.now();
-  const priority = callerPriority(q, { vip: Boolean(lead?.vip), knownLead: Boolean(lead) });
-  const meta: QueueMeta = { queueId: q.id, tenantId: q.tenantId, at: now, priority, agingSeconds: q.agingSeconds, leadId: lead?.id ?? null };
+  const priority = callerPriority(q, { vip: Boolean(lead?.vip), knownLead: Boolean(lead) }) + (opts.priorityBoost ?? 0);
+  // Forced hold, counted from the caller's first queue (an overflow does not start it again).
+  const firstQueuedAt = call.queuedAt?.getTime() ?? now;
+  const exempt = opts.exemptHold || Boolean((call.providerData as { aiHandoff?: unknown } | null)?.aiHandoff);
+  const holdUntil = forcedHoldUntil({ queuedAt: firstQueuedAt, minHoldSeconds: q.minHoldSeconds, vip: Boolean(lead?.vip), bypassVip: q.minHoldBypassVip, exempt });
+  const meta: QueueMeta = { queueId: q.id, tenantId: q.tenantId, at: now, priority, agingSeconds: q.agingSeconds, leadId: lead?.id ?? null, holdUntil };
   // Sticky: the agent who last handled this lead gets the first offer, if they are on the floor and qualified.
+  // The window opens when the caller may be answered (after any forced hold).
   if (q.stickySeconds > 0 && lead?.lastAgentId) {
     const last = await getAgent(lead.lastAgentId);
     if (last && last.tenantId === q.tenantId && last.state !== "LOGGED_OUT" && qualifiedFrom(q, [last], await loadRatings([last.userId]), false).length) {
       meta.stickyAgentId = last.userId;
-      meta.stickyUntil = now + q.stickySeconds * 1000;
+      meta.stickyUntil = Math.max(now, holdUntil ?? 0) + q.stickySeconds * 1000;
     }
   }
   await redis.zadd(QKEY(q.id), queueScore(now, priority, q.agingSeconds), callId);
   await redis.set(QMETA(callId), JSON.stringify(meta), "EX", 6 * 3600);
-  await prisma.call.update({ where: { id: callId }, data: { queueId: q.id, queuedAt: call.queuedAt ?? new Date(now), providerData: { ...(call.providerData as object), queueId: q.id, queuedAt: new Date(now).toISOString(), priority } } });
+  await prisma.call.update({
+    where: { id: callId },
+    data: {
+      queueId: q.id,
+      queuedAt: call.queuedAt ?? new Date(now),
+      forcedHoldSeconds: holdUntil ? Math.round((holdUntil - firstQueuedAt) / 1000) : null,
+      providerData: { ...(call.providerData as object), queueId: q.id, queuedAt: new Date(now).toISOString(), priority, ...(holdUntil ? { holdUntil: new Date(holdUntil).toISOString() } : {}) },
+    },
+  });
+  if (holdUntil) log.info({ queueId: q.id, callId, holdSeconds: Math.round((holdUntil - now) / 1000) }, "queue forced hold");
   emitToTenant(q.tenantId, "floor:queue", { queueId: q.id, callId, event: "join" });
   return enqueueVerb(q, callId);
 }
@@ -208,7 +234,10 @@ export async function leaveQueue(callId: string, reason: "hangup" | "assigned" |
   await redis.zrem(QKEY(meta.queueId), callId);
   await redis.del(QMETA(callId), ANNOUNCED(callId), OFFERED(callId), PROMPTING(callId));
   if (reason === "hangup") {
-    await prisma.call.updateMany({ where: { id: callId, agentId: null }, data: { abandonedInQueue: true, waitSeconds: Math.round((Date.now() - meta.at) / 1000) } }).catch(() => undefined);
+    const now = Date.now();
+    const call = await prisma.call.findUnique({ where: { id: callId }, select: { queuedAt: true } }).catch(() => null);
+    const since = call?.queuedAt?.getTime() ?? meta.at;
+    await prisma.call.updateMany({ where: { id: callId, agentId: null }, data: { abandonedInQueue: true, abandonedInForcedHold: inForcedHold(meta.holdUntil, now), waitSeconds: Math.round((now - since) / 1000) } }).catch(() => undefined);
   }
   emitToTenant(meta.tenantId, "floor:queue", { queueId: meta.queueId, callId, event: "leave", reason });
 }
@@ -427,6 +456,8 @@ export interface QueueLive {
   open: boolean;
   closedReason: string | null;
   waiting: number;
+  /** Of `waiting`, still inside the forced hold. */
+  inForcedHold: number;
   callbacksWaiting: number;
   longestWaitSeconds: number;
   available: number;
@@ -493,6 +524,7 @@ async function tickTenant(tenantId: string, queues: QueueWithSchedule[], now: nu
     const pool = fresh.filter((a) => isFree(a) && !taken.has(a.userId));
     if (pool.length === 0) break;
     if (w.cb && !openOf.get(w.q.id)?.open) continue; // callbacks wait for the queue to open
+    if (inForcedHold(w.meta?.holdUntil, now)) continue; // forced hold: nobody is offered this caller yet
     let cands = qualifiedFrom(w.q, pool, ratings);
     const sticky = w.meta?.stickyAgentId && w.meta.stickyUntil && now < w.meta.stickyUntil ? w.meta.stickyAgentId : null;
     if (sticky) cands = cands.filter((c) => c.agent.userId === sticky);
@@ -522,16 +554,19 @@ async function tickTenant(tenantId: string, queues: QueueWithSchedule[], now: nu
     for (const w of waiting) if (w.q.id === q.id && (await redis.zscore(QKEY(q.id), w.member)) !== null) still.push(w);
     const stillWaiting = still.filter((w) => w.call);
     const oldest = stillWaiting.length ? Math.max(...stillWaiting.map((w) => (now - w.arrivalMs) / 1000)) : null;
+    // Blending counts from the end of the forced hold: nobody may answer a held caller yet.
+    const oldestAnswerable = oldestAnswerableWait(stillWaiting.map((w) => ({ arrivalMs: w.arrivalMs, holdUntil: w.meta?.holdUntil ?? null })), now);
     const qualified = qualifiedFrom(q, onFloor, ratings, false)
       .map((x) => x.agent)
       .sort((a, b) => Number(isFree(b)) - Number(isFree(a)) || a.since - b.since);
-    blend.push({ queueId: q.id, name: q.name, open: st.open, oldestWaitSeconds: oldest, blendWaitSeconds: q.blendWaitSeconds, reserveAgents: q.reserveAgents, qualified: qualified.map((a) => a.userId) });
+    blend.push({ queueId: q.id, name: q.name, open: st.open, oldestWaitSeconds: oldestAnswerable, blendWaitSeconds: q.blendWaitSeconds, reserveAgents: q.reserveAgents, qualified: qualified.map((a) => a.userId) });
     live.push({
       queueId: q.id,
       name: q.name,
       open: st.open,
       closedReason: st.open ? null : st.reason,
       waiting: stillWaiting.length,
+      inForcedHold: stillWaiting.filter((w) => inForcedHold(w.meta?.holdUntil, now)).length,
       callbacksWaiting: still.filter((w) => w.cb).length,
       longestWaitSeconds: Math.round(oldest ?? 0),
       available: qualified.filter(isFree).length,

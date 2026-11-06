@@ -2,7 +2,7 @@ import { prisma } from "@strowger/db";
 import { formatPhone } from "@strowger/shared";
 import Link from "next/link";
 import { requireClientWorkspace } from "@/lib/auth";
-import { Badge, Button, Card, Field, PageHeader, Table, inputClass } from "@/components/ui";
+import { Badge, Button, Card, Field, Notice, PageHeader, Table, inputClass } from "@/components/ui";
 import { deleteBox, deleteIvr, saveBox, saveIvr, setNumberRoute } from "./actions";
 import { GeoRoutes } from "./geo-routes";
 import { QueueForm } from "./queue-form";
@@ -29,8 +29,11 @@ async function load(t: string) {
 }
 type IvrOption = { digit: string; label?: string; action: string; targetId?: string | null };
 
-export default async function InboundPage() {
+export default async function InboundPage({ searchParams }: PageProps<"/inbound">) {
   const s = await requireClientWorkspace("SUPERVISOR");
+  const sp = await searchParams;
+  const msg = typeof sp.msg === "string" ? sp.msg : "";
+  const msgKind = sp.kind === "error" ? "error" : "ok";
   const t = s.tenant.id;
   const { numbers, ivrs, queues, boxes, skills, people, campaigns, audio, schedules, geoRoutes, now } = await load(t);
   const opts = (xs: Array<{ id: string; name: string }>) => xs.map(({ id, name }) => ({ id, name }));
@@ -65,6 +68,12 @@ export default async function InboundPage() {
           </>
         }
       />
+
+      {msg ? (
+        <div className="mb-4">
+          <Notice kind={msgKind}>{msg}</Notice>
+        </div>
+      ) : null}
 
       <Card title="Number routing" className="mb-6">
         {numbers.length === 0 ? <p className="text-sm text-zinc-500">Add numbers under Settings first.</p> : null}
@@ -229,7 +238,7 @@ export default async function InboundPage() {
         </Card>
 
         <div className="space-y-6">
-          <Card title="Queues">
+          <Card title="Queues" id="queues">
             <div className="space-y-3">
               {[...queues, null].map((q) => (
                 <QueueForm key={q?.id ?? "new"} q={q} queues={opts(queues)} skills={opts(skills)} campaigns={campaigns} audio={opts(audio)} boxes={opts(boxes)} schedules={opts(schedules)} />

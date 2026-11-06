@@ -54,7 +54,7 @@ export function QueueForm({ q, queues, skills, campaigns, audio, boxes, schedule
           <span>
             <span className="font-medium">{q.name}</span>
             <span className="ml-2 text-xs text-zinc-500">
-              {STRATEGY_LABEL[q.strategy].split(":")[0]} · max wait {q.maxWaitSeconds}s{q.announce ? " · announces" : ""}
+              {STRATEGY_LABEL[q.strategy].split(":")[0]} · max wait {q.maxWaitSeconds}s{q.minHoldSeconds ? ` · forced hold ${q.minHoldSeconds}s` : ""}{q.announce ? " · announces" : ""}
               {q.callbackEnabled ? " · callback" : ""}
               {q.surveyEnabled ? " · survey" : ""}
             </span>
@@ -130,6 +130,15 @@ export function QueueForm({ q, queues, skills, campaigns, audio, boxes, schedule
             <Field label="Sticky (s)" hint="The agent who last handled the caller's lead gets them first, if free this soon. 0 = off.">
               <input name="stickySeconds" type="number" min="0" max="300" defaultValue={q?.stickySeconds ?? 20} className={num} />
             </Field>
+          </div>
+          <div className="mt-2 grid grid-cols-1 items-end gap-2 sm:grid-cols-[140px_1fr]">
+            <Field label="Forced hold (s)" hint="0 = off. Max wait must be at least this.">
+              <input name="minHoldSeconds" type="number" min="0" max="600" step="5" defaultValue={q?.minHoldSeconds ?? 0} className={num} />
+            </Field>
+            <div className="space-y-1">
+              <p className="text-xs text-zinc-500">Callers wait at least this long before an agent is offered the call. Some callers hang up while waiting; they show as &apos;abandoned in forced hold&apos;.</p>
+              <Check name="minHoldBypassVip" label="VIP leads skip the forced hold" defaultChecked={q?.minHoldBypassVip ?? true} />
+            </div>
           </div>
         </Section>
 
