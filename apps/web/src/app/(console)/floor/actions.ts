@@ -4,6 +4,7 @@ import { prisma } from "@strowger/db";
 import { engine } from "@/lib/engine";
 import { hasRole, requireRole } from "@/lib/auth";
 import type { AgentLive } from "../agent/actions";
+import { wallboard, type Wallboard } from "@/lib/inbound-report";
 
 type Ok<T> = { ok: true } & T;
 type Err = { ok: false; error: string };
@@ -70,6 +71,8 @@ export type FloorStats = {
   transferred: TransferredCall[];
   history: { at: string; action: string; actor: string; target: string | null }[];
   team: { label: string; total: number; rate: number }[];
+  /** Inbound queues: live waiting and agents from the engine, today's service level from the calls. */
+  inbound: Wallboard;
 };
 
 /** Everything both supervisor screens show, in one call. */
@@ -79,14 +82,16 @@ export async function floorStats(campaignId: string | null): Promise<FloorStats>
   since.setHours(0, 0, 0, 0);
   const whereDay = { tenantId: s.tenant.id, dialedAt: { gte: since }, ...(campaignId ? { campaignId } : {}) };
 
-  const [live, calls, campaigns, history, users, transferredAll] = await Promise.all([
+  const [live, calls, campaigns, history, users, transferredAll, inboundLive] = await Promise.all([
     engine<{ agents: AgentLive[] }>(`/floor?tenantId=${s.tenant.id}`).then((r) => r.agents).catch(() => [] as AgentLive[]),
     prisma.call.findMany({ where: { ...whereDay, direction: { not: "TRANSFER" } }, include: { disposition: { select: { isContact: true, isSale: true } }, transfers: { select: { id: true } } } }),
     prisma.campaign.findMany({ where: { tenantId: s.tenant.id, status: { in: ["ACTIVE", "PAUSED"] } }, select: { id: true, name: true, status: true }, orderBy: { name: "asc" } }),
     prisma.auditLog.findMany({ where: { tenantId: s.tenant.id, action: { startsWith: "supervise." } }, orderBy: { createdAt: "desc" }, take: 12, include: { actor: { select: { firstName: true, email: true } } } }),
     prisma.user.findMany({ where: { tenantId: s.tenant.id, active: true }, select: { id: true, firstName: true, lastName: true, email: true } }),
     engine<{ calls: TransferredCall[] }>(`/transferred?tenantId=${s.tenant.id}`).then((r) => r.calls).catch(() => [] as TransferredCall[]),
+    engine<{ live: Parameters<typeof wallboard>[1] }>(`/inbound/live?tenantId=${s.tenant.id}`).then((r) => r.live).catch(() => null),
   ]);
+  const inbound = await wallboard(s.tenant.id, inboundLive, since);
 
   // Team leaders see their team; room supervisors their room; supervisors everything.
   let visible = new Set(users.map((u) => u.id));
@@ -165,5 +170,6 @@ export async function floorStats(campaignId: string | null): Promise<FloorStats>
     transferred: transferredAll.filter((t) => visible.has(t.agentId) && (!campaignId || t.campaignId === campaignId)),
     history: history.map((h) => ({ at: h.createdAt.toISOString(), action: h.action.replace("supervise.", ""), actor: h.actor?.firstName ?? h.actor?.email ?? "?", target: h.target ? nameOf(h.target) : null })),
     team,
+    inbound,
   };
 }

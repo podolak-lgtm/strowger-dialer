@@ -1,30 +1,56 @@
 "use server";
 
-import { prisma, type InboundRoute } from "@strowger/db";
+import { prisma, type InboundRoute, type QueueStrategy } from "@strowger/db";
+import { QUEUE_STRATEGIES, parseAreaCodes, parseHolidays, parseRangesText, parseStates, zonedTimeToUtc, type Holiday } from "@strowger/shared/inbound";
 import { revalidatePath } from "next/cache";
 import { requireRole } from "@/lib/auth";
 
-async function own() {
+async function sup() {
   return requireRole("SUPERVISOR");
 }
 const str = (fd: FormData, k: string) => String(fd.get(k) ?? "").trim();
 const opt = (fd: FormData, k: string) => str(fd, k) || null;
+/** A whole number from the form, clamped; blank or junk gives the default. */
+const int = (fd: FormData, k: string, def: number, min: number, max: number) => {
+  const raw = str(fd, k);
+  const n = raw === "" ? def : Math.round(Number(raw));
+  return Number.isFinite(n) ? Math.max(min, Math.min(max, n)) : def;
+};
+const on = (fd: FormData, k: string) => fd.get(k) === "on";
+
+/** An id the form sent, kept only when it belongs to this tenant. */
+async function own<T extends "queue" | "schedule" | "ivr" | "voicemailBox" | "callerIdNumber">(model: T, tenantId: string, id: string | null): Promise<string | null> {
+  if (!id) return null;
+  const where = { id, tenantId };
+  const hit =
+    model === "queue"
+      ? await prisma.queue.findFirst({ where, select: { id: true } })
+      : model === "schedule"
+        ? await prisma.schedule.findFirst({ where, select: { id: true } })
+        : model === "ivr"
+          ? await prisma.ivr.findFirst({ where, select: { id: true } })
+          : model === "voicemailBox"
+            ? await prisma.voicemailBox.findFirst({ where, select: { id: true } })
+            : await prisma.callerIdNumber.findFirst({ where, select: { id: true } });
+  return hit?.id ?? null;
+}
 
 export async function setNumberRoute(formData: FormData) {
-  const s = await own();
+  const s = await sup();
   const id = str(formData, "id");
   const routeTo = str(formData, "routeTo") as InboundRoute;
   const target = opt(formData, "target");
+  const scheduleId = await own("schedule", s.tenant.id, opt(formData, "scheduleId"));
   await prisma.callerIdNumber.updateMany({
     where: { id, tenantId: s.tenant.id },
-    data: { routeTo, ivrId: routeTo === "IVR" ? target : null, queueId: routeTo === "QUEUE" ? target : null, routeUserId: routeTo === "USER" ? target : null },
+    data: { routeTo, ivrId: routeTo === "IVR" ? target : null, queueId: routeTo === "QUEUE" ? target : null, routeUserId: routeTo === "USER" ? target : null, scheduleId },
   });
   revalidatePath("/inbound");
 }
 
 // ── IVRs ──
 export async function saveIvr(formData: FormData) {
-  const s = await own();
+  const s = await sup();
   const id = opt(formData, "id");
   const name = str(formData, "name");
   if (!name) throw new Error("Name is required");
@@ -51,7 +77,7 @@ export async function saveIvr(formData: FormData) {
 }
 
 export async function deleteIvr(formData: FormData) {
-  const s = await own();
+  const s = await sup();
   const id = str(formData, "id");
   await prisma.callerIdNumber.updateMany({ where: { ivrId: id, tenantId: s.tenant.id }, data: { ivrId: null, routeTo: "CAMPAIGN" } });
   await prisma.ivr.deleteMany({ where: { id, tenantId: s.tenant.id } });
@@ -60,7 +86,7 @@ export async function deleteIvr(formData: FormData) {
 
 // ── Queues ──
 export async function saveQueue(formData: FormData) {
-  const s = await own();
+  const s = await sup();
   const id = opt(formData, "id");
   const name = str(formData, "name");
   if (!name) throw new Error("Name is required");
@@ -69,16 +95,47 @@ export async function saveQueue(formData: FormData) {
     .map(String)
     .filter(Boolean)
     .map((skillId) => ({ skillId, minLevel: Math.max(1, Math.min(5, Number(formData.get(`minLevel_${skillId}`)) || 1)) }));
+  const strategy = str(formData, "strategy") as QueueStrategy;
+  const action = (k: string, def: string) => (["VOICEMAIL", "QUEUE", "HANGUP"].includes(str(formData, k)) ? str(formData, k) : def);
   const data = {
     tenantId: s.tenant.id,
     name,
     requiredSkills,
     campaignId: opt(formData, "campaignId"),
     holdAudioId: opt(formData, "holdAudioId"),
-    maxWaitSeconds: Math.max(15, Math.min(3600, Number(formData.get("maxWaitSeconds")) || 300)),
-    overflowAction: str(formData, "overflowAction") || "VOICEMAIL",
-    overflowQueueId: opt(formData, "overflowQueueId"),
-    voicemailBoxId: opt(formData, "voicemailBoxId"),
+    maxWaitSeconds: int(formData, "maxWaitSeconds", 300, 15, 3600),
+    overflowAction: action("overflowAction", "VOICEMAIL"),
+    overflowQueueId: await own("queue", s.tenant.id, opt(formData, "overflowQueueId")),
+    voicemailBoxId: await own("voicemailBox", s.tenant.id, opt(formData, "voicemailBoxId")),
+    scheduleId: await own("schedule", s.tenant.id, opt(formData, "scheduleId")),
+    // Distribution
+    strategy: (QUEUE_STRATEGIES as readonly string[]).includes(strategy) ? strategy : "LONGEST_IDLE",
+    stickySeconds: int(formData, "stickySeconds", 20, 0, 300),
+    // Priority
+    priority: int(formData, "priority", 0, -100, 100),
+    vipPriority: int(formData, "vipPriority", 10, 0, 100),
+    knownLeadPriority: int(formData, "knownLeadPriority", 2, 0, 100),
+    agingSeconds: int(formData, "agingSeconds", 60, 0, 3600),
+    // Announcements
+    announce: on(formData, "announce"),
+    announceEverySeconds: int(formData, "announceEverySeconds", 60, 15, 600),
+    announcePosition: on(formData, "announcePosition"),
+    announceWait: on(formData, "announceWait"),
+    // Callback
+    callbackEnabled: on(formData, "callbackEnabled"),
+    callbackOfferAfterSeconds: int(formData, "callbackOfferAfterSeconds", 90, 10, 3600),
+    callbackAudioId: opt(formData, "callbackAudioId"),
+    // Blending
+    blendWaitSeconds: int(formData, "blendWaitSeconds", 30, 0, 3600),
+    reserveAgents: int(formData, "reserveAgents", 0, 0, 100),
+    // Limits and wrap-up
+    maxWaiting: int(formData, "maxWaiting", 0, 0, 1000),
+    fullAction: action("fullAction", "VOICEMAIL"),
+    wrapUpSeconds: int(formData, "wrapUpSeconds", 30, 0, 600),
+    slaSeconds: int(formData, "slaSeconds", 20, 5, 600),
+    // Survey
+    surveyEnabled: on(formData, "surveyEnabled"),
+    surveyAudioId: opt(formData, "surveyAudioId"),
   };
   if (id) await prisma.queue.updateMany({ where: { id, tenantId: s.tenant.id }, data });
   else await prisma.queue.create({ data });
@@ -86,16 +143,108 @@ export async function saveQueue(formData: FormData) {
 }
 
 export async function deleteQueue(formData: FormData) {
-  const s = await own();
+  const s = await sup();
   const id = str(formData, "id");
+  await prisma.schedule.updateMany({ where: { tenantId: s.tenant.id, closedAction: "QUEUE", closedTargetId: id }, data: { closedAction: "MESSAGE", closedTargetId: null } });
   await prisma.callerIdNumber.updateMany({ where: { queueId: id, tenantId: s.tenant.id }, data: { queueId: null, routeTo: "CAMPAIGN" } });
   await prisma.queue.deleteMany({ where: { id, tenantId: s.tenant.id } });
   revalidatePath("/inbound");
 }
 
+// ── Schedules (business hours) ──
+export async function saveSchedule(formData: FormData) {
+  const s = await sup();
+  const id = opt(formData, "id");
+  const name = str(formData, "name");
+  if (!name) throw new Error("Name is required");
+  const timezone = str(formData, "timezone") || "America/New_York";
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: timezone });
+  } catch {
+    throw new Error(`Unknown time zone ${timezone}`);
+  }
+  const weekly: Record<string, Array<readonly [string, string]>> = {};
+  for (let d = 0; d < 7; d++) {
+    const ranges = parseRangesText(str(formData, `day${d}`));
+    if (ranges.length) weekly[String(d)] = ranges;
+  }
+  const holidays: Holiday[] = [];
+  for (const key of formData.keys()) {
+    const m = /^holidayDate_(\w+)$/.exec(key);
+    if (!m) continue;
+    const date = str(formData, key);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
+    holidays.push({ date, name: opt(formData, `holidayName_${m[1]}`), audioId: opt(formData, `holidayAudio_${m[1]}`) });
+  }
+  const closedAction = ["VOICEMAIL", "IVR", "QUEUE", "MESSAGE"].includes(str(formData, "closedAction")) ? str(formData, "closedAction") : "MESSAGE";
+  const targetRaw = opt(formData, `closedTarget_${closedAction}`);
+  const closedTargetId = closedAction === "QUEUE" ? await own("queue", s.tenant.id, targetRaw) : closedAction === "IVR" ? await own("ivr", s.tenant.id, targetRaw) : closedAction === "VOICEMAIL" ? await own("voicemailBox", s.tenant.id, targetRaw) : null;
+  const untilRaw = str(formData, "closedUntil");
+  const data = {
+    tenantId: s.tenant.id,
+    name,
+    timezone,
+    weekly,
+    holidays: parseHolidays(holidays.sort((a, b) => a.date.localeCompare(b.date))) as unknown as object[],
+    closedNow: on(formData, "closedNow"),
+    // datetime-local is a wall clock: read in the schedule's own zone, like its hours.
+    closedUntil: untilRaw ? zonedTimeToUtc(untilRaw, timezone) : null,
+    closedNowAudioId: opt(formData, "closedNowAudioId"),
+    closedAction,
+    closedTargetId,
+    closedGreetingAudioId: opt(formData, "closedGreetingAudioId"),
+  };
+  if (id) await prisma.schedule.updateMany({ where: { id, tenantId: s.tenant.id }, data });
+  else await prisma.schedule.create({ data });
+  revalidatePath("/inbound");
+}
+
+export async function deleteSchedule(formData: FormData) {
+  const s = await sup();
+  const id = str(formData, "id");
+  await prisma.queue.updateMany({ where: { scheduleId: id, tenantId: s.tenant.id }, data: { scheduleId: null } });
+  await prisma.callerIdNumber.updateMany({ where: { scheduleId: id, tenantId: s.tenant.id }, data: { scheduleId: null } });
+  await prisma.schedule.deleteMany({ where: { id, tenantId: s.tenant.id } });
+  revalidatePath("/inbound");
+}
+
+/** The "closed now" switch on its own, from the schedules list. */
+export async function setClosedNow(formData: FormData) {
+  const s = await sup();
+  await prisma.schedule.updateMany({ where: { id: str(formData, "id"), tenantId: s.tenant.id }, data: { closedNow: str(formData, "closedNow") === "1", ...(str(formData, "closedNow") === "1" ? {} : { closedUntil: null }) } });
+  revalidatePath("/inbound");
+}
+
+// ── Geographic routes ──
+export async function saveGeoRoute(formData: FormData) {
+  const s = await sup();
+  const id = opt(formData, "id");
+  const attach = str(formData, "attach"); // number:<id> | ivr:<id>
+  const [kind, attachId] = attach.split(":") as [string, string | undefined];
+  const numberId = kind === "number" ? await own("callerIdNumber", s.tenant.id, attachId ?? null) : null;
+  const ivrId = kind === "ivr" ? await own("ivr", s.tenant.id, attachId ?? null) : null;
+  const targetQueueId = await own("queue", s.tenant.id, opt(formData, "targetQueueId"));
+  if (!numberId && !ivrId) throw new Error("Pick the number or IVR the rule belongs to");
+  if (!targetQueueId) throw new Error("Pick the queue the rule sends callers to");
+  const isFallback = on(formData, "isFallback");
+  const states = parseStates(str(formData, "states"));
+  const areaCodes = parseAreaCodes(str(formData, "areaCodes"));
+  if (!isFallback && states.length === 0 && areaCodes.length === 0) throw new Error("Give states or area codes, or tick fallback");
+  const data = { tenantId: s.tenant.id, name: str(formData, "name") || (isFallback ? "Everyone else" : [...states, ...areaCodes].join(", ")), numberId, ivrId, targetQueueId, isFallback, states: isFallback ? [] : states, areaCodes: isFallback ? [] : areaCodes, sortOrder: int(formData, "sortOrder", 0, 0, 999) };
+  if (id) await prisma.geoRoute.updateMany({ where: { id, tenantId: s.tenant.id }, data });
+  else await prisma.geoRoute.create({ data });
+  revalidatePath("/inbound");
+}
+
+export async function deleteGeoRoute(formData: FormData) {
+  const s = await sup();
+  await prisma.geoRoute.deleteMany({ where: { id: str(formData, "id"), tenantId: s.tenant.id } });
+  revalidatePath("/inbound");
+}
+
 // ── Voicemail boxes ──
 export async function saveBox(formData: FormData) {
-  const s = await own();
+  const s = await sup();
   const id = opt(formData, "id");
   const name = str(formData, "name");
   if (!name) throw new Error("Name is required");
@@ -106,7 +255,7 @@ export async function saveBox(formData: FormData) {
 }
 
 export async function deleteBox(formData: FormData) {
-  const s = await own();
+  const s = await sup();
   const id = str(formData, "id");
   await prisma.queue.updateMany({ where: { voicemailBoxId: id, tenantId: s.tenant.id }, data: { voicemailBoxId: null } });
   await prisma.voicemailBox.deleteMany({ where: { id, tenantId: s.tenant.id } });
@@ -115,7 +264,7 @@ export async function deleteBox(formData: FormData) {
 
 // ── Skills ──
 export async function saveSkill(formData: FormData) {
-  const s = await own();
+  const s = await sup();
   const name = str(formData, "name");
   if (!name) throw new Error("Name is required");
   await prisma.skill.upsert({ where: { tenantId_name: { tenantId: s.tenant.id, name } }, create: { tenantId: s.tenant.id, name }, update: {} });
@@ -123,14 +272,14 @@ export async function saveSkill(formData: FormData) {
 }
 
 export async function deleteSkill(formData: FormData) {
-  const s = await own();
+  const s = await sup();
   await prisma.skill.deleteMany({ where: { id: str(formData, "id"), tenantId: s.tenant.id } });
   revalidatePath("/skills");
 }
 
 /** Set one agent's level on one skill; 0 removes it. */
 export async function setAgentSkill(formData: FormData) {
-  const s = await own();
+  const s = await sup();
   const userId = str(formData, "userId");
   const skillId = str(formData, "skillId");
   const level = Math.max(0, Math.min(5, Number(formData.get("level")) || 0));
@@ -142,7 +291,7 @@ export async function setAgentSkill(formData: FormData) {
 }
 
 export async function setExtension(formData: FormData) {
-  const s = await own();
+  const s = await sup();
   const userId = str(formData, "userId");
   const ext = str(formData, "extension").replace(/\D/g, "").slice(0, 5) || null;
   if (ext) {

@@ -7,7 +7,7 @@ import { redis } from "../redis";
 import { scrubAllTenants } from "../scrub/job";
 import { deliverPending } from "../webhooks/deliver";
 import { nightlyRecordings } from "../recordings/export";
-import { queueTick } from "../inbound/router";
+import { queueTick } from "../inbound/queues";
 import { syncPendingOrders } from "../provision";
 import { idlePoolCheck, restoreRestedNumbers } from "../provision/plan";
 import { endExpiredRuns, settlePeriodWagers, weeklyTopUp } from "../games";

@@ -18,6 +18,7 @@ import { redis } from "../redis";
 import { emitToTenant } from "../realtime";
 import { pickCallerId } from "./calls";
 import { eligibility } from "./hopper";
+import { inboundHolds } from "../inbound/queues";
 
 const inflightKey = (campaignId: string) => `campaign:${campaignId}:inflight`;
 const sidKey = (sid: string) => `callsid:${sid}`;
@@ -161,6 +162,8 @@ async function dialUnreserved(campaign: Campaign, lead: Lead): Promise<boolean> 
 export interface PacingSnapshot {
   campaignId: string;
   ready: number;
+  /** Ready agents left out for inbound (blending). */
+  heldForInbound: number;
   inflight: number;
   ratio: number;
   abandonRate: number;
@@ -172,8 +175,12 @@ export async function pacingTick(): Promise<PacingSnapshot[]> {
   if (!jambonzConfigured) return [];
   const campaigns = await prisma.campaign.findMany({ where: { status: "ACTIVE", dialMode: "RATIO" } });
   const out: PacingSnapshot[] = [];
+  const holdsByTenant = new Map<string, Set<string>>();
   for (const campaign of campaigns) {
-    const ready = await readyAgents(campaign);
+    // Blending: agents held for an inbound queue (oldest caller past blendWaitSeconds, or reserved) get no new outbound calls.
+    if (!holdsByTenant.has(campaign.tenantId)) holdsByTenant.set(campaign.tenantId, await inboundHolds(campaign.tenantId));
+    const held = holdsByTenant.get(campaign.tenantId)!;
+    const ready = (await readyAgents(campaign)).filter((a) => !held.has(a.userId));
     const inflight = await redis.scard(inflightKey(campaign.id));
     const stats = await abandonRate(campaign.id);
     const ratio = effectiveRatio(campaign, stats);
@@ -184,7 +191,7 @@ export async function pacingTick(): Promise<PacingSnapshot[]> {
       if (!lead) break;
       if (await dialUnreserved(campaign, lead)) dialed++;
     }
-    const snap = { campaignId: campaign.id, ready: ready.length, inflight: inflight + dialed, ratio, abandonRate: Math.round(stats.rate * 100) / 100, dialed };
+    const snap = { campaignId: campaign.id, ready: ready.length, heldForInbound: held.size, inflight: inflight + dialed, ratio, abandonRate: Math.round(stats.rate * 100) / 100, dialed };
     out.push(snap);
     if (dialed || inflight) emitToTenant(campaign.tenantId, "floor:pacing", snap);
   }

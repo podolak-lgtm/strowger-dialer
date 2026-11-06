@@ -6,7 +6,7 @@
 import { prisma } from "@strowger/db";
 import { engine } from "@/lib/engine";
 import { requireRight } from "@/lib/rights";
-import { requireRole } from "@/lib/auth";
+import { hasRole, requireRole } from "@/lib/auth";
 
 export type AgentLive = {
   tenantId: string;
@@ -80,6 +80,8 @@ export type LeadCard = {
   lastOutcome: string | null;
   ownerName: string | null;
   notes: string | null;
+  /** VIP callers jump inbound queues (Queue.vipPriority); supervisors set it. */
+  vip: boolean;
 };
 
 /** The fields an agent may change from the Lead card. */
@@ -112,6 +114,7 @@ const leadCardSelect = {
   optInIp: true,
   lastAttemptAt: true,
   notes: true,
+  vip: true,
   list: { select: { name: true, affiliate: { select: { name: true } } } },
   owner: { select: { firstName: true, lastName: true, email: true } },
   calls: { orderBy: { dialedAt: "desc" as const }, take: 1, select: { outcome: true, disposition: { select: { label: true } } } },
@@ -205,6 +208,20 @@ export async function disposition(input: { callId: string; dispositionId?: strin
  * the note text, so the history shows who corrected what. `notes` replaces
  * the lead's running notes; the event carries the new text.
  */
+/** Supervisors flag a lead VIP (inbound priority). Recorded as a NOTE event like any other lead change. */
+export async function setLeadVip(leadId: string, vip: boolean): Promise<Ok<{ lead: LeadCard }> | Err> {
+  const s = await me();
+  if (!hasRole(s, "SUPERVISOR")) return { ok: false, error: "Only supervisors can change VIP" };
+  const lead = await prisma.lead.findFirst({ where: { id: leadId, tenantId: s.tenant.id }, select: { id: true, vip: true } });
+  if (!lead) return { ok: false, error: "Lead not found" };
+  if (lead.vip !== vip) {
+    await prisma.lead.update({ where: { id: leadId }, data: { vip } });
+    await prisma.leadEvent.create({ data: { tenantId: s.tenant.id, leadId, kind: "NOTE", actorId: s.user.id, data: { changes: { vip: { from: lead.vip, to: vip } } } } });
+  }
+  const card = await loadLeadCard(s.tenant.id, leadId);
+  return card ? { ok: true, lead: card } : { ok: false, error: "Lead not found" };
+}
+
 export async function updateLead(leadId: string, data: LeadEdit & { notes?: string }): Promise<Ok<{ lead: LeadCard }> | Err> {
   const s = await me();
   const lead = await prisma.lead.findFirst({ where: { id: leadId, tenantId: s.tenant.id } });

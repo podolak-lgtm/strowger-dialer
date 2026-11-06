@@ -21,6 +21,8 @@ export interface AgentLive {
   readyOnLine?: boolean;
   /** Where the agent goes after dispositioning the current call: PAUSED for a call they dialled by hand (owner, 6 Nov). */
   afterCall?: "PAUSED" | null;
+  /** WRAP_UP after an inbound queue call ends here (ms): the queue tick returns the agent to Ready, or clears the call if they paused (inbound/queues.ts). */
+  wrapUntil?: number | null;
 }
 
 const key = (userId: string) => `agent:${userId}`;

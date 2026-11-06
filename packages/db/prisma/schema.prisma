@@ -13,18 +13,18 @@ datasource db {
 // ───────────────────────────── Tenancy & people ─────────────────────────────
 
 model Tenant {
-  id        String   @id @default(cuid())
-  slug      String   @unique
-  name      String
+  id                        String           @id @default(cuid())
+  slug                      String           @unique
+  name                      String
   /// Clerk organization id, when the tenant is backed by a Clerk org.
-  clerkOrgId String? @unique
-  settings  Json     @default("{}")
+  clerkOrgId                String?          @unique
+  settings                  Json             @default("{}")
   /// Recording retention in days (owner, 4 Nov: 30–60 to keep storage cost down).
-  recordingRetentionDays Int @default(60)
+  recordingRetentionDays    Int              @default(60)
   /// Nightly batch export of recordings before they expire:
   /// {"type":"sftp","host":"","port":22,"username":"","password":"<enc>","path":"/recordings"}
   /// or {"type":"dropbox","token":"<enc>","path":"/Strowger"}; null = no export.
-  recordingExport        Json?
+  recordingExport           Json?
   /// Carrier provisioning (owner, 4 Nov: order and register numbers from Strowger).
   /// Telnyx resources this tenant's numbers are attached to, and the jambonz carrier.
   telnyxConnectionId        String?
@@ -32,22 +32,22 @@ model Tenant {
   telnyxMessagingProfileId  String?
   jambonzCarrierSid         String?
   /// 10DLC (A2P texting registration) at Telnyx: brand and campaign ids plus the last snapshot seen.
-  tenDlcBrandId    String?
-  tenDlcCampaignId String?
-  tenDlcBrand      Json?
-  tenDlcCampaign   Json?
+  tenDlcBrandId             String?
+  tenDlcCampaignId          String?
+  tenDlcBrand               Json?
+  tenDlcCampaign            Json?
   /// The owner's own workspace: sees every client's billing and sets cost rates (one tenant).
-  isPlatform       Boolean  @default(false)
-  billing          BillingAccount?
-  billingEntries   BillingEntry[]
+  isPlatform                Boolean          @default(false)
+  billing                   BillingAccount?
+  billingEntries            BillingEntry[]
   /// Referral program and free trial (owner, 6 Nov; docs/HANDOFF.md "Referral program and free trial").
   /// The client's own link code (/r/<code>), made on its first visit to Refer & earn.
-  referralCode              String?   @unique
+  referralCode              String?          @unique
   referralTermsAcceptedAt   DateTime?
   referralTermsVersion      String?
   referralTermsAcceptedById String?
   /// Per-referrer commission percent; null = PlatformRates.referralPct.
-  referralPctOverride       Decimal?  @db.Decimal(5, 2)
+  referralPctOverride       Decimal?         @db.Decimal(5, 2)
   /// Who referred this client (mirrors Referral.tenantId for the row where this tenant is referred).
   referredByTenantId        String?
   /// Business phone given at sign-up (ten digits): one trial per business.
@@ -71,45 +71,48 @@ model Tenant {
   referredBy                Referral?        @relation("referred")
   referralPayouts           ReferralPayout[]
   trialClaims               TrialClaim[]
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt                 DateTime         @default(now())
+  updatedAt                 DateTime         @updatedAt
 
-  users          User[]
-  rooms          Room[]
-  teams          Team[]
-  campaigns      Campaign[]
-  lists          List[]
-  leads          Lead[]
-  affiliates     Affiliate[]
-  dncEntries     DncEntry[]
-  callerIds      CallerIdNumber[]
-  numberOrders   NumberOrder[]
-  chatMessages   ChatMessage[]
-  wagers         Wager[]
-  pointsLedger   PointsLedger[]
-  pokerCards     PokerCard[]
-  pokerRuns      PokerRun[]
-  audioAssets    AudioAsset[]
-  calls          Call[]
-  messages       Message[]
-  webhooks       WebhookEndpoint[]
-  auditLogs      AuditLog[]
-  agentSessions  AgentSession[]
-  callbacks      Callback[]
-  leadEvents     LeadEvent[]
-  abandonLedger  AbandonLedger[]
-  transfers      Transfer[]
+  users                User[]
+  rooms                Room[]
+  teams                Team[]
+  campaigns            Campaign[]
+  lists                List[]
+  leads                Lead[]
+  affiliates           Affiliate[]
+  dncEntries           DncEntry[]
+  callerIds            CallerIdNumber[]
+  numberOrders         NumberOrder[]
+  chatMessages         ChatMessage[]
+  wagers               Wager[]
+  pointsLedger         PointsLedger[]
+  pokerCards           PokerCard[]
+  pokerRuns            PokerRun[]
+  audioAssets          AudioAsset[]
+  calls                Call[]
+  messages             Message[]
+  webhooks             WebhookEndpoint[]
+  auditLogs            AuditLog[]
+  agentSessions        AgentSession[]
+  callbacks            Callback[]
+  leadEvents           LeadEvent[]
+  abandonLedger        AbandonLedger[]
+  transfers            Transfer[]
   transferDestinations TransferDestination[]
-  campaignAgents CampaignAgent[]
-  dispositions   Disposition[]
-  dialPlans      DialPlan[]
-  scripts        Script[]
-  cadences       CadenceProfile[]
-  skills         Skill[]
-  ivrs           Ivr[]
-  queues         Queue[]
-  voicemailBoxes VoicemailBox[]
-  voicemails     Voicemail[]
+  campaignAgents       CampaignAgent[]
+  dispositions         Disposition[]
+  dialPlans            DialPlan[]
+  scripts              Script[]
+  cadences             CadenceProfile[]
+  skills               Skill[]
+  ivrs                 Ivr[]
+  queues               Queue[]
+  voicemailBoxes       VoicemailBox[]
+  voicemails           Voicemail[]
+  schedules            Schedule[]
+  geoRoutes            GeoRoute[]
+  queueCallbacks       QueueCallback[]
 }
 
 enum Role {
@@ -122,64 +125,64 @@ enum Role {
 }
 
 model User {
-  id          String   @id @default(cuid())
-  tenant      Tenant   @relation(fields: [tenantId], references: [id])
-  tenantId    String
-  clerkUserId String?  @unique
-  email       String
-  firstName   String?
-  lastName    String?
-  roles       Role[]   @default([AGENT])
+  id                 String           @id @default(cuid())
+  tenant             Tenant           @relation(fields: [tenantId], references: [id])
+  tenantId           String
+  clerkUserId        String?          @unique
+  email              String
+  firstName          String?
+  lastName           String?
+  roles              Role[]           @default([AGENT])
   /// Agent level 1–8 (owner, 5 Nov): rights per level are tenant settings (`levelRights`).
-  level       Int      @default(1)
+  level              Int              @default(1)
   /// Where to text the agent (voicemail alerts). E.164 digits.
-  mobilePhone String?
+  mobilePhone        String?
   /// Text me when a voicemail lands in my box (also needs the campaign switch).
-  notifyVoicemailSms Boolean @default(true)
+  notifyVoicemailSms Boolean          @default(true)
   /// Game points (bets); topped up weekly from tenant settings.
-  points      Int      @default(0)
-  active      Boolean  @default(true)
+  points             Int              @default(0)
+  active             Boolean          @default(true)
   /// SIP credentials for the browser softphone. The password is stored
   /// encrypted (AES-GCM under a key derived from ENGINE_INTERNAL_KEY): the
   /// registration hook needs it to verify digests and the agent's own browser
   /// needs it to register. Never shown to anyone else.
-  sipUsername String?  @unique
-  sipSecret   String?
+  sipUsername        String?          @unique
+  sipSecret          String?
   /// Platform admins only: the client workspace they last opened from
   /// /platform, so the page can offer "Continue in <client>" next time.
-  lastWorkspaceId String?
+  lastWorkspaceId    String?
   /// For AFFILIATE-role users: the partner whose lists they may see.
-  affiliate   Affiliate? @relation(fields: [affiliateId], references: [id])
-  affiliateId String?
+  affiliate          Affiliate?       @relation(fields: [affiliateId], references: [id])
+  affiliateId        String?
   /// Short dialable extension (e.g. 101), unique per tenant.
-  extension   String?
-  skills      AgentSkill[]
-  voicemailBoxes VoicemailBox[] @relation("BoxOwner")
-  voicemails  Voicemail[]    @relation("VoicemailAssignee")
-  routedNumbers CallerIdNumber[] @relation("NumberRouteUser")
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  extension          String?
+  skills             AgentSkill[]
+  voicemailBoxes     VoicemailBox[]   @relation("BoxOwner")
+  voicemails         Voicemail[]      @relation("VoicemailAssignee")
+  routedNumbers      CallerIdNumber[] @relation("NumberRouteUser")
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
 
-  rooms           UserRoom[]
-  teams           UserTeam[]
-  ledTeams        Team[]          @relation("TeamLeader")
-  chatSent        ChatMessage[]   @relation("ChatSender")
-  wagersProposed  Wager[]         @relation("WagerProposer")
-  wagersAccepted  Wager[]         @relation("WagerAccepter")
-  pointsLedger    PointsLedger[]
-  pokerCards      PokerCard[]
-  pokerRunsStarted PokerRun[]     @relation("PokerRunCreator")
-  supervisedRooms Room[]          @relation("RoomSupervisor")
-  campaignAgents  CampaignAgent[]
-  agentSessions   AgentSession[]
-  calls           Call[]
-  callbacks       Callback[]
-  ownedLeads      Lead[]          @relation("LeadOwner")
-  leadEvents      LeadEvent[]
-  auditLogs       AuditLog[]
-  transfersFrom   Transfer[]      @relation("TransferFrom")
-  transfersTo     Transfer[]      @relation("TransferTo")
-  messages        Message[]
+  rooms            UserRoom[]
+  teams            UserTeam[]
+  ledTeams         Team[]          @relation("TeamLeader")
+  chatSent         ChatMessage[]   @relation("ChatSender")
+  wagersProposed   Wager[]         @relation("WagerProposer")
+  wagersAccepted   Wager[]         @relation("WagerAccepter")
+  pointsLedger     PointsLedger[]
+  pokerCards       PokerCard[]
+  pokerRunsStarted PokerRun[]      @relation("PokerRunCreator")
+  supervisedRooms  Room[]          @relation("RoomSupervisor")
+  campaignAgents   CampaignAgent[]
+  agentSessions    AgentSession[]
+  calls            Call[]
+  callbacks        Callback[]
+  ownedLeads       Lead[]          @relation("LeadOwner")
+  leadEvents       LeadEvent[]
+  auditLogs        AuditLog[]
+  transfersFrom    Transfer[]      @relation("TransferFrom")
+  transfersTo      Transfer[]      @relation("TransferTo")
+  messages         Message[]
 
   @@unique([tenantId, email])
   @@unique([tenantId, extension])
@@ -188,11 +191,11 @@ model User {
 
 /// A physical location or floor. Several rooms may work one campaign.
 model Room {
-  id           String  @id @default(cuid())
-  tenant       Tenant  @relation(fields: [tenantId], references: [id])
+  id           String     @id @default(cuid())
+  tenant       Tenant     @relation(fields: [tenantId], references: [id])
   tenantId     String
   name         String
-  supervisor   User?   @relation("RoomSupervisor", fields: [supervisorId], references: [id])
+  supervisor   User?      @relation("RoomSupervisor", fields: [supervisorId], references: [id])
   supervisorId String?
   members      UserRoom[]
   teams        Team[]
@@ -211,13 +214,13 @@ model UserRoom {
 
 /// A team leader and the agents under them. A team may sit inside a room.
 model Team {
-  id       String  @id @default(cuid())
-  tenant   Tenant  @relation(fields: [tenantId], references: [id])
+  id       String     @id @default(cuid())
+  tenant   Tenant     @relation(fields: [tenantId], references: [id])
   tenantId String
   name     String
-  leader   User?   @relation("TeamLeader", fields: [leaderId], references: [id])
+  leader   User?      @relation("TeamLeader", fields: [leaderId], references: [id])
   leaderId String?
-  room     Room?   @relation(fields: [roomId], references: [id])
+  room     Room?      @relation(fields: [roomId], references: [id])
   roomId   String?
   members  UserTeam[]
 
@@ -302,27 +305,27 @@ model Campaign {
   maxRatio Decimal  @default(3.0) @db.Decimal(4, 2)
 
   /// Abandon cap, rolling 30 days, percent. 3.0 is the FTC safe harbor.
-  abandonCapPct  Decimal @default(3.0) @db.Decimal(4, 2)
+  abandonCapPct     Decimal @default(3.0) @db.Decimal(4, 2)
   /// Ratio starts stepping down when the 30-day rate reaches this.
-  abandonWarnPct Decimal @default(2.5) @db.Decimal(4, 2)
+  abandonWarnPct    Decimal @default(2.5) @db.Decimal(4, 2)
   /// A human answer not bridged within this many ms is an abandon.
-  abandonTimerMs Int     @default(2000)
+  abandonTimerMs    Int     @default(2000)
   safeHarborAudioId String?
 
-  amdEnabled           Boolean         @default(true)
-  voicemailAction      VoicemailAction @default(HANGUP)
-  voicemailDropAudioId String?
+  amdEnabled            Boolean         @default(true)
+  voicemailAction       VoicemailAction @default(HANGUP)
+  voicemailDropAudioId  String?
   /// FILE plays voicemailDropAudioId; TTS speaks voicemailScript with
   /// variables ({{first_name}}, {{last_name}}, {{company}}, {{callback_number}},
   /// {{agent}}). TTS needs a speech vendor on the jambonz account.
-  voicemailMode        VoicemailMode   @default(FILE)
-  voicemailScript      String?
+  voicemailMode         VoicemailMode   @default(FILE)
+  voicemailScript       String?
   /// Minutes before a lead that reached voicemail is tried again.
-  voicemailRetryMinutes Int            @default(240)
+  voicemailRetryMinutes Int             @default(240)
   /// Text the owning agent when a caller leaves them a voicemail (per-agent switch too).
-  voicemailNotifySms Boolean @default(true)
+  voicemailNotifySms    Boolean         @default(true)
   /// Agent assist: [{"objection":"…","response":"…"}]
-  rebuttals          Json?
+  rebuttals             Json?
 
   screenerDetection Boolean        @default(true)
   screenerAction    ScreenerAction @default(MESSAGE)
@@ -335,30 +338,30 @@ model Campaign {
   disclosureOn      Boolean @default(false)
   disclosureAudioId String?
 
-  callerIdMode  CallerIdMode @default(LOCAL_PRESENCE)
-  fixedCallerId String?
+  callerIdMode     CallerIdMode     @default(LOCAL_PRESENCE)
+  fixedCallerId    String?
   callerIdFallback CallerIdFallback @default(ANY)
 
   /// Campaign's own calling window in the lead's local time. State and
   /// federal rules still apply on top; the most restrictive wins.
-  localWindowStart Int @default(9)
-  localWindowEnd   Int @default(20)
+  localWindowStart  Int           @default(9)
+  localWindowEnd    Int           @default(20)
   /// Optional day x hour grid in the lead's local time: 7 arrays (Sun..Sat)
   /// of 24 flags. Null = the start/end window applies every day.
-  allowedHours     Json?
+  allowedHours      Json?
   /// Campaign default attempts per lead (phone) per day. Dial plans may raise
   /// it, never above the state cap.
-  maxAttemptsPerDay Int @default(3)
-  wrapUpSeconds     Int @default(30)
-  hopperOrder       HopperOrder @default(LIFO)
+  maxAttemptsPerDay Int           @default(3)
+  wrapUpSeconds     Int           @default(30)
+  hopperOrder       HopperOrder   @default(LIFO)
   /// How lists of different priority tiers share the dialer.
   listSelection     ListSelection @default(STRICT_PRIORITY)
 
   /// Whether closers may turn outbound on for themselves (plan §11.7).
-  closersMayDial Boolean @default(true)
+  closersMayDial       Boolean @default(true)
   /// Minutes an agent-scoped callback waits for its owner before it is
   /// offered to the campaign.
-  callbackOwnerMinutes Int @default(30)
+  callbackOwnerMinutes Int     @default(30)
 
   /// Games (owner, 5 Nov): switched on per campaign. Bets between agents on
   /// this campaign; the Monday allowance and stake cap apply to its agents.
@@ -370,22 +373,22 @@ model Campaign {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  pokerRuns     PokerRun[]
-  lists         List[]
-  agents        CampaignAgent[]
-  dispositions  Disposition[]
-  dialPlans     DialPlan[]
-  scripts       Script[]
-  calls         Call[]
-  callbacks     Callback[]
-  dncEntries    DncEntry[]
-  abandonLedger AbandonLedger[]
-  agentSessions AgentSession[]
-  messages      Message[]
-  webhooks      WebhookEndpoint[]
-  callerIds     CallerIdNumber[]
-  numberOrders  NumberOrder[]
-  queues        Queue[]
+  pokerRuns            PokerRun[]
+  lists                List[]
+  agents               CampaignAgent[]
+  dispositions         Disposition[]
+  dialPlans            DialPlan[]
+  scripts              Script[]
+  calls                Call[]
+  callbacks            Callback[]
+  dncEntries           DncEntry[]
+  abandonLedger        AbandonLedger[]
+  agentSessions        AgentSession[]
+  messages             Message[]
+  webhooks             WebhookEndpoint[]
+  callerIds            CallerIdNumber[]
+  numberOrders         NumberOrder[]
+  queues               Queue[]
   transferDestinations TransferDestination[]
 
   @@unique([tenantId, name])
@@ -418,22 +421,22 @@ model CampaignAgent {
 /// names an algorithm in the engine; `fixed_gap` is the first. This is the
 /// seat of the retry work that is meant to set the product apart.
 model DialPlan {
-  id             String   @id @default(cuid())
-  tenant         Tenant   @relation(fields: [tenantId], references: [id])
-  tenantId       String
-  campaign       Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
-  campaignId     String
+  id              String   @id @default(cuid())
+  tenant          Tenant   @relation(fields: [tenantId], references: [id])
+  tenantId        String
+  campaign        Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  campaignId      String
   /// Lead bucket this plan applies to; null = any.
-  leadType       String?
-  ageFromDays    Int      @default(0)
-  ageToDays      Int?
-  attemptsPerDay Int      @default(3)
-  retryGapMinutes Int     @default(180)
+  leadType        String?
+  ageFromDays     Int      @default(0)
+  ageToDays       Int?
+  attemptsPerDay  Int      @default(3)
+  retryGapMinutes Int      @default(180)
   /// Higher weight = earlier in a PRIORITY-ordered hopper.
-  weight         Int      @default(0)
-  strategy       String   @default("fixed_gap")
-  params         Json     @default("{}")
-  active         Boolean  @default(true)
+  weight          Int      @default(0)
+  strategy        String   @default("fixed_gap")
+  params          Json     @default("{}")
+  active          Boolean  @default(true)
 
   @@index([campaignId, active])
 }
@@ -496,28 +499,28 @@ enum DuplicateAction {
 }
 
 model List {
-  id          String     @id @default(cuid())
-  tenant      Tenant     @relation(fields: [tenantId], references: [id])
-  tenantId    String
-  campaign    Campaign?  @relation(fields: [campaignId], references: [id])
-  campaignId  String?
-  name        String
-  source      ListSource @default(UPLOAD)
-  affiliate   Affiliate? @relation(fields: [affiliateId], references: [id])
-  affiliateId String?
-  status      ListStatus @default(ACTIVE)
+  id               String          @id @default(cuid())
+  tenant           Tenant          @relation(fields: [tenantId], references: [id])
+  tenantId         String
+  campaign         Campaign?       @relation(fields: [campaignId], references: [id])
+  campaignId       String?
+  name             String
+  source           ListSource      @default(UPLOAD)
+  affiliate        Affiliate?      @relation(fields: [affiliateId], references: [id])
+  affiliateId      String?
+  status           ListStatus      @default(ACTIVE)
   /// What to do with a phone already in this list.
-  duplicateAction DuplicateAction @default(REJECT)
+  duplicateAction  DuplicateAction @default(REJECT)
   /// 1 = high, 2 = medium, 3 = low. Strict priority dials every eligible
   /// tier-1 lead before any tier-2 lead.
-  priority        Int             @default(2)
-  cadence         CadenceProfile? @relation(fields: [cadenceProfileId], references: [id])
+  priority         Int             @default(2)
+  cadence          CadenceProfile? @relation(fields: [cadenceProfileId], references: [id])
   cadenceProfileId String?
   /// Counters kept current by the import and posting paths.
-  totalLeads    Int @default(0)
-  dialableLeads Int @default(0)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  totalLeads       Int             @default(0)
+  dialableLeads    Int             @default(0)
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
 
   leads   Lead[]
   imports ListImport[]
@@ -576,12 +579,12 @@ model CadenceProfile {
   /// Text sent when the call is not answered. Null = none.
   missedCallSms       String?
 
-  maxAttemptsPerDay Int @default(3)
-  minGapMinutes     Int @default(240)
+  maxAttemptsPerDay     Int     @default(3)
+  minGapMinutes         Int     @default(240)
   /// AGED: rotate dayparts so consecutive attempts never share a window.
-  rotateDayparts    Boolean @default(false)
+  rotateDayparts        Boolean @default(false)
   /// {"MORNING":[8.5,11.5],"AFTERNOON":[12.5,16.5],"EVENING":[17,19.5]} local hours.
-  dayparts          Json    @default("{\"MORNING\":[8.5,11.5],\"AFTERNOON\":[12.5,16.5],\"EVENING\":[17,19.5]}")
+  dayparts              Json    @default("{\"MORNING\":[8.5,11.5],\"AFTERNOON\":[12.5,16.5],\"EVENING\":[17,19.5]}")
   /// A live answer cancels the remaining automated attempts that day.
   cancelRedialsOnAnswer Boolean @default(true)
 
@@ -640,38 +643,41 @@ model Lead {
   optInAt              DateTime?
   optInIp              String?
   rawPayload           Json?
-  custom               Json     @default("{}")
+  custom               Json      @default("{}")
 
   scrubStatus ScrubStatus @default(PENDING)
   scrubReason String?
   scrubbedAt  DateTime?
 
-  status        LeadStatus @default(NEW)
-  attemptsTotal Int        @default(0)
-  lastAttemptAt DateTime?
-  nextDialAt    DateTime?
+  status             LeadStatus @default(NEW)
+  attemptsTotal      Int        @default(0)
+  lastAttemptAt      DateTime?
+  nextDialAt         DateTime?
   /// MORNING | AFTERNOON | EVENING of the last attempt, in the lead's zone.
   lastAttemptDaypart String?
   /// Caller ID the cadence picked, so the SMS and the dial share one number.
   assignedCallerId   String?
   /// Token for the self-service callback page sent in the missed-call SMS.
-  callbackToken      String?   @unique
+  callbackToken      String?    @unique
   /// Set when a live answer cancels the rest of the day's automated redials.
-  redialsCancelledOn DateTime? @db.Date
-  owner         User?      @relation("LeadOwner", fields: [ownerId], references: [id])
-  ownerId       String?
+  redialsCancelledOn DateTime?  @db.Date
+  owner              User?      @relation("LeadOwner", fields: [ownerId], references: [id])
+  ownerId            String?
   /// The last agent who spoke to, texted or left a message for this lead: a call back goes to them first (owner, 5 Nov).
-  lastAgentId   String?
+  lastAgentId        String?
   /// Running free-text notes from the agent console's Lead card; each save also writes a NOTE event.
-  notes         String?
+  notes              String?
+  /// VIP callers jump the inbound queue by the queue's `vipPriority` (supervisors set it on the lead card).
+  vip                Boolean    @default(false)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  events    LeadEvent[]
-  calls     Call[]
-  callbacks Callback[]
-  messages  Message[]
+  events         LeadEvent[]
+  calls          Call[]
+  callbacks      Callback[]
+  messages       Message[]
+  queueCallbacks QueueCallback[]
 
   @@unique([listId, phone])
   @@index([tenantId, phone])
@@ -716,18 +722,18 @@ model LeadEvent {
 }
 
 model Affiliate {
-  id          String   @id @default(cuid())
-  tenant      Tenant   @relation(fields: [tenantId], references: [id])
-  tenantId    String
-  name        String
+  id            String   @id @default(cuid())
+  tenant        Tenant   @relation(fields: [tenantId], references: [id])
+  tenantId      String
+  name          String
   /// Hashed; the plain key is shown once at creation.
-  apiKeyHash  String   @unique
-  apiKeyHint  String
+  apiKeyHash    String   @unique
+  apiKeyHint    String
   /// Inbound field name -> Strowger field name.
-  fieldMapping Json    @default("{}")
+  fieldMapping  Json     @default("{}")
   defaultListId String?
-  active      Boolean  @default(true)
-  createdAt   DateTime @default(now())
+  active        Boolean  @default(true)
+  createdAt     DateTime @default(now())
 
   lists List[]
   users User[]
@@ -771,17 +777,17 @@ model DncEntry {
 /// Seeded from packages/shared/compliance; not per tenant. `verifiedAt` stays
 /// null until counsel has confirmed the row (plan §6).
 model StateRule {
-  state            String   @id
-  startHour        Int
-  endHour          Int
+  state             String    @id
+  startHour         Int
+  endHour           Int
   /// Per-day-of-week overrides: {"0": {"startHour":12,"endHour":21}} or
   /// {"0": null} for no calls on Sunday.
-  dayOverrides     Json     @default("{}")
+  dayOverrides      Json      @default("{}")
   maxAttemptsPerDay Int?
-  noHolidayCalls   Boolean  @default(false)
-  citation         String?
-  verifiedAt       DateTime?
-  updatedAt        DateTime @updatedAt
+  noHolidayCalls    Boolean   @default(false)
+  citation          String?
+  verifiedAt        DateTime?
+  updatedAt         DateTime  @updatedAt
 }
 
 /// Daily answered/abandoned per campaign, the inputs to the rolling 30-day rate.
@@ -831,7 +837,7 @@ model CallerIdNumber {
   createdAt  DateTime       @default(now())
 
   /// Optional: pin a number to one campaign. Null = shared pool.
-  campaign   Campaign?      @relation(fields: [campaignId], references: [id])
+  campaign   Campaign? @relation(fields: [campaignId], references: [id])
   campaignId String?
 
   /// Where an inbound call to this number goes.
@@ -842,16 +848,21 @@ model CallerIdNumber {
   queueId     String?
   routeUser   User?        @relation("NumberRouteUser", fields: [routeUserId], references: [id])
   routeUserId String?
+  /// Business hours; closed → the schedule's after-hours action (inbound/router.ts).
+  schedule    Schedule?    @relation(fields: [scheduleId], references: [id], onDelete: SetNull)
+  scheduleId  String?
+  /// Caller state / area code → queue, checked before `routeTo`.
+  geoRoutes   GeoRoute[]
 
   /// Latest reputation reading per carrier (the Big Three), the STIR/SHAKEN
   /// attestation seen on our outbound calls, and when we last checked.
-  attVerdict    CarrierVerdict @default(UNKNOWN)
+  attVerdict     CarrierVerdict @default(UNKNOWN)
   verizonVerdict CarrierVerdict @default(UNKNOWN)
   tmobileVerdict CarrierVerdict @default(UNKNOWN)
-  attestation   String?
-  lastScannedAt DateTime?
+  attestation    String?
+  lastScannedAt  DateTime?
   /// Re-check this number on the daily sweep.
-  autoRecheck   Boolean        @default(true)
+  autoRecheck    Boolean        @default(true)
 
   /// Hygiene (owner, 4 Nov): registered at the Free Caller Registry before
   /// the first dial; warm-up caps by age; rest after a flag.
@@ -865,12 +876,12 @@ model CallerIdNumber {
 
   /// Provisioning: ids at the carrier and in jambonz, and how far along the number is.
   /// manual = added by hand; ordered = bought, waiting at Telnyx; voice = in jambonz; ready = voice + messaging profile; failed.
-  telnyxNumberId       String?
+  telnyxNumberId        String?
   jambonzPhoneNumberSid String?
-  provisionStatus      String   @default("manual")
-  provisionError       String?
-  order                NumberOrder? @relation(fields: [orderId], references: [id])
-  orderId              String?
+  provisionStatus       String       @default("manual")
+  provisionError        String?
+  order                 NumberOrder? @relation(fields: [orderId], references: [id])
+  orderId               String?
 
   scans DidScan[]
 
@@ -882,20 +893,20 @@ model CallerIdNumber {
 /// One reputation reading of one number, kept so a change can be dated.
 /// One purchase at the carrier: which area code, how many, for which campaign, and what came back.
 model NumberOrder {
-  id            String   @id @default(cuid())
-  tenant        Tenant   @relation(fields: [tenantId], references: [id])
+  id            String           @id @default(cuid())
+  tenant        Tenant           @relation(fields: [tenantId], references: [id])
   tenantId      String
-  campaign      Campaign? @relation(fields: [campaignId], references: [id])
+  campaign      Campaign?        @relation(fields: [campaignId], references: [id])
   campaignId    String?
   areaCode      String
   quantity      Int
   telnyxOrderId String?
   /// pending | success | failure (Telnyx order status) or error
-  status        String   @default("pending")
+  status        String           @default("pending")
   error         String?
   requestedBy   String?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
   numbers       CallerIdNumber[]
 
   @@index([tenantId, createdAt])
@@ -906,16 +917,16 @@ model NumberOrder {
 /// agents and every manager) or a DIRECT message (the two users, key = both
 /// ids sorted and joined with ":"). Delivery is by socket to each recipient.
 model ChatMessage {
-  id        String   @id @default(cuid())
-  tenant    Tenant   @relation(fields: [tenantId], references: [id])
+  id        String      @id @default(cuid())
+  tenant    Tenant      @relation(fields: [tenantId], references: [id])
   tenantId  String
   channel   ChatChannel
   /// teamId, campaignId, or "a:b" for DIRECT; null for EVERYONE and MANAGERS.
   channelId String?
-  sender    User     @relation("ChatSender", fields: [senderId], references: [id])
+  sender    User        @relation("ChatSender", fields: [senderId], references: [id])
   senderId  String
   body      String
-  createdAt DateTime @default(now())
+  createdAt DateTime    @default(now())
 
   @@index([tenantId, channel, channelId, createdAt])
 }
@@ -930,25 +941,25 @@ enum ChatChannel {
 
 /// Games (owner, 5 Nov). A bet between two agents on a stat, paid in points.
 model Wager {
-  id          String      @id @default(cuid())
-  tenant      Tenant      @relation(fields: [tenantId], references: [id])
-  tenantId    String
-  proposer    User        @relation("WagerProposer", fields: [proposerId], references: [id])
-  proposerId  String
-  accepter    User?       @relation("WagerAccepter", fields: [accepterId], references: [id])
-  accepterId  String?
+  id         String      @id @default(cuid())
+  tenant     Tenant      @relation(fields: [tenantId], references: [id])
+  tenantId   String
+  proposer   User        @relation("WagerProposer", fields: [proposerId], references: [id])
+  proposerId String
+  accepter   User?       @relation("WagerAccepter", fields: [accepterId], references: [id])
+  accepterId String?
   /// The campaign the bet is on (bets are switched on per campaign). Null only on bets from before that.
-  campaignId  String?
+  campaignId String?
   /// NEXT_SALE, NEXT_CALL, NEXT_CONTACT, MOST_CALLS_TODAY, MOST_CONTACTS_TODAY, MOST_SALES_TODAY, MOST_SALES_WEEK
-  kind        String
-  stake       Int
-  status      WagerStatus @default(OPEN)
+  kind       String
+  stake      Int
+  status     WagerStatus @default(OPEN)
   /// For "most … today/week": the period key the bet settles on (YYYY-MM-DD or YYYY-Www).
-  period      String?
-  winnerId    String?
-  note        String?
-  createdAt   DateTime    @default(now())
-  settledAt   DateTime?
+  period     String?
+  winnerId   String?
+  note       String?
+  createdAt  DateTime    @default(now())
+  settledAt  DateTime?
 
   @@index([tenantId, status, createdAt])
   @@index([tenantId, campaignId, status])
@@ -979,31 +990,31 @@ model PointsLedger {
 /// Poker run: an admin starts one per campaign with a name, a window, a prize
 /// and the rule for what deals a card; seven cards at most, the best five when it ends win.
 model PokerRun {
-  id          String         @id @default(cuid())
-  tenant      Tenant         @relation(fields: [tenantId], references: [id])
-  tenantId    String
-  campaign    Campaign       @relation(fields: [campaignId], references: [id], onDelete: Cascade)
-  campaignId  String
-  name        String
-  startsAt    DateTime
-  endsAt      DateTime
+  id              String         @id @default(cuid())
+  tenant          Tenant         @relation(fields: [tenantId], references: [id])
+  tenantId        String
+  campaign        Campaign       @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  campaignId      String
+  name            String
+  startsAt        DateTime
+  endsAt          DateTime
   /// Display only; paying it is the owner's.
-  prize       String?
+  prize           String?
   /// SALE | CONTACT | CODES (see shared/games POKER_QUALIFIERS).
-  qualifies   String         @default("SALE")
+  qualifies       String         @default("SALE")
   /// Disposition codes that deal a card when qualifies = CODES.
-  qualifyingCodes String[]   @default([])
+  qualifyingCodes String[]       @default([])
   /// Seven-card stud (owner, 6 Nov): a card each time the agent's qualifying outcomes in the run reach the next multiple of this.
-  outcomesPerCard Int        @default(1)
-  status      PokerRunStatus @default(ACTIVE)
-  createdBy   User           @relation("PokerRunCreator", fields: [createdById], references: [id])
-  createdById String
+  outcomesPerCard Int            @default(1)
+  status          PokerRunStatus @default(ACTIVE)
+  createdBy       User           @relation("PokerRunCreator", fields: [createdById], references: [id])
+  createdById     String
   /// Set when the run ends: the best hand and who held it.
-  winnerId    String?
+  winnerId        String?
   /// {"userId","name","hand","cards":[…]} for the winner; null when nobody had a card.
-  winningHand Json?
-  endedAt     DateTime?
-  createdAt   DateTime       @default(now())
+  winningHand     Json?
+  endedAt         DateTime?
+  createdAt       DateTime       @default(now())
 
   cards PokerCard[]
 
@@ -1017,20 +1028,20 @@ enum PokerRunStatus {
 
 /// A card dealt in a poker run (one per qualifying outcome).
 model PokerCard {
-  id        String    @id @default(cuid())
-  tenant    Tenant    @relation(fields: [tenantId], references: [id])
-  tenantId  String
-  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  userId    String
+  id       String    @id @default(cuid())
+  tenant   Tenant    @relation(fields: [tenantId], references: [id])
+  tenantId String
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId   String
   /// The run the card belongs to. Null only on cards from before explicit runs.
-  run       PokerRun? @relation(fields: [runId], references: [id], onDelete: Cascade)
-  runId     String?
+  run      PokerRun? @relation(fields: [runId], references: [id], onDelete: Cascade)
+  runId    String?
   /// Legacy period key (YYYY-MM-DD or YYYY-Www) from before runs; the ISO week the card was dealt in since.
-  period    String
+  period   String
   /// e.g. "AS", "TD", "9H", "2C"
-  card      String
-  callId    String?
-  dealtAt   DateTime  @default(now())
+  card     String
+  callId   String?
+  dealtAt  DateTime  @default(now())
 
   @@index([tenantId, period, userId])
   @@index([runId, userId])
@@ -1041,30 +1052,30 @@ model PokerCard {
 /// scrub records (cost + margin) and texts are charged as they happen. Prices
 /// are in millicents (1/1000 of a cent) so 1.2¢/min is 1200.
 model BillingAccount {
-  id                   String   @id @default(cuid())
-  tenant               Tenant   @relation(fields: [tenantId], references: [id])
-  tenantId             String   @unique
-  balanceCents         Int      @default(0)
-  seatMonthlyCents     Int      @default(7000)
-  perMinuteMillicents  Int      @default(1200)
+  id                    String    @id @default(cuid())
+  tenant                Tenant    @relation(fields: [tenantId], references: [id])
+  tenantId              String    @unique
+  balanceCents          Int       @default(0)
+  seatMonthlyCents      Int       @default(7000)
+  perMinuteMillicents   Int       @default(1200)
   /// Markup on the DID monthly cost, percent (50 = cost + 50%).
-  didMarkupPct         Int      @default(50)
+  didMarkupPct          Int       @default(50)
   /// Added on top of our scrub cost, per record.
-  scrubMarginMillicents Int     @default(500)
+  scrubMarginMillicents Int       @default(500)
   /// Per text segment sent, price to the client.
-  smsPriceMillicents   Int      @default(1500)
+  smsPriceMillicents    Int       @default(1500)
   /// Warn below this balance.
-  lowBalanceCents      Int      @default(20000)
+  lowBalanceCents       Int       @default(20000)
   /// Days the balance may sit at or below zero before outbound is paused.
-  graceDays            Int      @default(3)
-  suspended            Boolean  @default(false)
-  suspendedAt          DateTime?
+  graceDays             Int       @default(3)
+  suspended             Boolean   @default(false)
+  suspendedAt           DateTime?
   /// BALANCE (used up past grace) or TRIAL_ENDED (free trial over, never paid).
-  suspendReason        String?
-  zeroSince            DateTime?
-  notes                String?
-  createdAt            DateTime @default(now())
-  updatedAt            DateTime @updatedAt
+  suspendReason         String?
+  zeroSince             DateTime?
+  notes                 String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
 }
 
 enum BillingKind {
@@ -1093,25 +1104,25 @@ enum BillingCategory {
 
 /// The ledger. Charges are negative amounts; payments positive. costCents is what we paid, for margin.
 model BillingEntry {
-  id          String          @id @default(cuid())
-  tenant      Tenant          @relation(fields: [tenantId], references: [id])
-  tenantId    String
-  kind        BillingKind
-  category    BillingCategory
-  quantity    Decimal         @default(1) @db.Decimal(14, 4)
-  unitMillicents Int          @default(0)
-  amountCents Int
-  costCents   Int             @default(0)
+  id             String          @id @default(cuid())
+  tenant         Tenant          @relation(fields: [tenantId], references: [id])
+  tenantId       String
+  kind           BillingKind
+  category       BillingCategory
+  quantity       Decimal         @default(1) @db.Decimal(14, 4)
+  unitMillicents Int             @default(0)
+  amountCents    Int
+  costCents      Int             @default(0)
   /// rate = computed from PlatformRates; telnyx = replaced by the carrier's actual charge.
-  costSource  String          @default("rate")
-  note        String?
-  refId       String?
+  costSource     String          @default("rate")
+  note           String?
+  refId          String?
   /// YYYY-MM the charge belongs to.
-  period      String
-  createdById String?
+  period         String
+  createdById    String?
   /// Idempotency for entries a job posts (referral credits: ref:<referralId>:<period>:credit).
-  uniqueKey   String?         @unique
-  createdAt   DateTime        @default(now())
+  uniqueKey      String?         @unique
+  createdAt      DateTime        @default(now())
 
   @@index([tenantId, period, category])
   @@index([tenantId, createdAt])
@@ -1119,27 +1130,27 @@ model BillingEntry {
 
 /// Platform-wide cost rates (what we pay), one row. Edited on /platform.
 model PlatformRates {
-  id                       String   @id @default("default")
-  telnyxOutMillicentsPerMin Int     @default(500)
-  telnyxInMillicentsPerMin  Int     @default(320)
-  didMonthlyCents          Int      @default(110)
-  scrubCostMillicents      Int      @default(500)
-  smsCostMillicents        Int      @default(400)
+  id                        String    @id @default("default")
+  telnyxOutMillicentsPerMin Int       @default(500)
+  telnyxInMillicentsPerMin  Int       @default(320)
+  didMonthlyCents           Int       @default(110)
+  scrubCostMillicents       Int       @default(500)
+  smsCostMillicents         Int       @default(400)
   /// Shown to clients on their billing page: how to prepay.
-  prepayInstructions       String?
+  prepayInstructions        String?
   /// Last Telnyx account balance seen (GET /v2/balance) and when.
-  telnyxBalanceCents       Int?
-  telnyxBalanceAt          DateTime?
-  telnyxSyncedAt           DateTime?
+  telnyxBalanceCents        Int?
+  telnyxBalanceAt           DateTime?
+  telnyxSyncedAt            DateTime?
   /// Referral commission, percent of the referred client's paid usage (owner, 6 Nov: 5%).
-  referralPct              Decimal  @default(5.00) @db.Decimal(5, 2)
-  trialDays                Int      @default(7)
-  trialSeats               Int      @default(5)
-  trialAllowanceCents      Int      @default(5000)
-  trialMaxNumbers          Int      @default(3)
+  referralPct               Decimal   @default(5.00) @db.Decimal(5, 2)
+  trialDays                 Int       @default(7)
+  trialSeats                Int       @default(5)
+  trialAllowanceCents       Int       @default(5000)
+  trialMaxNumbers           Int       @default(3)
   /// Offer the trial to sign-ups that did not come through a referral link.
-  trialWithoutReferral     Boolean  @default(false)
-  updatedAt                DateTime @updatedAt
+  trialWithoutReferral      Boolean   @default(false)
+  updatedAt                 DateTime  @updatedAt
 }
 
 /// One client referred another (single tier: never second level). tenantId is the referrer,
@@ -1205,17 +1216,17 @@ model TrialClaim {
 
 /// What vendors charge us, as pulled from their APIs or computed from token usage. One row per record (call, message, AI request) or per day for aggregates.
 model VendorUsage {
-  id        String   @id @default(cuid())
-  tenantId  String?
-  vendor    String
+  id             String   @id @default(cuid())
+  tenantId       String?
+  vendor         String
   /// sip-trunking, messaging, amd, conference, ai.classify, ai.assist, …
-  kind      String
-  quantity  Decimal  @default(1) @db.Decimal(14, 4)
-  costCents Int
-  day       String
+  kind           String
+  quantity       Decimal  @default(1) @db.Decimal(14, 4)
+  costCents      Int
+  day            String
   vendorRecordId String?
-  refId     String?
-  createdAt DateTime @default(now())
+  refId          String?
+  createdAt      DateTime @default(now())
 
   @@unique([vendor, vendorRecordId])
   @@index([vendor, day])
@@ -1246,8 +1257,8 @@ enum InboundRoute {
 
 /// Something an agent can do: a language, a product line, a support tier.
 model Skill {
-  id       String @id @default(cuid())
-  tenant   Tenant @relation(fields: [tenantId], references: [id])
+  id       String       @id @default(cuid())
+  tenant   Tenant       @relation(fields: [tenantId], references: [id])
   tenantId String
   name     String
   agents   AgentSkill[]
@@ -1256,66 +1267,212 @@ model Skill {
 }
 
 model AgentSkill {
-  user    User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user    User   @relation(fields: [userId], references: [id], onDelete: Cascade)
   userId  String
-  skill   Skill @relation(fields: [skillId], references: [id], onDelete: Cascade)
+  skill   Skill  @relation(fields: [skillId], references: [id], onDelete: Cascade)
   skillId String
   /// 1 (basic) to 5 (expert).
-  level   Int   @default(3)
+  level   Int    @default(3)
 
   @@id([userId, skillId])
 }
 
 /// A menu: greeting, digit options, optional extension dialing.
 model Ivr {
-  id              String  @id @default(cuid())
-  tenant          Tenant  @relation(fields: [tenantId], references: [id])
+  id              String           @id @default(cuid())
+  tenant          Tenant           @relation(fields: [tenantId], references: [id])
   tenantId        String
   name            String
   greetingAudioId String?
   /// [{ "digit": "1", "label": "Sales", "action": "QUEUE"|"USER"|"VOICEMAIL"|"IVR"|"HANGUP", "targetId": "…" }]
-  options         Json    @default("[]")
+  options         Json             @default("[]")
   /// Callers may dial an agent's extension at any time.
-  allowExtensions Boolean @default(true)
+  allowExtensions Boolean          @default(true)
   /// What happens on no input after `timeoutSeconds` and `repeats` replays.
-  timeoutSeconds  Int     @default(6)
-  repeats         Int     @default(2)
-  timeoutAction   String  @default("HANGUP")
+  timeoutSeconds  Int              @default(6)
+  repeats         Int              @default(2)
+  timeoutAction   String           @default("HANGUP")
   timeoutTargetId String?
   numbers         CallerIdNumber[]
+  /// Used by a GEO option: caller state / area code → queue.
+  geoRoutes       GeoRoute[]
 
   @@unique([tenantId, name])
 }
 
 /// Callers wait here for an agent with the right skills.
 model Queue {
-  id              String   @id @default(cuid())
-  tenant          Tenant   @relation(fields: [tenantId], references: [id])
+  id              String           @id @default(cuid())
+  tenant          Tenant           @relation(fields: [tenantId], references: [id])
   tenantId        String
   name            String
   /// [{ "skillId": "…", "minLevel": 3 }] — all required.
-  requiredSkills  Json     @default("[]")
+  requiredSkills  Json             @default("[]")
   /// Campaign whose agents are preferred and whose context the call carries.
-  campaign        Campaign? @relation(fields: [campaignId], references: [id])
+  campaign        Campaign?        @relation(fields: [campaignId], references: [id])
   campaignId      String?
   holdAudioId     String?
-  maxWaitSeconds  Int      @default(300)
+  maxWaitSeconds  Int              @default(300)
   /// VOICEMAIL | QUEUE | HANGUP
-  overflowAction  String   @default("VOICEMAIL")
+  overflowAction  String           @default("VOICEMAIL")
   overflowQueueId String?
-  voicemailBox    VoicemailBox? @relation(fields: [voicemailBoxId], references: [id])
+  voicemailBox    VoicemailBox?    @relation(fields: [voicemailBoxId], references: [id])
   voicemailBoxId  String?
   numbers         CallerIdNumber[]
+
+  /// Business hours; closed → the schedule's after-hours action.
+  schedule   Schedule? @relation(fields: [scheduleId], references: [id], onDelete: SetNull)
+  scheduleId String?
+
+  // Distribution (shared/inbound/distribution.ts)
+  strategy          QueueStrategy @default(LONGEST_IDLE)
+  /// Priority: base + VIP lead + known lead + 1 point per `agingSeconds` waited (0 = no aging). Higher is served first.
+  priority          Int           @default(0)
+  vipPriority       Int           @default(10)
+  knownLeadPriority Int           @default(2)
+  agingSeconds      Int           @default(60)
+  /// Offer a returning caller to the agent who last handled their lead for this long first; 0 = off.
+  stickySeconds     Int           @default(20)
+
+  // Announcements (text to speech `say` between hold music)
+  announce             Boolean @default(false)
+  announceEverySeconds Int     @default(60)
+  announcePosition     Boolean @default(true)
+  announceWait         Boolean @default(true)
+
+  // Virtual hold: "press 1 to get a call back without losing your place"
+  callbackEnabled           Boolean @default(false)
+  callbackOfferAfterSeconds Int     @default(90)
+  /// Optional recorded offer; otherwise the offer is spoken.
+  callbackAudioId           String?
+
+  // Blending: the ratio pacer leaves the queue's agents alone
+  /// Past this wait for the oldest caller, no new outbound calls for the queue's agents; 0 = never.
+  blendWaitSeconds Int @default(30)
+  /// Qualified agents always kept out of outbound while the queue is open.
+  reserveAgents    Int @default(0)
+
+  // Limits and wrap-up
+  /// Callers waiting at most; 0 = no limit. A caller past it gets `fullAction`.
+  maxWaiting    Int    @default(0)
+  /// VOICEMAIL | QUEUE (the overflow queue) | HANGUP
+  fullAction    String @default("VOICEMAIL")
+  /// After an inbound call from this queue the agent is in WRAP_UP this long, then back to Ready (unless they paused); 0 = until the disposition.
+  wrapUpSeconds Int    @default(30)
+  /// Service level target: answered within this many seconds.
+  slaSeconds    Int    @default(20)
+
+  // Post-call survey (press 1 to 5 after the agent hangs up)
+  surveyEnabled Boolean @default(false)
+  surveyAudioId String?
+
+  calls      Call[]
+  callbacks  QueueCallback[]
+  geoTargets GeoRoute[]      @relation("GeoTarget")
 
   @@unique([tenantId, name])
 }
 
+enum QueueStrategy {
+  LONGEST_IDLE
+  ROUND_ROBIN
+  FEWEST_CALLS
+  MOST_SKILLED
+}
+
+/// Business hours for queues and numbers (shared/inbound/schedule.ts evaluates it).
+model Schedule {
+  id                    String           @id @default(cuid())
+  tenant                Tenant           @relation(fields: [tenantId], references: [id])
+  tenantId              String
+  name                  String
+  timezone              String           @default("America/New_York")
+  /// {"1": [["09:00","17:00"]], …} keyed by weekday, Sunday = "0"; a range ending at or before its start runs overnight.
+  weekly                Json             @default("{}")
+  /// [{ "date": "2026-12-25", "name": "Christmas", "audioId": "…" }]
+  holidays              Json             @default("[]")
+  /// Manual "closed now": until `closedUntil` (null = until switched off), with its own message.
+  closedNow             Boolean          @default(false)
+  closedUntil           DateTime?
+  closedNowAudioId      String?
+  /// Closed → VOICEMAIL (box) | IVR | QUEUE | MESSAGE (greeting, then hang up)
+  closedAction          String           @default("MESSAGE")
+  closedTargetId        String?
+  /// Played first when closed (any action); a holiday or override message replaces it.
+  closedGreetingAudioId String?
+  queues                Queue[]
+  numbers               CallerIdNumber[]
+  createdAt             DateTime         @default(now())
+
+  @@unique([tenantId, name])
+}
+
+/// Geographic routing: on a number (checked before its route) or an IVR (its GEO option).
+model GeoRoute {
+  id            String          @id @default(cuid())
+  tenant        Tenant          @relation(fields: [tenantId], references: [id])
+  tenantId      String
+  name          String
+  number        CallerIdNumber? @relation(fields: [numberId], references: [id], onDelete: Cascade)
+  numberId      String?
+  ivr           Ivr?            @relation(fields: [ivrId], references: [id], onDelete: Cascade)
+  ivrId         String?
+  states        String[]        @default([])
+  areaCodes     String[]        @default([])
+  targetQueue   Queue           @relation("GeoTarget", fields: [targetQueueId], references: [id], onDelete: Cascade)
+  targetQueueId String
+  /// Catches every caller no other rule matched.
+  isFallback    Boolean         @default(false)
+  sortOrder     Int             @default(0)
+  createdAt     DateTime        @default(now())
+
+  @@index([tenantId])
+  @@index([numberId])
+  @@index([ivrId])
+}
+
+enum QueueCallbackStatus {
+  WAITING
+  DIALING
+  DONE
+  FAILED
+}
+
+/// Virtual hold: a caller who pressed 1 keeps their place (`score`) and is called back when it is their turn.
+model QueueCallback {
+  id             String              @id @default(cuid())
+  tenant         Tenant              @relation(fields: [tenantId], references: [id])
+  tenantId       String
+  queue          Queue               @relation(fields: [queueId], references: [id], onDelete: Cascade)
+  queueId        String
+  phone          String
+  lead           Lead?               @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  leadId         String?
+  /// The number they called: the callback shows it.
+  callerId       String
+  originalCallId String?
+  requestedAt    DateTime            @default(now())
+  /// Their sorted-set score in the queue when they asked (priority then arrival).
+  score          Float
+  priority       Int                 @default(0)
+  status         QueueCallbackStatus @default(WAITING)
+  attempts       Int                 @default(0)
+  lastAttemptAt  DateTime?
+  agentId        String?
+  /// The latest outbound attempt.
+  callId         String?
+  doneAt         DateTime?
+
+  @@index([queueId, status])
+  @@index([tenantId, requestedAt])
+}
+
 model VoicemailBox {
-  id              String  @id @default(cuid())
-  tenant          Tenant  @relation(fields: [tenantId], references: [id])
+  id              String      @id @default(cuid())
+  tenant          Tenant      @relation(fields: [tenantId], references: [id])
   tenantId        String
   name            String
-  owner           User?   @relation("BoxOwner", fields: [ownerId], references: [id])
+  owner           User?       @relation("BoxOwner", fields: [ownerId], references: [id])
   ownerId         String?
   greetingAudioId String?
   notifyEmail     String?
@@ -1404,57 +1561,72 @@ enum CallOutcome {
 }
 
 model Call {
-  id         String        @id @default(cuid())
-  tenant     Tenant        @relation(fields: [tenantId], references: [id])
-  tenantId   String
-  campaign   Campaign?     @relation(fields: [campaignId], references: [id])
-  campaignId String?
-  lead       Lead?         @relation(fields: [leadId], references: [id])
-  leadId     String?
-  agent      User?         @relation(fields: [agentId], references: [id])
-  agentId    String?
-  direction  CallDirection
-  phone      String
-  callerId   String?
-  providerCallId String?   @unique
+  id             String        @id @default(cuid())
+  tenant         Tenant        @relation(fields: [tenantId], references: [id])
+  tenantId       String
+  campaign       Campaign?     @relation(fields: [campaignId], references: [id])
+  campaignId     String?
+  lead           Lead?         @relation(fields: [leadId], references: [id])
+  leadId         String?
+  agent          User?         @relation(fields: [agentId], references: [id])
+  agentId        String?
+  direction      CallDirection
+  phone          String
+  callerId       String?
+  providerCallId String?       @unique
 
-  dialedAt   DateTime  @default(now())
-  ringingAt  DateTime?
-  answeredAt DateTime?
-  bridgedAt  DateTime?
-  endedAt    DateTime?
+  dialedAt        DateTime  @default(now())
+  ringingAt       DateTime?
+  answeredAt      DateTime?
+  bridgedAt       DateTime?
+  endedAt         DateTime?
   /// What the carrier actually charged for this call (from Telnyx detail records), and its record id.
   vendorCostCents Int?
   vendorRecordId  String?
 
   amdResult        AmdResult?
-  screenerDetected Boolean     @default(false)
+  screenerDetected Boolean      @default(false)
   outcome          CallOutcome?
-  abandoned        Boolean     @default(false)
+  abandoned        Boolean      @default(false)
   disposition      Disposition? @relation(fields: [dispositionId], references: [id])
   dispositionId    String?
   notes            String?
 
-  recordingUrl       String?
-  recordingExpiresAt DateTime?
+  recordingUrl        String?
+  recordingExpiresAt  DateTime?
   /// Where the nightly export put it (sftp://host/path or dropbox:/path).
   recordingExportedTo String?
-  recordingDeletedAt DateTime?
-  legalHold          Boolean   @default(false)
-  costCents          Int?
+  recordingDeletedAt  DateTime?
+  legalHold           Boolean   @default(false)
+  costCents           Int?
   /// Raw provider facts worth keeping (final SIP status, AMD events).
-  providerData       Json      @default("{}")
+  providerData        Json      @default("{}")
 
   /// External transfer destination legs hang off the lead's call.
-  parent       Call?   @relation("CallLegs", fields: [parentCallId], references: [id])
-  parentCallId String?
-  legs         Call[]  @relation("CallLegs")
+  parent        Call?                @relation("CallLegs", fields: [parentCallId], references: [id])
+  parentCallId  String?
+  legs          Call[]               @relation("CallLegs")
   destination   TransferDestination? @relation(fields: [destinationId], references: [id])
   destinationId String?
 
   transfers Transfer[]
 
+  /// Inbound queue facts for the ACD metrics (shared/inbound/metrics.ts).
+  queue            Queue?    @relation(fields: [queueId], references: [id], onDelete: SetNull)
+  queueId          String?
+  queuedAt         DateTime?
+  /// Seconds in the queue before an agent took it, or before the caller hung up.
+  waitSeconds      Int?
+  abandonedInQueue Boolean   @default(false)
+  /// The agent's wrap-up ended (disposition or the queue's wrap-up timer).
+  wrapEndedAt      DateTime?
+  /// The agent left and the caller went to the post-call survey; talk ends here.
+  surveyStartedAt  DateTime?
+  /// 1 to 5 from the post-call survey.
+  surveyScore      Int?
+
   @@index([tenantId, dialedAt])
+  @@index([queueId, queuedAt])
   @@index([campaignId, dialedAt])
   @@index([leadId, dialedAt])
   @@index([agentId, dialedAt])
@@ -1481,26 +1653,26 @@ enum TransferCallerIdMode {
 
 /// A phone number a campaign's agents can transfer a live lead to (owner, 5 Nov).
 model TransferDestination {
-  id         String   @id @default(cuid())
-  tenant     Tenant   @relation(fields: [tenantId], references: [id])
-  tenantId   String
-  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
-  campaignId String
-  name       String
+  id             String               @id @default(cuid())
+  tenant         Tenant               @relation(fields: [tenantId], references: [id])
+  tenantId       String
+  campaign       Campaign             @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  campaignId     String
+  name           String
   /// E.164.
-  phone      String
+  phone          String
   /// Default for the console's cold/warm toggle. `kind` on Transfer records what was used.
-  type         TransferKind         @default(COLD)
-  callerIdMode TransferCallerIdMode @default(CUSTOMER)
+  type           TransferKind         @default(COLD)
+  callerIdMode   TransferCallerIdMode @default(CUSTOMER)
   /// One of the workspace's numbers (CallerIdNumber.phone, ten digits) when callerIdMode is STATIC.
   staticCallerId String?
-  whisperOn    Boolean @default(true)
+  whisperOn      Boolean              @default(true)
   /// Template with {{company}}, {{campaign}}, {{lead.firstName}}, {{lead.lastName}} and the script variables; null = the default.
-  whisperText  String?
-  sortOrder    Int     @default(0)
-  active       Boolean @default(true)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  whisperText    String?
+  sortOrder      Int                  @default(0)
+  active         Boolean              @default(true)
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @updatedAt
 
   transfers Transfer[]
   calls     Call[]
@@ -1509,33 +1681,33 @@ model TransferDestination {
 }
 
 model Transfer {
-  id         String       @id @default(cuid())
-  tenant     Tenant       @relation(fields: [tenantId], references: [id])
-  tenantId   String
-  call       Call         @relation(fields: [callId], references: [id], onDelete: Cascade)
-  callId     String
-  fromAgent  User         @relation("TransferFrom", fields: [fromAgentId], references: [id])
+  id          String       @id @default(cuid())
+  tenant      Tenant       @relation(fields: [tenantId], references: [id])
+  tenantId    String
+  call        Call         @relation(fields: [callId], references: [id], onDelete: Cascade)
+  callId      String
+  fromAgent   User         @relation("TransferFrom", fields: [fromAgentId], references: [id])
   fromAgentId String
-  toAgent    User?        @relation("TransferTo", fields: [toAgentId], references: [id])
-  toAgentId  String?
+  toAgent     User?        @relation("TransferTo", fields: [toAgentId], references: [id])
+  toAgentId   String?
   /// WARM = three-way until the agent leaves; COLD = agent dropped on answer. For external transfers this is the mode used.
-  kind       TransferKind @default(WARM)
-  createdAt  DateTime     @default(now())
+  kind        TransferKind @default(WARM)
+  createdAt   DateTime     @default(now())
   completedAt DateTime?
 
   // External transfers (dialer/transfers.ts).
-  destination   TransferDestination? @relation(fields: [destinationId], references: [id])
-  destinationId String?
+  destination       TransferDestination? @relation(fields: [destinationId], references: [id])
+  destinationId     String?
   /// The Call row of the destination leg (direction TRANSFER).
   destinationCallId String?
   /// Ten-digit number the destination saw; null when no external leg.
-  callerIdShown    String?
+  callerIdShown     String?
   /// Telnyx refused the lead's number as `from`; the campaign's caller ID was used instead.
-  callerIdFallback Boolean   @default(false)
-  answeredAt       DateTime?
-  agentLeftAt      DateTime?
-  endedAt          DateTime?
-  outcome          TransferOutcome?
+  callerIdFallback  Boolean              @default(false)
+  answeredAt        DateTime?
+  agentLeftAt       DateTime?
+  endedAt           DateTime?
+  outcome           TransferOutcome?
 
   @@index([callId])
 }
@@ -1616,31 +1788,31 @@ enum MessageStatus {
 }
 
 model Message {
-  id         String           @id @default(cuid())
-  tenant     Tenant           @relation(fields: [tenantId], references: [id])
-  tenantId   String
-  campaign   Campaign?        @relation(fields: [campaignId], references: [id])
-  campaignId String?
-  lead       Lead?            @relation(fields: [leadId], references: [id])
-  leadId     String?
-  agent      User?            @relation(fields: [agentId], references: [id])
-  agentId    String?
-  direction  MessageDirection
-  fromPhone  String
-  toPhone    String
-  body       String
-  provider   String           @default("commio")
-  providerMessageId String?   @unique
-  status     MessageStatus    @default(QUEUED)
+  id                String           @id @default(cuid())
+  tenant            Tenant           @relation(fields: [tenantId], references: [id])
+  tenantId          String
+  campaign          Campaign?        @relation(fields: [campaignId], references: [id])
+  campaignId        String?
+  lead              Lead?            @relation(fields: [leadId], references: [id])
+  leadId            String?
+  agent             User?            @relation(fields: [agentId], references: [id])
+  agentId           String?
+  direction         MessageDirection
+  fromPhone         String
+  toPhone           String
+  body              String
+  provider          String           @default("commio")
+  providerMessageId String?          @unique
+  status            MessageStatus    @default(QUEUED)
   /// Which automated touch sent it: pre_call, missed_call, or null for manual.
-  purpose    String?
-  error      String?
+  purpose           String?
+  error             String?
   /// AI read of an inbound reply: OPT_OUT, CALLBACK_REQUEST, QUESTION, WRONG_NUMBER, INTERESTED, NOT_INTERESTED, OTHER. Null = keyword matched or AI not configured.
-  intent           String?
-  intentConfidence Float?
-  intentReason     String?
-  vendorCostCents  Int?
-  createdAt  DateTime         @default(now())
+  intent            String?
+  intentConfidence  Float?
+  intentReason      String?
+  vendorCostCents   Int?
+  createdAt         DateTime         @default(now())
 
   @@index([leadId, createdAt])
   @@index([tenantId, createdAt])

@@ -18,6 +18,7 @@ import { holdCall, manualDial, transferCall, transferTargets } from "../dialer/c
 import { agentLeaveTransfer, cancelTransfer, liveTransfer, startExternalTransfer, transferredCalls, transferView } from "../dialer/transfers";
 import { nightlyRecordings } from "../recordings/export";
 import { releaseLead, reserveNextLead } from "../dialer/hopper";
+import { inboundLive } from "../inbound/queues";
 import { jambonz, jambonzConfigured } from "../jambonz/client";
 import { assignNumbersToCampaign, createBrand, createTenDlcCampaign, orderNumbers, provisionStatus, releaseNumber, searchNumbers, setupCarrier, syncNumbers, tenDlcStatus, usecaseFees } from "../provision";
 import type { BrandInput, CampaignInput } from "../provision/telnyx";
@@ -119,6 +120,12 @@ export async function registerInternalRoutes(app: FastifyInstance): Promise<void
   app.get("/internal/floor", async (req) => {
     const { tenantId } = req.query as { tenantId: string };
     return { agents: await listAgents(tenantId) };
+  });
+
+  // Inbound wallboard: per-queue waiting, longest wait, agents, and the blending holds (inbound/queues.ts, refreshed every second).
+  app.get("/internal/inbound/live", async (req) => {
+    const { tenantId } = z.object({ tenantId: z.string() }).parse(req.query);
+    return { live: await inboundLive(tenantId) };
   });
 
   // ── Supervision ─────────────────────────────────────────────────────────

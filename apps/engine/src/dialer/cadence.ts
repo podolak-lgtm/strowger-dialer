@@ -5,6 +5,7 @@ import { daypartOf, localParts, nextAttemptAt, parseDayparts, prettyPhone, rende
 import { evaluateDialWindow } from "@strowger/shared/compliance";
 import { randomBytes } from "node:crypto";
 import { listAgents, patchAgent } from "../agents/state";
+import { inboundHolds } from "../inbound/queues";
 import { config } from "../config";
 import { log } from "../log";
 import { sendSms } from "../sms/provider";
@@ -58,7 +59,9 @@ async function ensureCallbackToken(lead: Lead): Promise<Lead> {
 
 /** A READY fronter on the campaign with nothing reserved, or null. */
 async function readyAgentFor(campaign: Campaign): Promise<string | null> {
-  const live = (await listAgents(campaign.tenantId)).filter((a) => a.campaignId === campaign.id && a.state === "READY" && a.agentCallSid && !a.reservedLeadId && !a.currentCallId);
+  // Agents held for an inbound queue (blending) are not dialled for here either.
+  const held = await inboundHolds(campaign.tenantId);
+  const live = (await listAgents(campaign.tenantId)).filter((a) => a.campaignId === campaign.id && a.state === "READY" && a.agentCallSid && !a.reservedLeadId && !a.currentCallId && !held.has(a.userId));
   if (live.length === 0) return null;
   const assignments = await prisma.campaignAgent.findMany({ where: { campaignId: campaign.id, userId: { in: live.map((a) => a.userId) } } });
   const ok = live.filter((a) => {

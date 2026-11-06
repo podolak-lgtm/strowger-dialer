@@ -15,7 +15,9 @@ import { agentRoom, hookUrl, jambonz, jambonzConfigured } from "../jambonz/clien
 import { afterAttempt, daypartNow } from "./cadence";
 import { removeInflight } from "./pacing";
 import { enqueueWebhooks, type WebhookEvent } from "../webhooks/deliver";
-import { leaveQueue } from "../inbound/router";
+import { leaveQueue, wrapAfterQueueCall } from "../inbound/queues";
+import { queueCallbackEnded } from "../inbound/callbacks";
+import { startSurveyInsteadOfHangup } from "../inbound/survey";
 import { endLiveTransfersForCall } from "./transfers";
 
 const sidKey = (sid: string) => `callsid:${sid}`;
@@ -153,6 +155,8 @@ export async function dialLeadForAgent(campaign: Campaign, lead: Lead, agentId: 
 export async function hangupCall(callId: string): Promise<void> {
   const call = await prisma.call.findUnique({ where: { id: callId } });
   if (!call?.providerCallId || call.endedAt) return;
+  // An inbound queue call with the post-call survey on: the caller goes to the survey instead of being hung up.
+  if (await startSurveyInsteadOfHangup(callId).catch(() => false)) return;
   await jambonz.calls.update(call.providerCallId, { call_status: "completed" }).catch((e) => log.warn({ err: e, callId }, "hangup failed"));
 }
 
@@ -178,7 +182,7 @@ export async function leadCallEnded(callId: string, status: string, sipStatus: n
     data: { endedAt: new Date(), outcome, providerData: { ...(call.providerData as object), finalStatus: status, sipStatus: sipStatus ?? null, duration: duration ?? null } },
   });
   if (call.campaignId) await removeInflight(call.campaignId, callId);
-  await leaveQueue(callId).catch(() => undefined);
+  await leaveQueue(callId, "hangup").catch(() => undefined);
   // A destination still ringing or in the three-way has nobody to talk to now.
   await endLiveTransfersForCall(callId).catch((e) => log.warn({ err: e, callId }, "ending transfers after the lead left failed"));
   void chargeCallMinutes(callId).catch((e) => log.warn({ err: e, callId }, "billing: minutes charge failed"));
@@ -206,11 +210,15 @@ export async function leadCallEnded(callId: string, status: string, sipStatus: n
   if (call.agentId && !agentLeft) {
     const agent = await getAgent(call.agentId);
     if (agent && agent.currentCallId === callId) {
-      await patchAgent(call.agentId, { state: "WRAP_UP" });
+      // Inbound queue calls (and queue callbacks) wrap up on the queue's timer.
+      if (call.queueId) await wrapAfterQueueCall(call);
+      else await patchAgent(call.agentId, { state: "WRAP_UP" });
     }
     emitToAgent(call.agentId, "call:update", { callId, status: "ended", outcome });
   }
   emitToTenant(call.tenantId, "floor:call", { callId, status: "ended", outcome, transferred: agentLeft });
+  // A queue callback that never connected goes back in line (or gives up); one that did is done.
+  await queueCallbackEnded(callId, Boolean(call.bridgedAt)).catch((e) => log.warn({ err: e, callId }, "queue callback end failed"));
 }
 
 /**
@@ -278,7 +286,7 @@ export async function dispositionCall(input: DispositionInput): Promise<{ ok: tr
   if (!disp) return { ok: false, error: "Unknown disposition" };
 
   const now = new Date();
-  await prisma.call.update({ where: { id: call.id }, data: { dispositionId: disp.id, notes: input.notes ?? null } });
+  await prisma.call.update({ where: { id: call.id }, data: { dispositionId: disp.id, notes: input.notes ?? null, ...(input.keepWrapUp || call.wrapEndedAt ? {} : { wrapEndedAt: now }) } });
 
   if (call.lead) {
     let status: "CONTACTED" | "FINISHED" | "DNC" | "CALLBACK" | "NEW" = disp.isContact ? "CONTACTED" : "NEW";
@@ -313,7 +321,7 @@ export async function dispositionCall(input: DispositionInput): Promise<{ ok: tr
       // Back to Ready only when the agent was Ready before the call. A call they dialled by hand (from Paused, or
       // from Ready, which pauses them) returns them to Paused, so the dialer never starts calling behind them.
       const paused = agent.afterCall === "PAUSED" || !agent.agentCallSid;
-      await patchAgent(input.actorId, { currentCallId: null, afterCall: null, state: paused ? "PAUSED" : "READY", pauseReason: paused ? (agent.agentCallSid ? (agent.pauseReason ?? "Manual dial") : "Line dropped") : null });
+      await patchAgent(input.actorId, { currentCallId: null, afterCall: null, wrapUntil: null, state: paused ? "PAUSED" : "READY", pauseReason: paused ? (agent.agentCallSid ? (agent.pauseReason ?? "Manual dial") : "Line dropped") : null });
     }
   }
   emitToTenant(call.tenantId, "floor:call", { callId: call.id, status: "dispositioned", code: disp.code });

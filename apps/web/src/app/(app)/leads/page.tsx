@@ -1,7 +1,8 @@
 import { prisma } from "@strowger/db";
 import { formatPhone, normalizePhone } from "@strowger/shared";
 import Link from "next/link";
-import { requireClientWorkspace } from "@/lib/auth";
+import { hasRole, requireClientWorkspace } from "@/lib/auth";
+import { setVip } from "./actions";
 import { Badge, Button, Card, Empty, PageHeader, Table, Td, inputClass } from "@/components/ui";
 
 export default async function LeadsPage({ searchParams }: PageProps<"/leads">) {
@@ -82,6 +83,16 @@ export default async function LeadsPage({ searchParams }: PageProps<"/leads">) {
               <Badge tone={detail.status === "DNC" || detail.status === "BLOCKED" ? "red" : "zinc"}>{detail.status}</Badge>
               <Badge tone={detail.scrubStatus === "CLEAN" ? "green" : detail.scrubStatus === "PENDING" ? "amber" : "red"}>scrub: {detail.scrubStatus.toLowerCase()}</Badge>
               {dnc.length ? <Badge tone="red">on DNC ({dnc.map((d) => d.source.toLowerCase()).join(", ")})</Badge> : null}
+              {detail.vip ? <Badge tone="amber">★ VIP</Badge> : null}
+              {hasRole(s, "SUPERVISOR") ? (
+                <form action={setVip}>
+                  <input type="hidden" name="id" value={detail.id} />
+                  <input type="hidden" name="vip" value={detail.vip ? "0" : "1"} />
+                  <button type="submit" className="rounded border border-zinc-700 px-1.5 py-0.5 text-xs text-zinc-300 hover:bg-zinc-800" title="VIP callers jump the inbound queue">
+                    {detail.vip ? "Remove VIP" : "Make VIP"}
+                  </button>
+                </form>
+              ) : null}
               <span className="text-zinc-500">
                 {detail.list.name}
                 {detail.list.campaign ? ` · ${detail.list.campaign.name}` : ""} · zone {detail.timezone ?? "?"} · {detail.attemptsTotal} attempts

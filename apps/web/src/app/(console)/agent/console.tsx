@@ -48,6 +48,7 @@ import {
   sprint,
   textThread,
   updateLead,
+  setLeadVip,
   type AgentLive,
   type LeadCard,
   type LeadEdit,
@@ -459,6 +460,7 @@ export function AgentConsole(props: ConsoleProps) {
   // A deploy changes every Server Action id; this page then fails on any click.
   const { stale: newVersion, markStale } = useNewVersion(version);
   const isLeader = roles.includes("TEAM_LEADER") || roles.includes("SUPERVISOR") || roles.includes("ADMIN");
+  const canVip = roles.includes("SUPERVISOR") || roles.includes("ADMIN");
 
   const clientRef = useRef<JambonzClient | null>(null);
   const roomCallRef = useRef<JambonzCall | null>(null);
@@ -645,7 +647,21 @@ export function AgentConsole(props: ConsoleProps) {
     });
     sock.on("games:won", (w: { name: string; prize: string | null; hand: string }) => setNotice(`You won the poker run '${w.name}' with ${w.hand}${w.prize ? `: ${w.prize}` : ""}`));
     // A card earned on a disposition plays as the deal moment (games.tsx GamesLayer), held while on a call.
-    sock.on("call:update", (u: { callId: string; status: string; leadId?: string; outcome?: string; inbound?: boolean; from?: string | null; screener?: boolean; screenerPhrase?: string | null; human?: boolean; transfer?: LiveTransferView }) => {
+    sock.on("call:update", (u: { callId: string; status: string; leadId?: string; outcome?: string; inbound?: boolean; from?: string | null; screener?: boolean; screenerPhrase?: string | null; human?: boolean; transfer?: LiveTransferView; queue?: string; queueCallback?: string; waitedSeconds?: number; survey?: boolean }) => {
+      // The queue's wrap-up timer ran out (inbound/queues.ts): the call is done, the screen clears.
+      if (u.status === "wrapped") {
+        if (callIdRef.current === u.callId) {
+          setCallId(null);
+          setCallStatus("idle");
+          setCallStart(null);
+          setScreener(null);
+          setScreenerStep("say");
+          setTransfer(null);
+          setXferMenu(false);
+        }
+        void refreshStats();
+        return;
+      }
       if (u.status === "transfer" && u.transfer) {
         const t = u.transfer;
         setXferMenu(false);
@@ -677,7 +693,11 @@ export function AgentConsole(props: ConsoleProps) {
       setCallStatus(u.status);
       if (u.screener) setScreener((cur) => cur ?? { phrase: u.screenerPhrase ?? null });
       if (u.human) setScreenerStep("go");
-      if (u.inbound) setNotice(`Inbound call${u.from ? ` from ${u.from.replace(/(\d{3})(\d{3})(\d{4})/, "($1) $2-$3")}` : ""}: connected to you.`);
+      const fromText = u.from ? ` ${u.from.replace(/(\d{3})(\d{3})(\d{4})/, "($1) $2-$3")}` : "";
+      if (u.queueCallback) setNotice(`Queue callback for ${u.queueCallback}:${fromText || " the caller"} ${u.status === "dialing" ? "is being dialled" : "is on the line"}. They asked for this call.`);
+      else if (u.queue) setNotice(`Inbound call from${fromText || " a caller"} via ${u.queue}${typeof u.waitedSeconds === "number" ? ` (waited ${u.waitedSeconds}s)` : ""}: connected to you.`);
+      else if (u.inbound) setNotice(`Inbound call${u.from ? ` from ${u.from.replace(/(\d{3})(\d{3})(\d{4})/, "($1) $2-$3")}` : ""}: connected to you.`);
+      if (u.survey && u.status === "ended") setNotice("You left the call; the caller is taking the post-call survey.");
       if (u.leadId) {
         // Ratio mode: the lead arrives with the live call.
         void leadById(u.leadId).then((l) => l && showLead(l));
@@ -1037,6 +1057,20 @@ export function AgentConsole(props: ConsoleProps) {
     }
   };
 
+  /** Supervisors flag the lead on screen VIP: it jumps inbound queues by the queue's VIP points. */
+  const toggleVip = async () => {
+    if (!lead) return;
+    const id = lead.id;
+    try {
+      const r = await setLeadVip(id, !lead.vip);
+      if (!r.ok) throw new Error(r.error);
+      setLead((cur) => (cur && cur.id === id ? { ...cur, vip: r.lead.vip } : cur));
+      void leadHistory(id).then(setHistory);
+    } catch (e) {
+      setNotice(`VIP not saved: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+
   /** Notes auto-save when the agent leaves the box; no busy flag so the next click is not lost. */
   const saveNotes = () => {
     if (!lead || notes.trim() === (lead.notes ?? "").trim()) return;
@@ -1244,7 +1278,19 @@ export function AgentConsole(props: ConsoleProps) {
   const leadName = lead ? [lead.firstName, lead.lastName].filter(Boolean).join(" ") || "Unknown name" : "";
   const localTime = leadLocalTime(lead, now);
   const leadCard = lead ? (
-    <LeadCardEditor key={lead.id} lead={lead} notes={notes} onNotes={setNotes} onNotesBlur={saveNotes} onSave={saveLead} busy={busy} now={now} right={<span className="text-xs text-zinc-500">{onCall ? "on call" : wrapUp ? "wrap-up" : "on screen"}</span>} />
+    <LeadCardEditor key={lead.id} lead={lead} notes={notes} onNotes={setNotes} onNotesBlur={saveNotes} onSave={saveLead} busy={busy} now={now} right={
+        <span className="flex items-center gap-2">
+          {canVip ? (
+            <button type="button" onClick={() => void toggleVip()} title="VIP callers jump the inbound queue" className={`rounded px-1.5 py-0.5 text-xs ${lead.vip ? "bg-amber-400/20 text-amber-200" : "border border-white/10 text-zinc-400 hover:bg-white/10"}`}>
+              {lead.vip ? "★ VIP" : "☆ VIP"}
+            </button>
+          ) : lead.vip ? (
+            <span className="rounded bg-amber-400/20 px-1.5 py-0.5 text-xs text-amber-200">★ VIP</span>
+          ) : null}
+          <span className="text-xs text-zinc-500">{onCall ? "on call" : wrapUp ? "wrap-up" : "on screen"}</span>
+        </span>
+      }
+    />
   ) : null;
 
   return (

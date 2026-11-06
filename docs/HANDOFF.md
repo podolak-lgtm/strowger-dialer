@@ -79,8 +79,10 @@ built and why; this says how it is wired and what will trip you.
   hooks that lack customerData.
 - AMD runs on the lead leg (`/jambonz/amd?callId=`): machine + HANGUP
   policy → hangup; machine + DROP → wait for the tone, `play` the drop file,
-  hangup. All prompts are `play` verbs: **no TTS anywhere**, so the account
-  needs no speech vendor.
+  hangup. Outbound prompts are `play` verbs (no TTS on outbound). The inbound
+  queue prompts (announcements, the callback offer, the survey, the default
+  closed message) use `say` (6 Nov: the account has Cartesia); see
+  "Inbound contact center" for the fallback.
 - Registration: jambonz forwards the SIP digest to `/jambonz/register`; the
   engine recomputes it from the agent's decrypted password
   (`User.sipSecret`, AES-GCM under ENGINE_INTERNAL_KEY) and returns
@@ -119,6 +121,180 @@ built and why; this says how it is wired and what will trip you.
 
 Admin: `/inbound` (routing, IVRs, queues, boxes), `/skills` (skills,
 ratings, extensions), `/voicemails` (agents see their own; supervisors all).
+
+### ACD (owner, 6 Nov: "the best at inbound, that's the future")
+
+The gaps against an Automatic Call Distribution article, built in this
+order. Pure maths in `packages/shared/src/inbound/` (`schedule.ts`,
+`distribution.ts`, `geo-route.ts`, `metrics.ts`, each with tests); engine
+in `apps/engine/src/inbound/` (`common.ts` shared verbs, `queues.ts` the
+distributor, `callbacks.ts` virtual hold, `survey.ts`, `router.ts` entry and
+IVR). Migration `20261106200000_inbound_acd`. Every queue setting is on
+`/inbound` → Queues (one collapsible form per queue, sections Distribution,
+Priority, Announcements, Callback, Blending, Limits, Survey); defaults
+below are the column defaults.
+
+1. **Hours and holidays**: `Schedule` (tenantId, name, timezone, `weekly`
+   `{"1": [["09:00","17:00"]]}` Sunday = "0", `holidays` `[{date, name,
+   audioId}]`, `closedNow` + `closedUntil` + `closedNowAudioId`,
+   `closedAction` VOICEMAIL | IVR | QUEUE | MESSAGE (default MESSAGE =
+   greeting then hang up) + `closedTargetId`, `closedGreetingAudioId`).
+   Attached by `CallerIdNumber.scheduleId` (checked first, before any
+   route) and `Queue.scheduleId` (checked on entry, also via IVR/overflow).
+   `evaluateSchedule` is pure: ranges end-exclusive, end ≤ start = overnight
+   (spills into the next day), "24:00" allowed, a holiday closes the whole
+   local date, an unknown zone is closed. The holiday's or override's audio
+   replaces the closed greeting; no audio = the spoken closed message.
+   Admin: `/inbound` → Business hours (badge shows open/closed now; "Close
+   now" button; "until" is typed in the schedule's own zone,
+   `zonedTimeToUtc`). Closed → QUEUE recursion stops at depth 3.
+2. **Strategy** `Queue.strategy`: LONGEST_IDLE (default) | ROUND_ROBIN
+   (pointer `queue:<id>:rr` = last agent served; the rotation starts after
+   it in user-id order) | FEWEST_CALLS (Redis hash
+   `inbound:answered:<UTC date>`) | MOST_SKILLED (sum of levels on the
+   required skills, then longest idle: what every skills queue did before;
+   **the migration sets MOST_SKILLED on existing queues with skills** so
+   they behave as before). `orderAgents` in shared. A queue with no skills
+   still prefers its campaign's free agents.
+3. **Priority**: caller priority = `priority` (0) + `vipPriority` (10) when
+   `Lead.vip` + `knownLeadPriority` (2) when the number matched a lead, and
+   +1 per `agingSeconds` (60; 0 = no aging) waited. The sorted-set score is
+   `queueScore` = arrival − priority × agingSeconds (a point is worth that
+   much waiting; without aging a point is worth 1e9 ms) so ascending score
+   is exactly "highest effective priority, then arrival". The tick walks
+   every waiting caller of the tenant across all queues in that order, so
+   an agent qualified for several queues takes the highest-priority caller
+   (`effectivePriority`). `Lead.vip`: supervisors toggle it on `/leads`
+   (lead detail) and on the console lead card (★ VIP, `setLeadVip`); a
+   NOTE LeadEvent records the change.
+4. **Sticky** `stickySeconds` (20; 0 = off): on entry, when the lead's
+   `lastAgentId` is logged in and qualified, `queued:<callId>` carries
+   `stickyAgentId/stickyUntil`; until then only that agent may take the
+   caller (others behind are not blocked), then normal distribution.
+5. **Geographic routing**: `GeoRoute` (tenantId, name, `numberId` or
+   `ivrId`, `states[]`, `areaCodes[]`, `targetQueueId`, `isFallback`,
+   `sortOrder`). On a number the rules run after its hours and before its
+   route; on an IVR they run for an option with action **GEO** (the
+   option's own queue is the fallback when nothing matches). Area-code
+   rules beat state rules; state = `resolveZone` on the lead's ZIP/state
+   when we know them, else the caller's area code. The match is written to
+   `Call.providerData.geoRoute`. Admin: `/inbound` → Geographic routing.
+6. **Announcements** `announce` (off), `announceEverySeconds` (60, min
+   15), `announcePosition`, `announceWait` (on): the waitHook returns a
+   `say` ("You are second in line. Your estimated wait is about 3
+   minutes.") on entry and then every N s, with the hold file played with
+   `timeoutSecs` until the next one. Position = rank in our sorted set
+   (callbacks ahead count). Estimated wait = mean gap between the queue's
+   answers in the last hour × position (`queue:<id>:answers`, a sorted set
+   of `<callId>:<wait>` by time); unknown → position only. **Speech
+   fallback**: `say` carries `synthesizer` only when `TTS_VENDOR` (and
+   optionally `TTS_VOICE`, `TTS_LANGUAGE` en-US) is set on the engine,
+   otherwise the jambonz application's default speech vendor; a jambonz
+   alert mentioning TTS/synthesis sets `tts:down` for 15 minutes, during
+   which announcements are skipped and spoken prompts become silence (the
+   survey is skipped). jambonz moves on to the next verb when a `say`
+   fails, so the hold music still plays.
+7. **Queue callback (virtual hold)** `callbackEnabled` (off),
+   `callbackOfferAfterSeconds` (90), `callbackAudioId` (else spoken). The
+   waitHook returns `leave` once the caller has waited that long (waitHook
+   verbs may only be say/play/pause/leave, so the offer cannot be a gather
+   there); the enqueue actionHook (`/jambonz/queue-exit`, `queue_result:
+   leave`) answers with the gather; 1 → `/jambonz/queue-callback` creates
+   `QueueCallback` (tenantId, queueId, phone, leadId, callerId = the
+   number they called, score, priority, status WAITING | DIALING | DONE |
+   FAILED, attempts), swaps the sorted-set member for `cb:<id>` at the
+   **same score**, marks the call `outcome CANCELLED` "Asked for a queue
+   callback" and thanks + hangs up; anything else re-enqueues at the same
+   place. When `cb:<id>` comes up, the queue is open and an agent is free,
+   `placeQueueCallback` checks the dial window (`evaluateDialWindow` with
+   the caller's zone, the queue campaign's window or 8–21; no DNC check:
+   they asked), reserves the agent (ON_CALL), creates an OUTBOUND `Call`
+   with `queueId` and `providerData.queueCallbackId`, dials with tag
+   `kind: qcallback`; `/jambonz/call` sends the answer straight into the
+   agent's room. Not answered → the agent goes straight back to Ready, the
+   callback goes back in line at its old score after 2 minutes; after 2
+   attempts it is FAILED and a note (a `Voicemail` row with a transcript,
+   no audio) lands in the queue's box. Outside calling hours it is looked
+   at again every 10 minutes. The console shows "Queue callback for
+   <queue>".
+8. **Blending** `blendWaitSeconds` (30; 0 = never) and `reserveAgents`
+   (0): every tick writes `blend:<tenantId>` (`blendHolds`): while the
+   queue is open, all its qualified logged-in agents once the oldest live
+   caller has waited past the threshold, else the first `reserveAgents` of
+   them (free ones first). `pacingTick` leaves held agents out of `ready`
+   (no new outbound for them, `PacingSnapshot.heldForInbound`); an
+   already-answered pacer call still prefers non-held agents but takes a
+   held one rather than abandon. Changes are logged ("Inbound priority:
+   holding outbound for 3 agents") and shown on the floor wallboard. The
+   cadence's instant dial on a posted lead skips held agents too; preview
+   dialing is the agent's own click and is not held.
+9. **Limits and wrap-up** `maxWaiting` (0 = no limit) with `fullAction`
+   VOICEMAIL (default) | QUEUE (the overflow queue) | HANGUP (spoken busy
+   message); `maxWaitSeconds` overflow as before. `wrapUpSeconds` (30;
+   0 = until the disposition): when an inbound queue call (or a queue
+   callback) ends the agent is WRAP_UP with `AgentLive.wrapUntil`; the tick
+   moves them to READY when it passes (PAUSED when `afterCall` is PAUSED or
+   the line is down), or, if they paused during wrap-up, leaves them paused
+   and clears the call; the console gets `call:update {status: "wrapped"}`
+   and clears the call panel. A queue with no campaign has no
+   dispositions, so 0 there still means 30 s. A disposition ends wrap-up
+   as before and writes `Call.wrapEndedAt`. `slaSeconds` (20) is the
+   service-level target.
+10. **Metrics**: `Call.queueId`, `queuedAt`, `waitSeconds`,
+    `abandonedInQueue` (caller hung up while waiting: `leaveQueue(…,
+    "hangup")`), `wrapEndedAt`, `surveyStartedAt`, `surveyScore`.
+    Definitions in `shared/inbound/metrics.ts`: offered = INBOUND calls
+    that entered a queue, except the one that asked for a callback (its
+    callback leg counts when it connects); service level = answered within
+    SLA over offered; ASA; abandon rate; AHT = talk (bridge → agent end or
+    survey start) + wrap (→ `wrapEndedAt`); FCR = answered with no other
+    inbound call from the number within 7 days; occupancy = (ON_CALL +
+    WRAP_UP) / (READY + ON_CALL + WRAP_UP) from `AgentSession.events`; idle
+    = READY time. Live: the tick writes `inbound:live:<tenantId>` (waiting,
+    callbacks waiting, longest wait, qualified agents available / on call /
+    wrap, open or closed), read through `/internal/inbound/live`. Floor:
+    "Inbound queues" wallboard above both views (live + today's SL, ASA,
+    abandon, AHT; the blending message top right), refreshed on
+    `floor:queue` / `floor:blend`. Reports: Dashboard → **Inbound** tab
+    (`/reports/inbound`, date range and queue filter; by queue and by
+    agent) with `inbound.csv`, `inbound-queues.csv`, `inbound-agents.csv`
+    from `/api/reports/[report]` (`lib/inbound-report.ts`). `tabOfPath`
+    now picks the longest matching URL so `/reports/inbound` lights its own
+    tab.
+11. **Post-call survey** `surveyEnabled` (off), `surveyAudioId` (else
+    spoken). **Not exercised on a live call: leave it off until a test
+    call confirms it.** When the agent ends a bridged inbound queue call,
+    `hangupCall` calls `startSurveyInsteadOfHangup`: `survey:<callId>`
+    flag, `surveyStartedAt`, REST redirect of the caller's leg to
+    `/jambonz/survey` (gather 1–5 → `/jambonz/survey-result` →
+    `Call.surveyScore`), the agent to wrap-up at once and `call:update
+    ended` (the caller's leg stays up, so no status hook does it). jambonz
+    also runs the old room's conference actionHook after a redirect and its
+    answer can win (the transfer race below), so `/jambonz/conf-exit`
+    answers with the same survey verbs while the flag is set. What to
+    check live: the caller hears the question once, the score lands, the
+    call ends after the thanks.
+
+**Redis keys** (all expire): `queue:<id>` (zset: callId or `cb:<id>`),
+`queued:<callId>` (meta: queueId, at, priority, agingSeconds, leadId,
+sticky), `qann:` last announcement, `qcboffer:` / `qcbprompt:` the offer,
+`qbridge:<callId>` (agent being bridged: `/jambonz/queue-exit` answers with
+the bridge if the enqueue's actionHook races the REST redirect, instead of
+the old unconditional hangup), `qover:<callId>` (overflow verbs worked out
+once so the redirect and the exit hook agree and one voicemail row is
+made), `qcbwait:<id>`, `blend:<tenant>`, `inbound:live:<tenant>`,
+`tts:down`. The `queues` job (1 s) does it all per tenant: wrap-up timers,
+dead callers, overflow, the serving order, callbacks, blending, the live
+snapshot.
+
+Tested offline only (local engine, webhooks posted by hand): entry,
+announcement, the callback offer → gather → callback row at the same
+score, assignment to a Ready agent, wrap-up timer back to Ready, closed
+schedule message, geo match to another queue, blending reserve. Not
+verified against jambonz: that `leave` from a waitHook fires the enqueue
+actionHook with `queue_result: leave` (the schema says so), the redirect
+vs actionHook race on bridge and overflow, the survey (above), and Cartesia
+speaking with no `TTS_VOICE` set.
 
 ## Team leaders on the console, and chat (5 Nov)
 

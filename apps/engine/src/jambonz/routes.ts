@@ -7,9 +7,10 @@
 //   POST /jambonz/status     call status lifecycle for every leg
 //   POST /jambonz/conf       conference status events (join/leave)
 //
-// Replies are plain jambonz verb arrays. No TTS is used anywhere: every
-// prompt is a `play` of an uploaded file, so the account needs no speech
-// vendor to run.
+// Replies are plain jambonz verb arrays. Outbound prompts are `play` of
+// uploaded files; only the inbound queue prompts (announcements, the callback
+// offer, the survey) may speak with `say` (inbound/common.ts), and they go
+// quiet when jambonz reports a speech failure.
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { prisma } from "@strowger/db";
 import { decryptString, sipDigestMatches } from "@strowger/shared/secrets";
@@ -25,7 +26,11 @@ import type { Call, Campaign } from "@strowger/db";
 import { getSupervision, supervisorJoinVerbs, supervisorLegEnded } from "../supervise";
 import { voicemailVerbs } from "../dialer/voicemail";
 import { movedTransferFor, transferConfEvent, transferIdForSid, transferJoinVerbs, transferLegStatus, transferLegVerbs } from "../dialer/transfers";
-import { ivrResult, joinAgentVerbs, leaveQueue, overflowVerbs, queueWaitVerbs, routeInbound } from "../inbound/router";
+import { ivrResult, joinAgentVerbs, overflowVerbs, queueWaitVerbs, routeInbound } from "../inbound/router";
+import { inboundHolds, queueCallbackChoice, queueExitVerbs } from "../inbound/queues";
+import { queueCallbackAnswered } from "../inbound/callbacks";
+import { surveyPending, surveyResult, surveyVerbs } from "../inbound/survey";
+import { markTtsDown } from "../inbound/common";
 import { log } from "../log";
 import { agentRoom, hookUrl, jambonz } from "./client";
 
@@ -91,6 +96,9 @@ export async function registerJambonzRoutes(app: FastifyInstance): Promise<void>
   // Every alert the portal shows (rejected registrations, webhook failures, carrier trouble) lands in the engine log.
   app.post("/jambonz/alerts", async (req, reply) => {
     log.warn({ alert: req.body }, "jambonz alert");
+    // A text-to-speech failure: spoken queue prompts pause for 15 minutes instead of failing on every caller.
+    const text = JSON.stringify(req.body ?? {}).toLowerCase();
+    if (/\btts\b|synthes|text[- ]to[- ]speech/.test(text)) await markTtsDown(text.slice(0, 200));
     return reply.send({ ok: true });
   });
 
@@ -134,6 +142,9 @@ export async function registerJambonzRoutes(app: FastifyInstance): Promise<void>
   app.post("/jambonz/call", async (req, reply) => {
     const b = req.body as JambonzCallBody;
     const tag = (b.customerData ?? {}) as { kind?: string; callId?: string; agentId?: string; supervisorId?: string; transferId?: string };
+
+    // A queue callback (virtual hold) answered: into the reserved agent's room (inbound/callbacks.ts).
+    if (tag.kind === "qcallback" && tag.callId) return reply.send(await queueCallbackAnswered(tag.callId));
 
     // External transfer destination answered: whisper, then its room (dialer/transfers.ts).
     const transferId = tag.kind === "transfer" && tag.transferId ? tag.transferId : await transferIdForSid(b.call_sid);
@@ -237,7 +248,9 @@ export async function registerJambonzRoutes(app: FastifyInstance): Promise<void>
   async function bridgeToReadyAgent(call: Call, campaign: Campaign): Promise<Verb[]> {
     if (call.agentId) return joinVerbs(call, campaign, call.agentId);
     await recordLedger(campaign, "answered");
-    const agent = (await readyAgents(campaign))[0];
+    // Agents held for inbound (blending) take an answered pacer call only when nobody else can: an abandon is worse.
+    const held = await inboundHolds(campaign.tenantId);
+    const agent = (await readyAgents(campaign)).sort((a, b) => Number(held.has(a.userId)) - Number(held.has(b.userId)))[0];
     if (!agent) return abandonVerbs(call, campaign);
     const claimed = await prisma.call.updateMany({ where: { id: call.id, agentId: null }, data: { agentId: agent.userId } });
     if (claimed.count !== 1) return [{ verb: "hangup" }];
@@ -405,6 +418,8 @@ export async function registerJambonzRoutes(app: FastifyInstance): Promise<void>
       log.info({ callId: q.callId, transferId: moved }, "lead left the agent's room for its transfer room");
       return reply.send(await transferJoinVerbs(moved, "lead"));
     }
+    // Same race for the post-call survey: the agent left and the caller was redirected to it (inbound/survey.ts).
+    if (q.callId && (await surveyPending(q.callId))) return reply.send(await surveyVerbs(q.callId));
     return reply.send([{ verb: "hangup" }]);
   });
 
@@ -416,13 +431,32 @@ export async function registerJambonzRoutes(app: FastifyInstance): Promise<void>
     return reply.send(await ivrResult(q.ivrId, q.callId, (b.digits ?? "").replace(/#$/, ""), Number(q.attempt ?? 1), q.timeout === "1" || b.reason === "timeout"));
   });
   app.post("/jambonz/queue-wait", async (req, reply) => {
-    const { queueId } = req.query as { queueId?: string };
-    return reply.send(queueId ? await queueWaitVerbs(queueId) : [{ verb: "pause", length: 15 }]);
+    const { queueId, callId } = req.query as { queueId?: string; callId?: string };
+    return reply.send(queueId ? await queueWaitVerbs(queueId, callId) : [{ verb: "pause", length: 15 }]);
   });
   app.post("/jambonz/queue-exit", async (req, reply) => {
+    const { queueId, callId } = req.query as { queueId?: string; callId?: string };
+    const b = req.body as { queue_result?: string };
+    log.info({ queueId, callId, result: b.queue_result }, "enqueue ended");
+    if (!queueId || !callId) return reply.send([{ verb: "hangup" }]);
+    return reply.send(await queueExitVerbs(queueId, callId, b.queue_result));
+  });
+  // Virtual hold offer: 1 = call me back, keep my place; anything else (or nothing) = keep holding.
+  app.post("/jambonz/queue-callback", async (req, reply) => {
+    const { queueId, callId } = req.query as { queueId?: string; callId?: string };
+    const b = req.body as { digits?: string };
+    if (!queueId || !callId) return reply.send([{ verb: "hangup" }]);
+    return reply.send(await queueCallbackChoice(queueId, callId, (b.digits ?? "").replace(/#$/, "")));
+  });
+  // Post-call survey: the caller's leg after the agent left (inbound/survey.ts).
+  app.post("/jambonz/survey", async (req, reply) => {
     const { callId } = req.query as { callId?: string };
-    if (callId) await leaveQueue(callId);
-    return reply.send([{ verb: "hangup" }]);
+    return reply.send(callId ? await surveyVerbs(callId) : [{ verb: "hangup" }]);
+  });
+  app.post("/jambonz/survey-result", async (req, reply) => {
+    const { callId } = req.query as { callId?: string };
+    const b = req.body as { digits?: string };
+    return reply.send(callId ? await surveyResult(callId, (b.digits ?? "").replace(/#$/, "")) : [{ verb: "hangup" }]);
   });
   app.post("/jambonz/bridge", async (req, reply) => {
     const { callId, agentId } = req.query as { callId?: string; agentId?: string };
@@ -476,7 +510,7 @@ export async function registerJambonzRoutes(app: FastifyInstance): Promise<void>
       await transferLegStatus(transferId, b.call_sid, status, b.sip_status, b.duration);
       return reply.send({});
     }
-    const callId = tag.kind === "lead" ? tag.callId : await callIdForSid(b.call_sid);
+    const callId = tag.kind === "lead" || tag.kind === "qcallback" ? tag.callId : await callIdForSid(b.call_sid);
     log.info({ callId, kind: tag.kind, callSid: b.call_sid, status, sipStatus: b.sip_status, duration: b.duration, direction: b.direction }, "call status");
     if (callId) {
       if (status === "ringing" || status === "early-media") {

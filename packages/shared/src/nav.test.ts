@@ -28,7 +28,7 @@ test("roles keep what they had before the regrouping", () => {
   const tl = visibleNav(client(["TEAM_LEADER"]));
   assert.deepEqual(tl.launchers.map((l) => l.key), ["agent", "floor"]);
   assert.deepEqual(visibleTabs(client(["TEAM_LEADER"]), "leads").map((t) => t.href), ["/leads"]);
-  assert.deepEqual(visibleTabs(client(["ROOM_SUPERVISOR"]), "dashboard").map((t) => t.href), ["/dashboard", "/reports"]);
+  assert.deepEqual(visibleTabs(client(["ROOM_SUPERVISOR"]), "dashboard").map((t) => t.href), ["/dashboard", "/reports", "/reports/inbound"]);
   const sup = visibleNav(client(["SUPERVISOR"]));
   assert.ok(!sup.items.some((i) => i.href === "/settings"), "settings stays admin-only");
   assert.ok(sup.items.some((i) => i.href === "/billing"));
@@ -48,6 +48,10 @@ test("every old page is still a tab, and sub-pages map to their tab", () => {
   assert.equal(tabOfPath(tabs, "/dids"), "reputation");
   assert.equal(tabOfPath(visibleTabs(client(["ADMIN"]), "leads"), "/lists/abc"), "lists");
   assert.equal(tabOfPath(tabs, "/numbersx"), null);
+  // The Inbound report is its own tab under Dashboard: the longer URL wins over Reports.
+  const dash = visibleTabs(client(["SUPERVISOR"]), "dashboard");
+  assert.equal(tabOfPath(dash, "/reports/inbound"), "inbound-report");
+  assert.equal(tabOfPath(dash, "/reports"), "reports");
 });
 
 test("?tab= on a section root points at the tab's page", () => {

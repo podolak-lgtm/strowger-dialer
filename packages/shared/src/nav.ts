@@ -45,6 +45,7 @@ export const NAV_SECTIONS: readonly NavSection[] = [
     tabs: [
       { key: "overview", label: "Overview", href: "/dashboard", roles: [], client: true },
       { key: "reports", label: "Reports", href: "/reports", roles: SUPERVISING, client: true },
+      { key: "inbound-report", label: "Inbound", href: "/reports/inbound", roles: SUPERVISING, client: true },
     ],
   },
   {
@@ -166,12 +167,15 @@ export function pathWithin(pathname: string, href: string): boolean {
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 
-/** The tab (and so the section) a path belongs to, if any. */
+/** The tab (and so the section) a path belongs to, if any. The longest matching URL wins (/reports/inbound over /reports). */
 export function tabOfPath(tabs: VisibleSection["tabs"], pathname: string): string | null {
+  let best: { key: string; len: number } | null = null;
   for (const t of tabs) {
-    if (pathWithin(pathname, t.href) || (t.also ?? []).some((a) => pathWithin(pathname, a))) return t.key;
+    for (const href of [t.href, ...(t.also ?? [])]) {
+      if (pathWithin(pathname, href) && (!best || href.length > best.len)) best = { key: t.key, len: href.length };
+    }
   }
-  return null;
+  return best?.key ?? null;
 }
 
 /** `/<section root>?tab=<key>` → the tab's own URL, for every tab that is not the root itself. */

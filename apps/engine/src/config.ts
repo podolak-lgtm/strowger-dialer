@@ -54,6 +54,14 @@ export const config = readEnv({
   SCREENER_STT_VENDOR: z.string().optional(),
   SCREENER_STT_LANGUAGE: z.string().default("en-US"),
 
+  /**
+   * Text to speech for queue announcements, the callback offer and the survey prompt (`say`). Unset = the jambonz
+   * application's default speech vendor (the account has Cartesia). Set the vendor and voice to pin them.
+   */
+  TTS_VENDOR: z.string().optional(),
+  TTS_VOICE: z.string().optional(),
+  TTS_LANGUAGE: z.string().default("en-US"),
+
   // Media bucket (voicemail recordings). Same bucket the web app serves prompts from.
   S3_ENDPOINT: z.string().optional(),
   S3_BUCKET: z.string().optional(),

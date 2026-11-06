@@ -3,16 +3,17 @@ import { formatPhone } from "@strowger/shared";
 import Link from "next/link";
 import { requireClientWorkspace } from "@/lib/auth";
 import { Badge, Button, Card, Field, PageHeader, Table, inputClass } from "@/components/ui";
-import { deleteBox, deleteIvr, deleteQueue, saveBox, saveIvr, saveQueue, setNumberRoute } from "./actions";
+import { deleteBox, deleteIvr, saveBox, saveIvr, setNumberRoute } from "./actions";
+import { GeoRoutes } from "./geo-routes";
+import { QueueForm } from "./queue-form";
+import { ScheduleForm } from "./schedules";
 
-const ACTIONS = ["QUEUE", "USER", "VOICEMAIL", "IVR", "HANGUP"] as const;
-type IvrOption = { digit: string; label?: string; action: string; targetId?: string | null };
-type Req = { skillId: string; minLevel: number };
+// GEO: the IVR's geo rules pick the queue; the option's target queue is the fallback.
+const ACTIONS = ["QUEUE", "GEO", "USER", "VOICEMAIL", "IVR", "HANGUP"] as const;
 
-export default async function InboundPage() {
-  const s = await requireClientWorkspace("SUPERVISOR");
-  const t = s.tenant.id;
-  const [numbers, ivrs, queues, boxes, skills, people, campaigns, audio] = await Promise.all([
+/** Everything the page shows, read once (and the moment it was read, for the open/closed badges). */
+async function load(t: string) {
+  const [numbers, ivrs, queues, boxes, skills, people, campaigns, audio, schedules, geoRoutes] = await Promise.all([
     prisma.callerIdNumber.findMany({ where: { tenantId: t }, orderBy: { phone: "asc" }, include: { ivr: true, queue: true, routeUser: true, campaign: true } }),
     prisma.ivr.findMany({ where: { tenantId: t }, orderBy: { name: "asc" } }),
     prisma.queue.findMany({ where: { tenantId: t }, orderBy: { name: "asc" } }),
@@ -21,13 +22,24 @@ export default async function InboundPage() {
     prisma.user.findMany({ where: { tenantId: t, active: true }, orderBy: [{ firstName: "asc" }, { email: "asc" }], select: { id: true, firstName: true, lastName: true, email: true, extension: true } }),
     prisma.campaign.findMany({ where: { tenantId: t, status: { not: "ARCHIVED" } }, orderBy: { name: "asc" }, select: { id: true, name: true } }),
     prisma.audioAsset.findMany({ where: { tenantId: t }, orderBy: { name: "asc" }, select: { id: true, name: true, kind: true } }),
+    prisma.schedule.findMany({ where: { tenantId: t }, orderBy: { name: "asc" } }),
+    prisma.geoRoute.findMany({ where: { tenantId: t }, orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }] }),
   ]);
+  return { numbers, ivrs, queues, boxes, skills, people, campaigns, audio, schedules, geoRoutes, now: new Date() };
+}
+type IvrOption = { digit: string; label?: string; action: string; targetId?: string | null };
+
+export default async function InboundPage() {
+  const s = await requireClientWorkspace("SUPERVISOR");
+  const t = s.tenant.id;
+  const { numbers, ivrs, queues, boxes, skills, people, campaigns, audio, schedules, geoRoutes, now } = await load(t);
+  const opts = (xs: Array<{ id: string; name: string }>) => xs.map(({ id, name }) => ({ id, name }));
   const nameOf = (p: { firstName: string | null; lastName: string | null; email: string }) => (p.firstName ? `${p.firstName} ${p.lastName ?? ""}`.trim() : p.email);
 
   const TargetSelect = ({ name, action, value }: { name: string; action: string; value?: string | null }) => (
     <select name={name} defaultValue={value ?? ""} className={`${inputClass} py-1 text-xs`}>
       <option value="">— target —</option>
-      {(action === "QUEUE" ? queues : action === "IVR" ? ivrs : []).map((x) => (
+      {(action === "QUEUE" || action === "GEO" ? queues : action === "IVR" ? ivrs : []).map((x) => (
         <option key={x.id} value={x.id}>
           {x.name}
         </option>
@@ -41,7 +53,7 @@ export default async function InboundPage() {
     <div>
       <PageHeader
         title="Inbound"
-        subtitle="Where each number sends a caller: a campaign (callbacks), a menu, a skills queue, or one agent's direct line. Agents' extensions and skills are on the Skills page."
+        subtitle="Where each number sends a caller: business hours first, then geographic rules, then its route: a campaign (callbacks), a menu, an ACD queue, or one agent's direct line. Agents' extensions and skills are on the Skills page."
         actions={
           <>
             <Link href="/skills" className="rounded-md border border-zinc-700 px-3 py-1.5 text-sm hover:bg-zinc-800">
@@ -56,20 +68,28 @@ export default async function InboundPage() {
 
       <Card title="Number routing" className="mb-6">
         {numbers.length === 0 ? <p className="text-sm text-zinc-500">Add numbers under Settings first.</p> : null}
-        <Table head={["Number", "Routes to", "Target", ""]}>
+        <Table head={["Number", "Hours", "Routes to", "Target", ""]}>
           {numbers.map((n) => (
             <tr key={n.id}>
-              <td colSpan={4} className="p-0">
-                <form action={setNumberRoute} className="grid grid-cols-[180px_220px_1fr_auto] items-center gap-2 px-3 py-1.5 text-sm">
+              <td colSpan={5} className="p-0">
+                <form action={setNumberRoute} className="grid grid-cols-1 items-center gap-2 px-3 py-1.5 text-sm md:grid-cols-[160px_160px_200px_1fr_auto]">
                   <input type="hidden" name="id" value={n.id} />
                   <span className="font-mono text-xs">
                     {formatPhone(n.phone)}
                     <span className="ml-2 text-zinc-500">{n.state ?? ""}</span>
                   </span>
+                  <select name="scheduleId" defaultValue={n.scheduleId ?? ""} className={`${inputClass} py-1 text-xs`}>
+                    <option value="">always open</option>
+                    {schedules.map((x) => (
+                      <option key={x.id} value={x.id}>
+                        {x.name}
+                      </option>
+                    ))}
+                  </select>
                   <select name="routeTo" defaultValue={n.routeTo} className={`${inputClass} py-1`}>
                     <option value="CAMPAIGN">Campaign callbacks{n.campaign ? ` (${n.campaign.name})` : ""}</option>
                     <option value="IVR">IVR menu</option>
-                    <option value="QUEUE">Skills queue</option>
+                    <option value="QUEUE">ACD queue</option>
                     <option value="USER">One agent (direct DID)</option>
                   </select>
                   <select name="target" defaultValue={n.ivrId ?? n.queueId ?? n.routeUserId ?? ""} className={`${inputClass} py-1`}>
@@ -105,6 +125,22 @@ export default async function InboundPage() {
             </tr>
           ))}
         </Table>
+      </Card>
+
+      <Card title="Business hours" className="mb-6">
+        <p className="mb-3 text-sm text-zinc-400">Attach a schedule to a number (above) or a queue. Closed: the greeting, then the after-hours action.</p>
+        <div className="grid gap-3 lg:grid-cols-2">
+          {[...schedules, null].map((x) => (
+            <ScheduleForm key={x?.id ?? "new"} s={x} now={now} audio={opts(audio)} queues={opts(queues)} ivrs={opts(ivrs)} boxes={opts(boxes)} />
+          ))}
+        </div>
+      </Card>
+
+      <Card title="Geographic routing" className="mb-6">
+        <p className="mb-3 text-sm text-zinc-400">
+          By the caller&apos;s state (the lead&apos;s when we know them, else their number&apos;s) or area code. On a number the rules run before its route; on an IVR they run when the caller picks a <span className="font-mono">geo</span> option (whose own queue is the fallback). Area codes win over states; lower order first.
+        </p>
+        <GeoRoutes routes={geoRoutes} numbers={numbers.map((n) => ({ id: n.id, phone: n.phone }))} ivrs={opts(ivrs)} queues={opts(queues)} />
       </Card>
 
       <div className="grid gap-6 lg:grid-cols-2">
@@ -193,103 +229,11 @@ export default async function InboundPage() {
         </Card>
 
         <div className="space-y-6">
-          <Card title="Skills queues">
-            <div className="space-y-4">
-              {[...queues, null].map((q) => {
-                const req = ((q?.requiredSkills as Req[] | null) ?? []);
-                return (
-                  <form key={q?.id ?? "new"} action={saveQueue} className={`space-y-2 rounded-md border p-3 text-sm ${q ? "border-zinc-800" : "border-dashed border-zinc-800"}`}>
-                    {q ? <input type="hidden" name="id" value={q.id} /> : null}
-                    <div className="grid grid-cols-2 gap-2">
-                      <Field label={q ? "Queue" : "New queue"}>
-                        <input name="name" defaultValue={q?.name ?? ""} placeholder="Spanish support" className={inputClass} required />
-                      </Field>
-                      <Field label="Campaign context (optional)">
-                        <select name="campaignId" defaultValue={q?.campaignId ?? ""} className={inputClass}>
-                          <option value="">none</option>
-                          {campaigns.map((c) => (
-                            <option key={c.id} value={c.id}>
-                              {c.name}
-                            </option>
-                          ))}
-                        </select>
-                      </Field>
-                    </div>
-                    <div className="text-xs text-zinc-400">Required skills (all must be met):</div>
-                    <div className="flex flex-wrap gap-2">
-                      {skills.map((k) => {
-                        const r = req.find((x) => x.skillId === k.id);
-                        return (
-                          <label key={k.id} className="flex items-center gap-1 rounded-md border border-zinc-800 px-2 py-1 text-xs">
-                            <input type="checkbox" name="skillId" value={k.id} defaultChecked={Boolean(r)} className="h-3.5 w-3.5" />
-                            {k.name} ≥
-                            <input name={`minLevel_${k.id}`} type="number" min="1" max="5" defaultValue={r?.minLevel ?? 3} className={`${inputClass} w-12 py-0.5 text-xs`} />
-                          </label>
-                        );
-                      })}
-                      {skills.length === 0 ? (
-                        <span className="text-xs text-zinc-500">
-                          No skills yet: add them on <Link href="/skills" className="underline">Skills</Link>. A queue with no skills takes any Ready agent.
-                        </span>
-                      ) : null}
-                    </div>
-                    <div className="grid grid-cols-4 gap-2">
-                      <Field label="Hold music">
-                        <select name="holdAudioId" defaultValue={q?.holdAudioId ?? ""} className={`${inputClass} py-1 text-xs`}>
-                          <option value="">silence</option>
-                          {audio.map((a) => (
-                            <option key={a.id} value={a.id}>
-                              {a.name}
-                            </option>
-                          ))}
-                        </select>
-                      </Field>
-                      <Field label="Max wait (s)">
-                        <input name="maxWaitSeconds" type="number" min="15" defaultValue={q?.maxWaitSeconds ?? 300} className={`${inputClass} py-1`} />
-                      </Field>
-                      <Field label="Then">
-                        <select name="overflowAction" defaultValue={q?.overflowAction ?? "VOICEMAIL"} className={`${inputClass} py-1 text-xs`}>
-                          <option value="VOICEMAIL">voicemail</option>
-                          <option value="QUEUE">another queue</option>
-                          <option value="HANGUP">hang up</option>
-                        </select>
-                      </Field>
-                      <Field label="Overflow queue / box">
-                        <select name="overflowQueueId" defaultValue={q?.overflowQueueId ?? ""} className={`${inputClass} py-1 text-xs`}>
-                          <option value="">—</option>
-                          {queues
-                            .filter((x) => x.id !== q?.id)
-                            .map((x) => (
-                              <option key={x.id} value={x.id}>
-                                {x.name}
-                              </option>
-                            ))}
-                        </select>
-                      </Field>
-                    </div>
-                    <div className="flex items-end gap-2">
-                      <Field label="Voicemail box">
-                        <select name="voicemailBoxId" defaultValue={q?.voicemailBoxId ?? ""} className={`${inputClass} py-1 text-xs`}>
-                          <option value="">auto-create</option>
-                          {boxes.map((b) => (
-                            <option key={b.id} value={b.id}>
-                              {b.name}
-                            </option>
-                          ))}
-                        </select>
-                      </Field>
-                      <Button type="submit" variant="ghost">
-                        {q ? "Save" : "Add queue"}
-                      </Button>
-                      {q ? (
-                        <Button type="submit" variant="danger" formAction={deleteQueue}>
-                          ✕
-                        </Button>
-                      ) : null}
-                    </div>
-                  </form>
-                );
-              })}
+          <Card title="Queues">
+            <div className="space-y-3">
+              {[...queues, null].map((q) => (
+                <QueueForm key={q?.id ?? "new"} q={q} queues={opts(queues)} skills={opts(skills)} campaigns={campaigns} audio={opts(audio)} boxes={opts(boxes)} schedules={opts(schedules)} />
+              ))}
             </div>
           </Card>
 

@@ -1,131 +1,54 @@
 // Inbound contact center: where a call to one of our numbers goes.
 //
+//   number.schedule closed   → the schedule's after-hours action
+//   number.geoRoutes match   → that queue (caller's state / area code)
 //   number.routeTo = CAMPAIGN  a lead calling back → owning / next Ready agent
 //                    USER      a direct DID → that agent, else their voicemail
-//                    IVR       menu → options, extensions, voicemail
-//                    QUEUE     skills-based waiting room → best qualified agent
-//
-// Queues live in Redis (sorted set per queue, score = enqueue time); a 1 s
-// tick assigns callers to agents as they become Ready and handles overflow.
-import { prisma, type Ivr, type Queue, type VoicemailBox } from "@strowger/db";
+//                    IVR       menu → options (incl. GEO), extensions, voicemail
+//                    QUEUE     ACD queue → best agent by the queue's strategy (queues.ts)
+import { prisma } from "@strowger/db";
+import { callerGeo, matchGeoRoute } from "@strowger/shared/inbound";
 import { normalizePhone } from "@strowger/shared/phone";
-import { getAgent, listAgents, patchAgent, type AgentLive } from "../agents/state";
-import { config } from "../config";
-import { agentRoom, hookUrl, jambonz } from "../jambonz/client";
-import { log } from "../log";
+import { getAgent, listAgents } from "../agents/state";
 import { redis } from "../redis";
-import { emitToAgent, emitToTenant } from "../realtime";
+import { audio, boxForUser, claimAgent, isFree, ivrVerbs, joinAgentVerbs, voicemailVerbs, type Verbs } from "./common";
+import { closedVerbs, enterQueue, scheduleState } from "./queues";
 
-type Verb = Record<string, unknown>;
-export type Verbs = Verb[];
+export { boxForUser, ivrVerbs, joinAgentVerbs, voicemailVerbs, type Verbs } from "./common";
+export { enterQueue, leaveQueue, overflowVerbs, queueTick, queueWaitVerbs } from "./queues";
 
-const QKEY = (queueId: string) => `queue:${queueId}`;
-const QMETA = (callId: string) => `queued:${callId}`;
+// ── Geographic routing ──────────────────────────────────────────────────────
 
-async function audio(id: string | null | undefined): Promise<string | null> {
-  if (!id) return null;
-  const a = await prisma.audioAsset.findUnique({ where: { id } });
-  return a?.storageUrl ?? null;
-}
-
-/** Conference-join verbs for an inbound caller into an agent's room. */
-export function joinAgentVerbs(callId: string, tenantId: string, agentId: string): Verbs {
-  return [
-    { verb: "conference", name: agentRoom(agentId), memberTag: "lead", startConferenceOnEnter: false, endConferenceOnExit: false, beep: false, statusHook: hookUrl("/jambonz/conf", { callId, tenantId }), statusEvents: ["join", "leave"], actionHook: hookUrl("/jambonz/conf-exit", { callId }) },
-    { verb: "hangup" },
-  ];
-}
-
-async function claimAgent(agent: AgentLive, callId: string, leadId: string | null, extra: Record<string, unknown> = {}): Promise<void> {
-  await prisma.call.update({ where: { id: callId }, data: { agentId: agent.userId } });
-  await patchAgent(agent.userId, { state: "ON_CALL", currentCallId: callId, reservedLeadId: null });
-  if (leadId) await prisma.lead.update({ where: { id: leadId }, data: { ownerId: agent.userId } });
-  emitToAgent(agent.userId, "call:update", { callId, status: "answered", leadId, inbound: true, ...extra });
-  emitToTenant(agent.tenantId, "floor:call", { callId, status: "inbound", agentId: agent.userId });
-}
-
-function isFree(a: AgentLive): boolean {
-  return a.state === "READY" && Boolean(a.agentCallSid) && !a.currentCallId && !a.reservedLeadId;
-}
-
-// ── Skills ──────────────────────────────────────────────────────────────────
-
-type Requirement = { skillId: string; minLevel: number };
-
-/** Free agents who satisfy every requirement, best rated first, then longest idle. */
-export async function qualifiedAgents(tenantId: string, queue: Queue): Promise<AgentLive[]> {
-  const free = (await listAgents(tenantId)).filter(isFree);
-  if (free.length === 0) return [];
-  const req = ((queue.requiredSkills as Requirement[] | null) ?? []).filter((r) => r.skillId);
-  if (req.length === 0) {
-    const onCampaign = queue.campaignId ? free.filter((a) => a.campaignId === queue.campaignId) : [];
-    return (onCampaign.length ? onCampaign : free).sort((a, b) => a.since - b.since);
-  }
-  const ratings = await prisma.agentSkill.findMany({ where: { userId: { in: free.map((a) => a.userId) }, skillId: { in: req.map((r) => r.skillId) } } });
-  const scored = free
-    .map((a) => {
-      let total = 0;
-      for (const r of req) {
-        const lvl = ratings.find((x) => x.userId === a.userId && x.skillId === r.skillId)?.level ?? 0;
-        if (lvl < (r.minLevel ?? 1)) return null;
-        total += lvl;
-      }
-      return { a, total };
-    })
-    .filter((x): x is { a: AgentLive; total: number } => x !== null);
-  scored.sort((x, y) => y.total - x.total || x.a.since - y.a.since);
-  return scored.map((x) => x.a);
-}
-
-// ── Voicemail ───────────────────────────────────────────────────────────────
-
-export async function boxForUser(tenantId: string, userId: string): Promise<VoicemailBox> {
-  const existing = await prisma.voicemailBox.findFirst({ where: { tenantId, ownerId: userId } });
-  if (existing) return existing;
-  const u = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
-  return prisma.voicemailBox.create({ data: { tenantId, ownerId: userId, name: `${u.firstName ?? u.email}'s voicemail` } });
-}
-
-/** Greeting, beep, then stream the caller's audio to our recorder. */
-export async function voicemailVerbs(box: VoicemailBox, callId: string, fromPhone: string): Promise<Verbs> {
-  const vm = await prisma.voicemail.create({ data: { tenantId: box.tenantId, boxId: box.id, callId, fromPhone, assigneeId: box.ownerId } });
-  const greeting = await audio(box.greetingAudioId);
-  const wsBase = config.ENGINE_PUBLIC_URL.replace(/^http/, "ws");
-  return [
-    ...(greeting ? [{ verb: "play", url: greeting }] : [{ verb: "pause", length: 1 }]),
-    { verb: "play", url: `${config.WEB_PUBLIC_URL}/beep.wav` },
-    { verb: "listen", url: `${wsBase}/audio/voicemail?vmId=${vm.id}`, sampleRate: 8000, timeout: 120, finishOnKey: "#", mixType: "mono", playBeep: false },
-    { verb: "hangup" },
-  ];
+/** The queue a number's or an IVR's geo rules send this caller to, or null. */
+async function geoQueueVerbs(where: { numberId: string } | { ivrId: string }, tenantId: string, callId: string): Promise<Verbs | null> {
+  const rules = await prisma.geoRoute.findMany({ where: { tenantId, ...where } });
+  if (rules.length === 0) return null;
+  const call = await prisma.call.findUnique({ where: { id: callId }, include: { lead: { select: { state: true, zip: true } } } });
+  if (!call) return null;
+  const geo = callerGeo(call.phone, call.lead);
+  const rule = matchGeoRoute(rules, geo);
+  if (!rule) return null;
+  const q = await prisma.queue.findFirst({ where: { id: rule.targetQueueId, tenantId }, include: { schedule: true } });
+  if (!q) return null;
+  await prisma.call.update({ where: { id: callId }, data: { providerData: { ...(call.providerData as object), geoRoute: rule.name, geoState: geo.state, geoAreaCode: geo.areaCode } } });
+  return enterQueue(q, callId);
 }
 
 // ── IVR ─────────────────────────────────────────────────────────────────────
 
-type IvrOption = { digit: string; label?: string; action: "QUEUE" | "USER" | "VOICEMAIL" | "IVR" | "HANGUP"; targetId?: string | null };
+type IvrOption = { digit: string; label?: string; action: "QUEUE" | "USER" | "VOICEMAIL" | "IVR" | "GEO" | "HANGUP"; targetId?: string | null };
 
-export async function ivrVerbs(ivr: Ivr, callId: string, attempt = 1): Promise<Verbs> {
-  const greeting = await audio(ivr.greetingAudioId);
-  return [
-    {
-      verb: "gather",
-      input: ["digits"],
-      numDigits: ivr.allowExtensions ? 4 : 1,
-      finishOnKey: "#",
-      timeout: ivr.timeoutSeconds,
-      interDigitTimeout: 2,
-      actionHook: hookUrl("/jambonz/ivr", { ivrId: ivr.id, callId, attempt: String(attempt) }),
-      ...(greeting ? { play: { url: greeting } } : {}),
-    },
-    { verb: "redirect", actionHook: hookUrl("/jambonz/ivr", { ivrId: ivr.id, callId, attempt: String(attempt + 1), timeout: "1" }) },
-  ];
-}
-
-/** Apply an IVR option (or the timeout action) to a live call. */
-export async function applyAction(tenantId: string, callId: string, action: string, targetId: string | null | undefined, fromPhone: string): Promise<Verbs> {
+/** Apply an IVR option (or the timeout action) to a live call. GEO uses the IVR's geo rules, with the option's queue as the fallback. */
+export async function applyAction(tenantId: string, callId: string, action: string, targetId: string | null | undefined, fromPhone: string, ivrId?: string): Promise<Verbs> {
   switch (action) {
     case "QUEUE": {
-      const q = targetId ? await prisma.queue.findFirst({ where: { id: targetId, tenantId } }) : null;
-      return q ? enqueueVerbs(q, callId) : [{ verb: "hangup" }];
+      const q = targetId ? await prisma.queue.findFirst({ where: { id: targetId, tenantId }, include: { schedule: true } }) : null;
+      return q ? enterQueue(q, callId) : [{ verb: "hangup" }];
+    }
+    case "GEO": {
+      const routed = ivrId ? await geoQueueVerbs({ ivrId }, tenantId, callId) : null;
+      if (routed) return routed;
+      return targetId ? applyAction(tenantId, callId, "QUEUE", targetId, fromPhone) : [{ verb: "hangup" }];
     }
     case "USER":
       return targetId ? ringUser(tenantId, targetId, callId, fromPhone) : [{ verb: "hangup" }];
@@ -151,7 +74,7 @@ export async function ivrResult(ivrId: string, callId: string, digits: string, a
     const opt = options.find((o) => o.digit === digits);
     if (opt) {
       await prisma.call.update({ where: { id: callId }, data: { providerData: { ...(call.providerData as object), ivr: ivr.name, choice: opt.label ?? opt.digit } } });
-      return applyAction(ivr.tenantId, callId, opt.action, opt.targetId, call.phone);
+      return applyAction(ivr.tenantId, callId, opt.action, opt.targetId, call.phone, ivr.id);
     }
     if (ivr.allowExtensions) {
       const user = await prisma.user.findFirst({ where: { tenantId: ivr.tenantId, extension: digits, active: true } });
@@ -159,7 +82,7 @@ export async function ivrResult(ivrId: string, callId: string, digits: string, a
     }
   }
   if (attempt <= ivr.repeats && !(timedOut && attempt > ivr.repeats)) return ivrVerbs(ivr, callId, attempt + 1);
-  return applyAction(ivr.tenantId, callId, ivr.timeoutAction, ivr.timeoutTargetId, call.phone);
+  return applyAction(ivr.tenantId, callId, ivr.timeoutAction, ivr.timeoutTargetId, call.phone, ivr.id);
 }
 
 // ── Direct to an agent ──────────────────────────────────────────────────────
@@ -175,85 +98,13 @@ export async function ringUser(tenantId: string, userId: string, callId: string,
   return voicemailVerbs(box, callId, fromPhone);
 }
 
-// ── Queues ──────────────────────────────────────────────────────────────────
-
-export async function enqueueVerbs(queue: Queue, callId: string): Promise<Verbs> {
-  await redis.zadd(QKEY(queue.id), Date.now(), callId);
-  await redis.set(QMETA(callId), JSON.stringify({ queueId: queue.id, tenantId: queue.tenantId, at: Date.now() }), "EX", 6 * 3600);
-  await prisma.call.update({ where: { id: callId }, data: { providerData: { queueId: queue.id, queuedAt: new Date().toISOString() } } });
-  emitToTenant(queue.tenantId, "floor:queue", { queueId: queue.id, callId, event: "join" });
-  return [{ verb: "enqueue", name: `q-${queue.id}`, waitHook: hookUrl("/jambonz/queue-wait", { queueId: queue.id, callId }), actionHook: hookUrl("/jambonz/queue-exit", { queueId: queue.id, callId }) }];
-}
-
-/** Hold music between assignment checks. jambonz calls this when the previous verbs finish. */
-export async function queueWaitVerbs(queueId: string): Promise<Verbs> {
-  const q = await prisma.queue.findUnique({ where: { id: queueId } });
-  const hold = await audio(q?.holdAudioId);
-  return hold ? [{ verb: "play", url: hold }] : [{ verb: "pause", length: 15 }];
-}
-
-export async function leaveQueue(callId: string): Promise<void> {
-  const raw = await redis.get(QMETA(callId));
-  if (!raw) return;
-  const meta = JSON.parse(raw) as { queueId: string; tenantId: string };
-  await redis.zrem(QKEY(meta.queueId), callId);
-  await redis.del(QMETA(callId));
-  emitToTenant(meta.tenantId, "floor:queue", { queueId: meta.queueId, callId, event: "leave" });
-}
-
-/** Every second: hand waiting callers to qualified agents; overflow the ones who waited too long. */
-export async function queueTick(): Promise<void> {
-  const queues = await prisma.queue.findMany();
-  for (const q of queues) {
-    const waiting = await redis.zrange(QKEY(q.id), 0, -1, "WITHSCORES");
-    if (waiting.length === 0) continue;
-    const callers: Array<{ callId: string; at: number }> = [];
-    for (let i = 0; i < waiting.length; i += 2) callers.push({ callId: waiting[i]!, at: Number(waiting[i + 1]) });
-    for (const c of callers) {
-      const call = await prisma.call.findUnique({ where: { id: c.callId } });
-      if (!call?.providerCallId || call.endedAt) {
-        await leaveQueue(c.callId);
-        continue;
-      }
-      const waited = (Date.now() - c.at) / 1000;
-      const agent = (await qualifiedAgents(q.tenantId, q))[0];
-      if (agent) {
-        await leaveQueue(c.callId);
-        await claimAgent(agent, c.callId, call.leadId, { queue: q.name, waitedSeconds: Math.round(waited) });
-        await jambonz.calls.redirect(call.providerCallId, { url: hookUrl("/jambonz/bridge", { callId: c.callId, agentId: agent.userId }), method: "POST" }).catch((e) => log.warn({ err: e, callId: c.callId }, "queue bridge redirect failed"));
-        continue;
-      }
-      if (waited > q.maxWaitSeconds) {
-        await leaveQueue(c.callId);
-        await jambonz.calls.redirect(call.providerCallId, { url: hookUrl("/jambonz/overflow", { queueId: q.id, callId: c.callId }), method: "POST" }).catch((e) => log.warn({ err: e, callId: c.callId }, "queue overflow redirect failed"));
-      }
-    }
-  }
-}
-
-export async function overflowVerbs(queueId: string, callId: string): Promise<Verbs> {
-  const q = await prisma.queue.findUnique({ where: { id: queueId }, include: { voicemailBox: true } });
-  const call = await prisma.call.findUnique({ where: { id: callId } });
-  if (!q || !call) return [{ verb: "hangup" }];
-  if (q.overflowAction === "QUEUE" && q.overflowQueueId) {
-    const next = await prisma.queue.findUnique({ where: { id: q.overflowQueueId } });
-    if (next) return enqueueVerbs(next, callId);
-  }
-  if (q.overflowAction === "VOICEMAIL") {
-    const box = q.voicemailBox ?? (await prisma.voicemailBox.upsert({ where: { tenantId_name: { tenantId: q.tenantId, name: `${q.name} voicemail` } }, create: { tenantId: q.tenantId, name: `${q.name} voicemail` }, update: {} }));
-    if (!q.voicemailBoxId) await prisma.queue.update({ where: { id: q.id }, data: { voicemailBoxId: box.id } });
-    return voicemailVerbs(box, callId, call.phone);
-  }
-  return [{ verb: "hangup" }];
-}
-
 // ── Entry point ─────────────────────────────────────────────────────────────
 
 export async function routeInbound(callSid: string, fromRaw: string, toRaw: string): Promise<Verbs | null> {
   const from = normalizePhone(fromRaw);
   const to = normalizePhone(toRaw);
   if (!to) return null;
-  const number = await prisma.callerIdNumber.findFirst({ where: { phone: to }, include: { campaign: true, ivr: true, queue: true } });
+  const number = await prisma.callerIdNumber.findFirst({ where: { phone: to }, include: { campaign: true, ivr: true, queue: { include: { schedule: true } }, schedule: true } });
   if (!number) return null;
   const tenantId = number.tenantId;
   const lead = from ? await prisma.lead.findFirst({ where: { tenantId, phone: from }, orderBy: [{ lastAttemptAt: "desc" }, { postedAt: "desc" }], include: { list: { select: { campaignId: true } } } }) : null;
@@ -263,13 +114,21 @@ export async function routeInbound(callSid: string, fromRaw: string, toRaw: stri
   if (lead) await prisma.leadEvent.create({ data: { tenantId, leadId: lead.id, kind: "ANSWERED", data: { inbound: true, callId: call.id } } });
   const fromPhone = from ?? "unknown";
 
+  // Business hours on the number come first: closed means the after-hours action, whatever the route.
+  const hours = scheduleState(number.schedule);
+  if (!hours.open && number.schedule) return closedVerbs(number.schedule, hours, call.id, fromPhone);
+
+  // Geographic rules on the number: a match sends the caller to that queue.
+  const geo = await geoQueueVerbs({ numberId: number.id }, tenantId, call.id);
+  if (geo) return geo;
+
   switch (number.routeTo) {
     case "USER":
       return number.routeUserId ? ringUser(tenantId, number.routeUserId, call.id, fromPhone) : [{ verb: "hangup" }];
     case "IVR":
       return number.ivr ? ivrVerbs(number.ivr, call.id) : [{ verb: "hangup" }];
     case "QUEUE":
-      return number.queue ? enqueueVerbs(number.queue, call.id) : [{ verb: "hangup" }];
+      return number.queue ? enterQueue(number.queue, call.id) : [{ verb: "hangup" }];
     default: {
       // Campaign callback: owner first, then the campaign, then anyone.
       const free = (await listAgents(tenantId)).filter(isFree);

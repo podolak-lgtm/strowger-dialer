@@ -114,6 +114,8 @@ export function FloorConsole({ me, view, initialCampaignId, engineUrl, rtToken, 
     const bump = () => void refresh();
     sock.on("floor:agent", bump);
     sock.on("floor:call", bump);
+    sock.on("floor:queue", bump);
+    sock.on("floor:blend", bump);
     sock.on("floor:supervision", (s: Supervision) => {
       if (s.supervisorId === me.id) setSup(s.ended ? null : s);
     });
@@ -233,6 +235,8 @@ export function FloorConsole({ me, view, initialCampaignId, engineUrl, rtToken, 
 
         <NewVersionBanner show={newVersion} onCall={Boolean(sup)} />
         {notice ? <div className="mb-4 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">{notice}</div> : null}
+
+        {stats && stats.inbound.queues.length ? <InboundWallboard board={stats.inbound} /> : null}
 
         {view === "agents" ? (
           <div className="grid gap-4 xl:grid-cols-[320px_1fr_300px]">
@@ -447,6 +451,59 @@ export function FloorConsole({ me, view, initialCampaignId, engineUrl, rtToken, 
         )}
       </main>
     </div>
+  );
+}
+
+/** Inbound queues on the wall: who is waiting and for how long, who can take them, and today's service level. */
+function InboundWallboard({ board }: { board: FloorStats["inbound"] }) {
+  const tone = (q: FloorStats["inbound"]["queues"][number]) => (q.longestWaitSeconds > q.slaSeconds ? "text-red-300" : q.waiting ? "text-amber-200" : "text-zinc-200");
+  return (
+    <Panel
+      title="Inbound queues"
+      className="mb-4"
+      right={board.holdMessage ? <span className="rounded-full bg-violet-500/20 px-2 py-0.5 text-xs text-violet-200">{board.holdMessage}</span> : <span className="text-xs text-zinc-500">{board.at ? "live" : "engine not reporting"}</span>}
+    >
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className="text-left text-xs uppercase tracking-wide text-zinc-500">
+            <tr>
+              {["Queue", "Waiting", "Longest", "Available", "On call", "Wrap", "Today", "Service level", "ASA", "Abandon", "AHT"].map((h) => (
+                <th key={h} className="px-2 py-1 font-medium">
+                  {h}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-white/5">
+            {board.queues.map((q) => (
+              <tr key={q.queueId}>
+                <td className="px-2 py-1.5">
+                  {q.name}
+                  {!q.open ? <span className="ml-2 rounded bg-zinc-500/20 px-1.5 text-[10px] uppercase text-zinc-300">closed{q.closedReason === "holiday" ? " (holiday)" : q.closedReason === "override" ? " (switched)" : ""}</span> : null}
+                </td>
+                <td className={`px-2 py-1.5 text-lg font-semibold tabular-nums ${tone(q)}`}>
+                  {q.waiting}
+                  {q.callbacksWaiting ? <span className="ml-1 text-xs font-normal text-zinc-400">+{q.callbacksWaiting} cb</span> : null}
+                </td>
+                <td className={`px-2 py-1.5 tabular-nums ${tone(q)}`}>{mmss(q.longestWaitSeconds)}</td>
+                <td className="px-2 py-1.5 tabular-nums text-emerald-300">{q.available}</td>
+                <td className="px-2 py-1.5 tabular-nums text-sky-300">{q.onCall}</td>
+                <td className="px-2 py-1.5 tabular-nums text-fuchsia-300">{q.wrapUp}</td>
+                <td className="px-2 py-1.5 tabular-nums">
+                  {q.today.answered}/{q.today.offered}
+                </td>
+                <td className={`px-2 py-1.5 tabular-nums ${q.today.offered && q.today.serviceLevelPct < 80 ? "text-amber-300" : "text-emerald-300"}`}>
+                  {q.today.offered ? `${q.today.serviceLevelPct}%` : "—"} <span className="text-[10px] text-zinc-500">in {q.slaSeconds}s</span>
+                </td>
+                <td className="px-2 py-1.5 tabular-nums">{q.today.answered ? mmss(q.today.asaSeconds) : "—"}</td>
+                <td className="px-2 py-1.5 tabular-nums">{q.today.offered ? `${q.today.abandonRatePct}%` : "—"}</td>
+                <td className="px-2 py-1.5 tabular-nums">{q.today.answered ? mmss(q.today.ahtSeconds) : "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Panel>
   );
 }
 
