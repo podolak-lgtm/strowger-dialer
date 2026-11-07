@@ -5,6 +5,8 @@ COPY pnpm-lock.yaml pnpm-workspace.yaml package.json .npmrc ./
 COPY apps/engine/package.json apps/engine/
 COPY packages/db/package.json packages/db/
 COPY packages/shared/package.json packages/shared/
+# pnpm patches (pnpm-workspace.yaml patchedDependencies) are read on every install.
+COPY patches/ patches/
 RUN pnpm install --frozen-lockfile
 COPY . .
 RUN pnpm db:generate && pnpm --filter @strowger/engine build

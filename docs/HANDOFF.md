@@ -1752,6 +1752,9 @@ causes below; this is what changed (engine only; the console's half is in its ow
   lead leg (`finish`, `assist/live.ts`); results after that are ignored.
 - **Diagnostics** (`index.ts`): `jambonz.conferences.list()` at start and every 60 s while any agent is
   logged in, INFO "jambonz conferences" {count, names}: a stale `agent-…` room shows up here.
+- **Engine image copies `patches/`** (`apps/engine/Dockerfile`, before `pnpm install --frozen-lockfile`): the
+  workspace's pnpm patches (`patchedDependencies` in `pnpm-workspace.yaml`, folder `patches/`) are read on every
+  install, so without the COPY the engine image fails with ENOENT. The folder comes with the console branch.
 - Needs a live test: two windows (refusal + takeover), closer transfer, Leave VM and AMD drop on a joined
   call, a queue call (leave + bridge), external transfer Leave, the conference list and the conf-wait WARN.
   TODO: if `/jambonz/conf` events stay silent, find out why (the agent leg's statusHook is unchanged); the
