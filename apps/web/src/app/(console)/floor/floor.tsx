@@ -10,6 +10,7 @@ import { ChatPanel } from "@/components/chat-panel";
 import { LiveCallPanel, useLiveCall } from "@/components/live-call";
 import { isStaleBuildError, NewVersionBanner, useNewVersion } from "@/components/new-version";
 import { useCallback, useEffect, useRef, useState, useTransition } from "react";
+import { askPhoneChannel, newTabId, phoneChannelName, postPhone, SUPERVISION_ANSWER_WINDOW_MS, withTimeout, type PhoneMsg } from "@/lib/phone-lock";
 import { floorStats, superviseCurrent, superviseMode, superviseStart, superviseStop, superviseTakeover, type FloorAgent, type FloorStats, type Supervision, type SuperviseMode, type TransferredCall } from "./actions";
 
 type JambonzClient = ReturnType<typeof createJambonzClient>;
@@ -78,10 +79,20 @@ export function FloorConsole({ me, view, initialCampaignId, engineUrl, rtToken, 
   const [stats, setStats] = useState<FloorStats | null>(null);
   const [sup, setSup] = useState<Supervision | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [phone, setPhone] = useState<"off" | "registered" | "error">("off");
+  // "elsewhere": a console window in this browser holds the user's phone, so this page does not register.
+  const [phone, setPhone] = useState<"off" | "registered" | "error" | "elsewhere">("off");
   const [now, setNow] = useState(() => Date.now());
   const [pending, start] = useTransition();
   const clientRef = useRef<JambonzClient | null>(null);
+  /** The client while connect() is in flight, so a failure or unmount can disconnect it (no orphaned registration). */
+  const pendingClientRef = useRef<JambonzClient | null>(null);
+  /** When Listen / Whisper / Barge was clicked here: only an INVITE within 30 s of it is answered. */
+  const pendingSupervisionAtRef = useRef(0);
+  const hasSip = Boolean(sip);
+  const sipServer = sip?.server ?? "";
+  const sipUser = sip?.username ?? "";
+  const sipPassword = sip?.password ?? "";
+  const sipRealm = sip?.realm ?? "";
   const [sock, setSock] = useState<Socket | null>(null);
   // Compliance alerts raised on live transcripts anywhere on the floor (engine assist/live.ts), newest first.
   const [alerts, setAlerts] = useState<Array<{ callId: string; agentId: string | null; message: string; rule: string; at: number }>>([]);
@@ -130,27 +141,98 @@ export function FloorConsole({ me, view, initialCampaignId, engineUrl, rtToken, 
     };
   }, [engineUrl, rtToken, me.id, refresh]);
 
-  // The supervisor's softphone auto-answers the supervision leg the engine rings.
+  // The supervisor's softphone answers the supervision leg the engine rings for a click on this page, nothing
+  // else. It registers the same SIP user as the agent console, so it joins the console's one-phone-per-browser
+  // lock (lib/phone-lock.ts): while a console window holds the phone this page does not register.
   useEffect(() => {
-    if (!sip) return;
-    const t = setTimeout(async () => {
-      try {
-        const client = createJambonzClient({ server: sip.server, username: sip.username, password: sip.password, realm: sip.realm || undefined, displayName: `${me.name} (supervisor)` });
-        client.on("registered", () => setPhone("registered"));
-        client.on("registrationFailed", () => setPhone("error"));
-        client.on("incoming", (call: { answer: () => void }) => call.answer());
-        await client.connect();
-        clientRef.current = client;
-      } catch {
-        setPhone("error");
+    if (!hasSip) return;
+    let cancelled = false;
+    let gen = 0;
+    const tabId = newTabId();
+    const chan = typeof BroadcastChannel === "undefined" ? null : new BroadcastChannel(phoneChannelName(me.id));
+    const supervising = () => (clientRef.current?.callCount ?? 0) > 0;
+    const stopClient = () => {
+      gen += 1;
+      for (const c of [clientRef.current, pendingClientRef.current]) {
+        try {
+          c?.disconnect();
+        } catch {
+          /* gone */
+        }
       }
-    }, 0);
-    return () => {
-      clearTimeout(t);
-      clientRef.current?.disconnect();
       clientRef.current = null;
+      pendingClientRef.current = null;
     };
-  }, [sip, me.name]);
+    const register = async () => {
+      if (cancelled || clientRef.current || pendingClientRef.current) return;
+      const mineGen = gen;
+      if (chan) {
+        const answer = await askPhoneChannel(chan, tabId, { takeOver: false, kind: "floor" });
+        if (cancelled || mineGen !== gen || clientRef.current || pendingClientRef.current) return;
+        if (answer !== "free") {
+          setPhone("elsewhere");
+          return;
+        }
+      }
+      const client = createJambonzClient({ server: sipServer, username: sipUser, password: sipPassword, realm: sipRealm || undefined, displayName: `${me.name} (supervisor)` });
+      pendingClientRef.current = client;
+      const mine = () => clientRef.current === client || pendingClientRef.current === client;
+      client.on("registered", () => mine() && setPhone("registered"));
+      client.on("registrationFailed", () => mine() && setPhone("error"));
+      client.on("disconnected", () => clientRef.current === client && setPhone("off"));
+      client.on("incoming", (call: { answer: () => void; hangup?: () => void }) => {
+        const asked = pendingSupervisionAtRef.current;
+        if (!mine() || !asked || Date.now() - asked > SUPERVISION_ANSWER_WINDOW_MS) {
+          call.hangup?.();
+          return;
+        }
+        pendingSupervisionAtRef.current = 0;
+        call.answer();
+      });
+      try {
+        await withTimeout(client.connect(), 15_000, "Softphone registration");
+        if (cancelled || mineGen !== gen || pendingClientRef.current !== client) {
+          client.disconnect();
+          return;
+        }
+        pendingClientRef.current = null;
+        clientRef.current = client;
+        setPhone("registered");
+      } catch {
+        if (pendingClientRef.current === client) pendingClientRef.current = null;
+        try {
+          client.disconnect();
+        } catch {
+          /* never connected */
+        }
+        if (!cancelled && mineGen === gen) setPhone("error");
+      }
+    };
+    const onMsg = (e: MessageEvent<PhoneMsg>) => {
+      const m = e.data;
+      if (!m || m.from === tabId || m.kind !== "console") return;
+      // A console window wants or holds the phone: it wins. Mid-supervision this page keeps it and says so.
+      if (m.t === "who" || m.t === "mine") {
+        if (supervising()) {
+          if (m.t === "who") postPhone(chan, { t: "mine", from: tabId, kind: "floor" });
+          return;
+        }
+        stopClient();
+        setPhone("elsewhere");
+      }
+      if (m.t === "release" && supervising()) postPhone(chan, { t: "busy", from: tabId, kind: "floor" });
+      if (m.t === "free") setTimeout(() => void register(), 300 + Math.floor(Math.random() * 400));
+    };
+    chan?.addEventListener("message", onMsg);
+    const t = setTimeout(() => void register(), 0);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+      chan?.removeEventListener("message", onMsg);
+      chan?.close();
+      stopClient();
+    };
+  }, [hasSip, sipServer, sipUser, sipPassword, sipRealm, me.name, me.id]);
 
   const act = (fn: () => Promise<{ ok: boolean; error?: string } | { ok: boolean }>) =>
     start(async () => {
@@ -166,7 +248,17 @@ export function FloorConsole({ me, view, initialCampaignId, engineUrl, rtToken, 
       void refresh();
     });
 
-  const monitor = (agentId: string, mode: SuperviseMode) => act(() => superviseStart(agentId, mode));
+  const monitor = (agentId: string, mode: SuperviseMode) => {
+    if (phone === "elsewhere") {
+      setNotice("Your phone is in your console window: listen from My Team there, or close the console and reload this page.");
+      return;
+    }
+    act(() => {
+      // Only the INVITE that follows this click is answered (the softphone effect above).
+      pendingSupervisionAtRef.current = Date.now();
+      return superviseStart(agentId, mode);
+    });
+  };
   const setMode = (mode: SuperviseMode) => act(() => superviseMode(mode));
   const takeover = () => {
     if (!confirm("Take over this call? The agent is dropped and the caller stays with you.")) return;
@@ -214,8 +306,8 @@ export function FloorConsole({ me, view, initialCampaignId, engineUrl, rtToken, 
                   </option>
                 ))}
               </select>
-              <span className={`rounded-full px-2 py-0.5 text-xs ${phone === "registered" ? "bg-emerald-500/20 text-emerald-300" : phone === "error" ? "bg-red-500/20 text-red-300" : "bg-white/10 text-zinc-400"}`}>
-                {sip ? (phone === "registered" ? "your line is registered" : phone === "error" ? "line error" : "registering…") : "no softphone line: listen/whisper/barge need one"}
+              <span className={`rounded-full px-2 py-0.5 text-xs ${phone === "registered" ? "bg-emerald-500/20 text-emerald-300" : phone === "error" ? "bg-red-500/20 text-red-300" : phone === "elsewhere" ? "bg-amber-500/20 text-amber-200" : "bg-white/10 text-zinc-400"}`}>
+                {sip ? (phone === "registered" ? "your line is registered" : phone === "error" ? "line error" : phone === "elsewhere" ? "Your phone is in your console window" : "registering…") : "no softphone line: listen/whisper/barge need one"}
               </span>
             </div>
           </div>

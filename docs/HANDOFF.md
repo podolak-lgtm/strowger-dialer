@@ -1695,6 +1695,76 @@ it. It still covers only the listed numbers.
   Retry-After. Tenant goals (Settings) feed the sprint bars. Campaign page
   shows the 30-day abandon rate from the ledger against warn/cap.
 
+## Call path hardening, browser (owner, 7 Nov)
+
+The owner's hard rule: **one agent, one call control, ever.** Only the main console window has the phone and the
+call buttons; any other tab, window or device is told "You already have a call screen open in another window or
+device" and never silently takes over or gets a second line. A review of the browser side found the agent's audio
+and line could be killed by things unrelated to the call; fixed as follows (engine side: the engine refuses a
+second agent line, see the engine's own section).
+
+- **The SDK is patched** (`patches/@jambonz__client-sdk-core@0.1.5.patch`, `patches/@jambonz__client-sdk-web@0.1.5.patch`,
+  `patchedDependencies` in `pnpm-workspace.yaml`, where pnpm 10 keeps it, and in `pnpm-lock.yaml`, so Railway's
+  `pnpm install --frozen-lockfile` applies it). The web SDK has ONE hidden `<audio>` per client shared by every
+  call, and any call ending set its `srcObject = null`: the console hanging up a supervision INVITE, or a
+  supervision leg ending, silenced the agent's line. Now core keeps the stream it attached per call
+  (`_remoteStream`) and passes it to `detachRemoteStream(stream)`; web clears the element only if it still plays
+  that stream. `attachRemoteStream` calls `play()` and, if the browser refuses, dispatches
+  `window` `CustomEvent("jambonz-audio-blocked", { detail })` (an `AbortError` from a newer source is not a
+  block). Both `index.js` and `index.mjs` (and the `.d.ts`) are patched. Upgrading `@jambonz/client-sdk-*` means
+  redoing the patch (`pnpm patch <pkg>@<ver>`, `pnpm patch-commit`), or checking upstream fixed it.
+  **Trap:** pnpm reads every patch file on any install of the workspace, even one that never installs the SDK,
+  so each Dockerfile must `COPY patches/ patches/` before `pnpm install --frozen-lockfile` (the install layer
+  copies only manifests); without it the build fails with ENOENT on the patch. `apps/web/Dockerfile` has it;
+  `apps/engine/Dockerfile` needs the same line.
+- **Blocked audio**: the console shows a red banner "Your browser blocked the call audio — click here to turn it
+  on"; its click `play()`s every `<audio>`. The audio watchdog (`audio-watchdog.ts`) also checks the speaker on a
+  call: element empty or holding another call's tracks → the room leg's receivers are put back on it
+  (`speaker-detached`); paused and `play()` refused → `speaker-blocked` + the banner. The line raised again after a
+  reload has no click behind it, which is when this happens. Watchdog advice on a call is "Finish the call, then
+  click Reconnect line"; nothing says Ready reconnects a line (it does not touch one that exists).
+- **Registration and the line are two states** in the console: `reg` (off / connecting / registered / error) and
+  `line` (down / raising / up, driven only by the room leg's own events); `phone` is derived ("in-room" when the
+  line is up). A registration event can no longer overwrite "in room", and the badge and TeamPanel's `phoneIdle`
+  (registered and line down) follow the leg.
+- **Never disconnect a client with a call on it.** `disconnect()` hangs up every call on the client: a registration
+  failure used to auto-retry 10 s later, disconnect, and drop a live customer. The auto retry and `retryPhone`
+  refuse while the room leg exists or the client has calls (`phoneBusy()`); the agent finishes the call and uses
+  **Reconnect line**.
+- **Reconnect line** (top bar, between calls only: hidden ON_CALL and in WRAP_UP): shown when the line is up, the
+  phone is in error, or the engine has a line for the agent this window does not (reload mid-call). It drops the
+  leg, waits for "ended" (2 s at most), re-registers if the registration is not healthy, and raises the line.
+- **One client per window**: `connectPhone` keeps the client in `pendingClientRef` before awaiting `connect()`
+  (disconnected on failure or teardown), refuses to run while a connect is in flight, and gives up after 15 s
+  (`withTimeout`; jssip's connect promise can hang forever on a dead socket). Every client event handler checks
+  that it is still this window's client, so a late "disconnected" from an old client cannot set the new phone off.
+- **The browser lock** (`lib/phone-lock.ts`, `BroadcastChannel("strowger-phone-<userId>")`): a window claims the
+  lock (`holdingRef`) before it starts connecting and answers "mine" from then on; two windows asking at once
+  (tabs restored together) break the tie on the tab id (time-ordered: the older window wins, the other backs off);
+  "release" ("use it here") is answered "busy" and refused while the agent is ON_CALL or WRAP_UP or another call
+  is on the client, and the button then reads "Your phone is on a call in another window — finish it there".
+  A window that lets go posts "free".
+- **Another window or device** (engine contract): the engine refuses a second agent line while the first is alive
+  and emits `agent:line-refused` `{ reason: "another-screen" }` to the agent. The console, on that event or when
+  its own room leg ends or is rejected within 3 s of starting (not a local media failure), shows "You already have
+  a call screen open in another window or device." with **Use the phone here** → `lineTakeover()` (`actions.ts`,
+  POST `/internal/agents/line/takeover` `{ tenantId, userId }`) → on ok, `raiseLine()`; an error is shown.
+- **Logout** asks the engine first and drops the line only when it agrees; the engine refuses while the agent is on
+  a call and the console shows its reason. **Manual dial** is disabled while READY ("Pause first, then dial"), as
+  the engine refuses it then. `agentLogout`, `lineTakeover` and `manualDial` go through `engineResult()`, which
+  turns a non-2xx refusal into `{ ok: false, error }` with the engine's words.
+- **INVITEs are answered only when asked for.** The console and the floor (`floor.tsx`) answer an incoming call
+  only within 30 s (`SUPERVISION_ANSWER_WINDOW_MS`) after this page asked for a supervision leg (TeamPanel watch,
+  floor Listen/Whisper/Barge), never with the console's line up; anything else is rejected.
+- **The floor's softphone** registers the same SIP user as the console, so it joins the same lock: it asks "who"
+  first and does not register while a console window holds the phone (badge "Your phone is in your console
+  window"; Listen/Whisper/Barge then say so instead of ringing), lets go when a console window asks, and registers
+  again when the console posts "free". Mid-supervision it keeps its client and answers "mine"/"busy". Same
+  pending-client and 15 s timeout handling as the console.
+- Mute resets when the line is raised, ends or fails. Hook deps use the SIP primitives (`sipServer`, `sipUser`,
+  `sipPassword`, `sipRealm`, `sipAppSid`), not the `sip` object.
+- The second screen (`screen !== "main"`) still has no phone, no lock, no banners and no call controls.
+
 ## Two-screen agent console
 
 `/agent` is the main window (softphone lives here). `/agent?screen=assist`
