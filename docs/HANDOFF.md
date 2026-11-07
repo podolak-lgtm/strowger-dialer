@@ -633,6 +633,30 @@ speaking with no `TTS_VOICE` set.
       the comic red `#c8472b` and cream `#f6efe0`). Keyframes are in
       `globals.css` (`sw-deal-*`, `sw-pop`, `sw-float-up`, `sw-toast-in`) and
       all switch off under `prefers-reduced-motion`. No sounds.
+    - **Bet board redrawn to the owner's mockup (7 Nov)**:
+      `app/(console)/agent/bet-board.tsx` (`GamesShell`, `BetBoard`,
+      `ChallengeCard`, `Coin`, `WinBurst`); `games.tsx` keeps the hook,
+      purse, toasts and run. Games draws its own dark shell (blue "Games",
+      "open ▾") instead of the console's `Panel`, so `console.tsx` did not
+      change (the `Panel` prop is still accepted and ignored). Rows: two
+      overlapping initial avatars, "You vs. Sarah M. (Who gets the next
+      contact?)", a red clock and a coin with the stake; open bets in
+      green-glow cards with "Take It"; challenges to me in violet with
+      Accept/Decline (not in the mockup, kept); recently settled kept, short.
+      CHALLENGE card: neon violet-to-blue frame, gold notches, dot texture,
+      Who/On selects, gold coin slider (`.sw-coin-range`, track filled via
+      `--pct`), trash talk 80 (the `Wager.note` that already existed; no
+      migration), glossy red "PUT IT UP" (always that label), footer with the
+      real `weeklyPoints`/`maxStake`. A win sets `useGames().win` and throws
+      coins plus "+N pts" (N = both stakes, what is credited). Shared rules,
+      tested: `periodEnd`, `betClock`, `initials`, `stakeRange`.
+      **The clock**: bets have no deadline in the engine. A period bet
+      ("most … today/week") counts down to the end of its UTC period; an
+      instant bet ("next contact") settles on the next event, so its red
+      clock counts **up** from when it was posted (blinking dot; `title`
+      says "riding for …") — there is no `acceptedAt`, so it is time since
+      posting, not since taken. CSS (`sw-bet-*`, `sw-coin-*`) is in
+      `globals.css`, all off under reduced motion.
 - **Seven-card stud and the run card (owner, 6 Nov: "Redo the game like
   this: 7 card, use this style graphics, more sexy!", with a phone mockup).**
   - Rules (`shared/games.ts`, tested): `HAND_MAX` = 7; `dealCard(held)` returns

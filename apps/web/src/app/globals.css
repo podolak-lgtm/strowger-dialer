@@ -64,7 +64,76 @@ body {
 .sw-pop { animation: sw-pop 450ms ease-out; }
 .sw-float-up { animation: sw-float-up 1400ms ease-out both; }
 .sw-toast-in { animation: sw-toast-in 220ms ease-out both; }
+/* The bet board (owner's mockup, 7 Nov; console/agent/bet-board.tsx). */
+.sw-bet-title { text-shadow: 0 0 6px rgb(255 90 44 / 0.75), 0 0 18px rgb(255 90 44 / 0.45); }
+.sw-bet-glow-green { box-shadow: 0 0 0 1px rgb(52 211 153 / 0.15), 0 0 14px -2px rgb(52 211 153 / 0.45), inset 0 0 12px -6px rgb(52 211 153 / 0.5); animation: sw-bet-breathe 2.8s ease-in-out infinite; }
+.sw-bet-glow-violet { box-shadow: 0 0 14px -2px rgb(217 70 239 / 0.5), inset 0 0 12px -6px rgb(217 70 239 / 0.5); animation: sw-bet-breathe 2.8s ease-in-out infinite; }
+@keyframes sw-bet-breathe { 50% { filter: brightness(1.25); } }
+.sw-bet-row { transition: transform 150ms ease, background-color 150ms ease; }
+.sw-bet-row:hover { transform: translateX(2px); background-color: rgb(255 255 255 / 0.06); }
+.sw-bet-press { transition: transform 120ms ease, background-color 120ms ease; }
+.sw-bet-press:hover:not(:disabled) { transform: translateY(-1px); }
+.sw-bet-press:active:not(:disabled) { transform: translateY(1px) scale(0.97); }
+.sw-bet-field { transition: box-shadow 150ms ease, border-color 150ms ease; }
+.sw-bet-field:focus { box-shadow: 0 0 0 1px currentColor, 0 0 16px -1px rgb(167 139 250 / 0.9); }
+.sw-bet-field option { background: #0d0f24; color: #f4f4f5; }
+@keyframes sw-bet-blink { 50% { opacity: 0.25; } }
+.sw-bet-blink { animation: sw-bet-blink 1.2s steps(1) infinite; }
+/* PUT IT UP: glossy red, beveled, sits on a dark ledge; presses down. */
+.sw-bet-cta {
+  position: relative;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.55), inset 0 -3px 0 rgb(0 0 0 / 0.28), inset 0 0 0 1px rgb(255 255 255 / 0.12), 0 3px 0 #4a0603, 0 0 18px -4px rgb(239 59 38 / 0.9);
+  transition: transform 120ms ease, box-shadow 120ms ease, filter 120ms ease;
+}
+.sw-bet-cta::after { content: ""; position: absolute; inset: 2px 6px auto; height: 40%; border-radius: 10px 10px 50% 50% / 10px 10px 8px 8px; background: linear-gradient(rgb(255 255 255 / 0.45), rgb(255 255 255 / 0)); pointer-events: none; }
+.sw-bet-cta:hover:not(:disabled) { filter: brightness(1.08); transform: translateY(-1px); box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.55), inset 0 -3px 0 rgb(0 0 0 / 0.28), 0 4px 0 #4a0603, 0 0 24px -2px rgb(239 59 38 / 1); }
+.sw-bet-cta:active:not(:disabled) { transform: translateY(3px); box-shadow: inset 0 2px 3px rgb(0 0 0 / 0.35), 0 0 0 #4a0603, 0 0 12px -4px rgb(239 59 38 / 0.8); }
+/* The stake slider: gold-filled track up to --pct, a shiny gold coin for the thumb. */
+.sw-coin-range { -webkit-appearance: none; appearance: none; height: 22px; background: transparent; cursor: pointer; }
+.sw-coin-range:disabled { cursor: not-allowed; opacity: 0.5; }
+.sw-coin-range::-webkit-slider-runnable-track { height: 8px; border-radius: 999px; background: linear-gradient(90deg, #8a5a00, #f5c542 calc(var(--pct, 0%) * 0.6), #ffe27a var(--pct, 0%), rgb(255 255 255 / 0.08) var(--pct, 0%)); box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.6), 0 0 8px -2px rgb(245 197 66 / 0.6); }
+.sw-coin-range::-moz-range-track { height: 8px; border-radius: 999px; background: rgb(255 255 255 / 0.08); box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.6); }
+.sw-coin-range::-moz-range-progress { height: 8px; border-radius: 999px; background: linear-gradient(90deg, #8a5a00, #f5c542 60%, #ffe27a); box-shadow: 0 0 8px -2px rgb(245 197 66 / 0.7); }
+.sw-coin-range::-webkit-slider-thumb { -webkit-appearance: none; margin-top: -7px; }
+.sw-coin-range::-webkit-slider-thumb {
+  width: 22px; height: 22px; border-radius: 50%; border: 1.5px solid #7a4d02;
+  background: radial-gradient(circle at 35% 30%, #fff7cc 0 10%, #ffd84a 32%, #e2a313 66%, #9c6405 100%);
+  box-shadow: inset 0 0 0 3px rgb(255 240 168 / 0.45), 0 2px 4px rgb(0 0 0 / 0.6), 0 0 10px rgb(251 191 36 / 0.7);
+  transition: transform 120ms ease;
+}
+.sw-coin-range::-moz-range-thumb {
+  width: 22px; height: 22px; border-radius: 50%; border: 1.5px solid #7a4d02;
+  background: radial-gradient(circle at 35% 30%, #fff7cc 0 10%, #ffd84a 32%, #e2a313 66%, #9c6405 100%);
+  box-shadow: inset 0 0 0 3px rgb(255 240 168 / 0.45), 0 2px 4px rgb(0 0 0 / 0.6), 0 0 10px rgb(251 191 36 / 0.7);
+  transition: transform 120ms ease;
+}
+.sw-coin-range:hover:not(:disabled)::-webkit-slider-thumb { transform: scale(1.12) rotate(-12deg); }
+.sw-coin-range:active:not(:disabled)::-webkit-slider-thumb { transform: scale(1.2) rotate(12deg); }
+.sw-coin-range:focus-visible { outline: none; }
+.sw-coin-range:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 3px rgb(56 189 248 / 0.8), 0 0 12px rgb(251 191 36 / 0.9); }
+/* A won bet: coins burst out of the header and fall; the "+N pts" pops. */
+@keyframes sw-coin-burst {
+  0% { opacity: 0; transform: translate(0, 0) scale(0.4) rotate(0deg); }
+  15% { opacity: 1; }
+  55% { transform: translate(var(--dx), var(--dy)) scale(1) rotate(200deg); }
+  100% { opacity: 0; transform: translate(calc(var(--dx) * 1.2), calc(var(--dy) + 90px)) scale(0.8) rotate(360deg); }
+}
+.sw-coin-burst { animation: sw-coin-burst 1400ms cubic-bezier(.2,.7,.4,1) both; }
+@keyframes sw-win-pop {
+  0% { opacity: 0; transform: translateY(6px) scale(0.6); }
+  20% { opacity: 1; transform: translateY(0) scale(1.15); }
+  35%, 80% { opacity: 1; transform: scale(1); }
+  100% { opacity: 0; transform: translateY(-10px); }
+}
+.sw-win-pop { animation: sw-win-pop 2400ms ease-out both; }
 @media (prefers-reduced-motion: reduce) {
   .sw-deal-flip, .sw-deal-away, .sw-pop, .sw-float-up, .sw-toast-in { animation: none !important; }
+  .sw-bet-glow-green, .sw-bet-glow-violet, .sw-bet-blink { animation: none !important; }
+  .sw-coin-burst { display: none; }
+  .sw-win-pop { animation: none !important; opacity: 1; }
+  .sw-bet-row, .sw-bet-press, .sw-bet-cta, .sw-bet-field { transition: none !important; }
+  .sw-bet-row:hover, .sw-bet-press:hover, .sw-bet-press:active, .sw-bet-cta:hover, .sw-bet-cta:active { transform: none !important; }
+  .sw-coin-range::-webkit-slider-thumb { transition: none !important; transform: none !important; }
+  .sw-coin-range::-moz-range-thumb { transition: none !important; transform: none !important; }
   .sw-motion { transition: none !important; transform: none !important; }
 }
