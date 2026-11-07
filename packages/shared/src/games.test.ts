@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { cardLabel, declinePlan, describeHand, handMakers, isRed, ledgerKind, ordinal, placeLine, rankGlyph, rankStandings, settlementLine, timeLeft, wagerActions } from "./games";
+import { betClock, initials, periodEnd, stakeRange } from "./games";
 import { HAND_MAX, defaultOutcomesPerCard, outcomeNoun, cardProgress, cardsEarned, clampOutcomesPerCard, handFullLine, handShort } from "./games";
 import { AGENT_RIGHTS, DEFAULT_LEVEL_RIGHTS, OPT_IN_RIGHTS, bestHand, compareHands, daysLeft, dealCard, earnsCard, parsePokerRule, periodKeyFor, rightsForLevel, runIsLive, thisWeekWindow, weekKey } from "./games";
 
@@ -270,4 +271,30 @@ test("stud: standings by hand, then cards held, then contacts", () => {
   // b and c: same pair of kings, same four cards held; c has more contacts.
   assert.deepEqual(rows.map((r) => r.userId), ["c", "b", "a", "d", "e", "f"]);
   assert.deepEqual(rows.map((r) => r.place), [1, 2, 3, 4, 5, 5]);
+});
+
+test("bet board: period end, the clock on a live bet", () => {
+  assert.equal(periodEnd("2026-11-07")!.toISOString(), "2026-11-08T00:00:00.000Z");
+  assert.equal(periodEnd("2026-W45")!.toISOString(), "2026-11-09T00:00:00.000Z"); // week of Mon 2 Nov ends Mon 9 Nov
+  assert.equal(periodEnd(weekKey(new Date("2026-11-07T12:00:00Z")))!.toISOString(), "2026-11-09T00:00:00.000Z");
+  assert.equal(periodEnd("nope"), null);
+  const now = new Date("2026-11-07T23:57:55Z");
+  assert.deepEqual(betClock({ period: "2026-11-07", createdAt: now }, now), { mode: "left", text: "02:05", label: "02:05 left on this bet" });
+  assert.equal(betClock({ period: "2026-11-07", createdAt: now }, new Date("2026-11-07T18:57:55Z")).text, "5:02:05");
+  assert.equal(betClock({ period: "2026-W45", createdAt: now }, new Date("2026-11-07T00:00:00Z")).text, "2d 0h");
+  assert.equal(betClock({ period: "2026-11-07", createdAt: now }, new Date("2026-11-08T00:00:10Z")).label, "settling");
+  const r = betClock({ period: null, createdAt: "2026-11-07T23:55:50Z" }, now);
+  assert.equal(r.mode, "riding");
+  assert.equal(r.text, "02:05");
+});
+
+test("bet board: initials and the stake range", () => {
+  assert.equal(initials("Sarah M."), "SM");
+  assert.equal(initials("brian"), "B");
+  assert.equal(initials(""), "?");
+  assert.equal(initials(null), "?");
+  assert.deepEqual(stakeRange(3450, 5000), { min: 1, max: 3450, step: 50 });
+  assert.deepEqual(stakeRange(12000, 5000), { min: 1, max: 5000, step: 50 });
+  assert.deepEqual(stakeRange(40, 5000), { min: 1, max: 40, step: 1 });
+  assert.deepEqual(stakeRange(0, 5000), { min: 0, max: 0, step: 1 });
 });

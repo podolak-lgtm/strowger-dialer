@@ -11,12 +11,14 @@
 //                 screens (over chat, never the call column), in the page flow
 //                 on narrow ones so it covers nothing
 //   GamesPanel    the run (hand, place, leaderboard) and the bet board
+//                 (bet-board.tsx: the owner's 7 Nov mockup)
 //
 // Rules (hand names, places, who may decline) are in @strowger/shared/games.
 import { PlayingCard } from "@/components/playing-card";
 import { PokerRunCard, PokerTable } from "@/components/poker-run";
-import { gamesOverview, wager, type CardEvent, type FullEvent, type GamesOverview, type WagerEvent, type WagerRow } from "@/lib/games-actions";
-import { WAGER_NOTE_MAX, handFullLine, placeLine, settlementLine } from "@strowger/shared/games";
+import { gamesOverview, wager, type CardEvent, type FullEvent, type GamesOverview, type WagerEvent } from "@/lib/games-actions";
+import { BetBoard, GamesShell } from "./bet-board";
+import { handFullLine, placeLine, settlementLine } from "@strowger/shared/games";
 import type { Socket } from "socket.io-client";
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -35,6 +37,8 @@ export function useGames({ campaignId, socket, meId, enabled, onCall }: { campai
   const [err, setErr] = useState<string | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [deals, setDeals] = useState<Deal[]>([]);
+  /** A bet I just won: the bet board throws coins (keyed by id so a second win replays it). */
+  const [win, setWin] = useState<{ id: number; amount: number } | null>(null);
   const seq = useRef(0);
 
   const reload = useCallback(() => {
@@ -69,6 +73,11 @@ export function useGames({ campaignId, socket, meId, enabled, onCall }: { campai
       } else if (w.status === "SETTLED") {
         const line = settlementLine(w, meId);
         if (line) pushToast({ tone: line.tone, text: line.text });
+        if (line?.tone === "won") {
+          const id = ++seq.current;
+          setWin({ id, amount: w.stake * 2 });
+          setTimeout(() => setWin((x) => (x?.id === id ? null : x)), 2600);
+        }
       }
     };
     const onFull = (f: FullEvent) => pushToast({ tone: "info", text: `${handFullLine(f.held) ?? "Your hand is full"} in ${f.run}. Best five of seven win.` });
@@ -107,7 +116,7 @@ export function useGames({ campaignId, socket, meId, enabled, onCall }: { campai
     [reload],
   );
 
-  return { o, busy, err, act, reload, toasts, dismissToast, deal, dismissDeal };
+  return { o, busy, err, act, reload, toasts, dismissToast, deal, dismissDeal, win };
 }
 
 /** Wall clock for "2 days 5 hours left". */
@@ -300,29 +309,27 @@ function DealMoment({ deal, onDismiss }: { deal: Deal; onDismiss: () => void }) 
   );
 }
 
-/** The Games panel: the poker run (my hand, my place, everyone's hands) and the bet board. */
-export function GamesPanel({ g, meId, campaignId, Panel }: { g: Games; meId: string; campaignId: string; Panel: React.ComponentType<{ title: string; right?: React.ReactNode; defaultOpen?: boolean; children: React.ReactNode; className?: string }> }) {
+/** The Games panel: the poker run (my hand, my place, everyone's hands) and the bet board (`bet-board.tsx`).
+ *  `Panel` is the console's panel; Games draws its own dark shell (owner's mockup, 7 Nov) and keeps the prop
+ *  so console.tsx need not change. */
+export function GamesPanel({ g, meId, campaignId }: { g: Games; meId: string; campaignId: string; Panel?: unknown }) {
   const now = useNow(60_000);
   const o = g.o;
-  const link = (
-    <a href={`/games?campaign=${encodeURIComponent(campaignId)}`} target="_blank" rel="noreferrer" className="text-xs text-sky-300 underline">
-      open
-    </a>
-  );
+  const link = `/games?campaign=${encodeURIComponent(campaignId)}`;
   if (!o) return null;
   const c = o.campaign && o.campaign.id === campaignId ? o.campaign : null;
   const betsOn = Boolean(c?.betsEnabled);
   const run = o.run && o.run.campaignId === campaignId ? o.run : null;
   if (!betsOn && !run) {
     return (
-      <Panel title="Games" right={link} defaultOpen={false}>
+      <GamesShell link={link} defaultOpen={false}>
         <div className="text-sm text-zinc-400">Games are off for this campaign: no bets and no poker run. A supervisor switches them on from the campaign page.</div>
-      </Panel>
+      </GamesShell>
     );
   }
   const mine = run?.rows.find((r) => r.userId === meId) ?? null;
   return (
-    <Panel title="Games" right={link}>
+    <GamesShell link={link}>
       {run ? (
         <section className="mb-5">
           <PokerRunCard run={run} row={mine} now={now} fresh={g.deal?.card ?? null}>
@@ -334,193 +341,6 @@ export function GamesPanel({ g, meId, campaignId, Panel }: { g: Games; meId: str
         <div className="mb-3 text-xs text-zinc-500">No poker run on this campaign right now.</div>
       )}
       {betsOn && c ? <BetBoard g={g} o={o} meId={meId} campaign={c} /> : <div className="text-xs text-zinc-500">Bets are off for this campaign.</div>}
-    </Panel>
+    </GamesShell>
   );
 }
-
-function BetLine({ w, meId, children }: { w: WagerRow; meId: string; children?: React.ReactNode }) {
-  const vs = w.accepterId ? (w.accepterId === meId ? "you" : w.accepter) : "anyone";
-  return (
-    <li className="rounded-md border border-white/10 bg-white/5 px-2 py-1.5">
-      <div className="flex items-center gap-2">
-        <span className="min-w-0 flex-1 truncate text-xs">
-          <b>{w.proposerId === meId ? "You" : w.proposer}</b> <span className="text-zinc-500">vs</span> <b>{vs}</b> · {w.short} ·{" "}
-          <span className="font-bold tabular-nums text-fuchsia-300">{w.stake.toLocaleString()}</span>
-        </span>
-        {children}
-      </div>
-      {w.note ? <div className="truncate text-[11px] italic text-zinc-400">&ldquo;{w.note}&rdquo;</div> : null}
-    </li>
-  );
-}
-
-const btn = "rounded border-2 border-black px-2 py-0.5 text-[11px] font-black shadow-[1px_1px_0_#000] disabled:opacity-40";
-
-function BetBoard({ g, o, meId, campaign }: { g: Games; o: GamesOverview; meId: string; campaign: NonNullable<GamesOverview["campaign"]> }) {
-  const open = o.wagers.filter((w) => w.status === "OPEN");
-  const toMe = open.filter((w) => w.accepterId === meId && w.proposerId !== meId);
-  const mineOpen = open.filter((w) => w.proposerId === meId);
-  const anyone = open.filter((w) => !w.accepterId && w.proposerId !== meId);
-  const live = o.wagers.filter((w) => w.status === "ACCEPTED" && (w.proposerId === meId || w.accepterId === meId));
-  const settled = o.settled.slice(0, 5);
-  const section = (title: string, n: number) => (
-    <div className="mb-1 mt-3 flex items-center justify-between text-[10px] font-bold uppercase tracking-wide text-zinc-400">
-      <span>{title}</span>
-      <span className="rounded bg-white/10 px-1.5 tabular-nums">{n}</span>
-    </div>
-  );
-  return (
-    <section>
-      <div className="flex items-baseline justify-between">
-        <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-[#e98a72]">Bet board</div>
-        <div className="text-[11px] text-zinc-500">
-          {campaign.weeklyPoints.toLocaleString()} every Monday · max {campaign.maxStake.toLocaleString()}
-        </div>
-      </div>
-      {g.err ? <div className="my-1 rounded border border-red-900 bg-red-950/40 px-2 py-1 text-xs text-red-200">{g.err}</div> : null}
-
-      {toMe.length ? (
-        <>
-          {section("Challenges to you", toMe.length)}
-          <ul className="space-y-1">
-            {toMe.map((w) => (
-              <BetLine key={w.id} w={w} meId={meId}>
-                <button type="button" disabled={g.busy} onClick={() => void g.act({ action: "accept", wagerId: w.id })} className={`${btn} bg-emerald-400 text-emerald-950`}>
-                  Accept
-                </button>
-                <button type="button" disabled={g.busy} onClick={() => void g.act({ action: "decline", wagerId: w.id })} className={`${btn} bg-zinc-200 text-zinc-900`}>
-                  Decline
-                </button>
-              </BetLine>
-            ))}
-          </ul>
-        </>
-      ) : null}
-
-      {section("Your bets", mineOpen.length + live.length)}
-      <ul className="space-y-1">
-        {live.map((w) => (
-          <BetLine key={w.id} w={w} meId={meId}>
-            <span className="rounded bg-sky-500/20 px-1.5 text-[10px] font-bold uppercase text-sky-200">live</span>
-          </BetLine>
-        ))}
-        {mineOpen.map((w) => (
-          <BetLine key={w.id} w={w} meId={meId}>
-            <button type="button" disabled={g.busy} onClick={() => void g.act({ action: "withdraw", wagerId: w.id })} className={`${btn} bg-zinc-800 text-zinc-200`}>
-              Withdraw
-            </button>
-          </BetLine>
-        ))}
-        {mineOpen.length + live.length === 0 ? <li className="text-xs text-zinc-500">Nothing riding. Challenge somebody below.</li> : null}
-      </ul>
-
-      {section("Open to anyone", anyone.length)}
-      <ul className="space-y-1">
-        {anyone.map((w) => (
-          <BetLine key={w.id} w={w} meId={meId}>
-            <button type="button" disabled={g.busy || o.points < w.stake} onClick={() => void g.act({ action: "accept", wagerId: w.id })} className={`${btn} bg-emerald-400 text-emerald-950`} title={o.points < w.stake ? "Not enough points" : undefined}>
-              Take it
-            </button>
-          </BetLine>
-        ))}
-        {anyone.length === 0 ? <li className="text-xs text-zinc-500">Nothing on the table.</li> : null}
-      </ul>
-
-      {settled.length ? (
-        <>
-          {section("Recently settled", settled.length)}
-          <ul className="space-y-0.5 text-[11px] text-zinc-400">
-            {settled.map((w) => {
-              const winner = w.winnerId ? (w.winnerId === meId ? "You" : w.winnerId === w.proposerId ? w.proposer : w.accepter) : null;
-              return (
-                <li key={w.id} className="truncate">
-                  {w.short}: {w.proposerId === meId ? "you" : w.proposer} vs {w.accepterId === meId ? "you" : w.accepter} ·{" "}
-                  {winner ? <b className={w.winnerId === meId ? "text-emerald-300" : "text-zinc-200"}>{winner} won {(w.stake * 2).toLocaleString()}</b> : "push"}
-                </li>
-              );
-            })}
-          </ul>
-        </>
-      ) : null}
-
-      <ChallengeForm g={g} o={o} meId={meId} campaign={campaign} />
-    </section>
-  );
-}
-
-function ChallengeForm({ g, o, meId, campaign }: { g: Games; o: GamesOverview; meId: string; campaign: NonNullable<GamesOverview["campaign"]> }) {
-  const [against, setAgainst] = useState("");
-  const [kind, setKind] = useState("NEXT_SALE");
-  const [stake, setStake] = useState(500);
-  const [note, setNote] = useState("");
-  const cap = Math.max(0, Math.min(campaign.maxStake, o.points));
-  const value = Math.max(Math.min(stake, cap), cap > 0 ? 1 : 0);
-  const step = cap >= 1000 ? 50 : cap >= 100 ? 10 : 1;
-  const others = o.players.filter((p) => p.id !== meId);
-  const submit = async () => {
-    const ok = await g.act({ action: "propose", campaignId: campaign.id, kind, stake: value, accepterId: against || null, note: note.trim() || undefined });
-    if (ok) setNote("");
-  };
-  return (
-    <form
-      className="mt-4 rounded-lg border-2 border-black bg-black/30 p-2.5 shadow-[2px_2px_0_#000]"
-      onSubmit={(e) => {
-        e.preventDefault();
-        void submit();
-      }}
-    >
-      <div className="mb-2 text-xs font-black uppercase tracking-wide text-fuchsia-300">Challenge</div>
-      <div className="grid grid-cols-2 gap-2 text-xs">
-        <label className="block">
-          <span className="text-zinc-400">Who</span>
-          <select value={against} onChange={(e) => setAgainst(e.target.value)} className="mt-0.5 w-full rounded border border-white/10 bg-zinc-950 px-1.5 py-1">
-            <option value="">Anyone who takes it</option>
-            {others.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="block">
-          <span className="text-zinc-400">On</span>
-          <select value={kind} onChange={(e) => setKind(e.target.value)} className="mt-0.5 w-full rounded border border-white/10 bg-zinc-950 px-1.5 py-1">
-            {o.kinds.map((k) => (
-              <option key={k.kind} value={k.kind}>
-                {k.label}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
-      <label className="mt-2 block text-xs">
-        <span className="flex justify-between text-zinc-400">
-          <span>Stake</span>
-          <span className="font-black tabular-nums text-fuchsia-200">{value.toLocaleString()} pts</span>
-        </span>
-        <input type="range" min={cap > 0 ? 1 : 0} max={cap} step={step} value={value} disabled={cap === 0} onChange={(e) => setStake(Number(e.target.value))} className="mt-1 w-full accent-fuchsia-500" aria-label="Stake in points" />
-        <span className="flex justify-between text-[10px] text-zinc-500">
-          <span>1</span>
-          <span>{cap === o.points && cap < campaign.maxStake ? `your purse, ${cap.toLocaleString()}` : `cap ${cap.toLocaleString()}`}</span>
-        </span>
-      </label>
-      <label className="mt-2 block text-xs">
-        <span className="flex justify-between text-zinc-400">
-          <span>Trash talk (optional)</span>
-          <span className="tabular-nums text-zinc-500">
-            {note.length}/{WAGER_NOTE_MAX}
-          </span>
-        </span>
-        <input value={note} onChange={(e) => setNote(e.target.value.slice(0, WAGER_NOTE_MAX))} maxLength={WAGER_NOTE_MAX} placeholder="Bring your A game" className="mt-0.5 w-full rounded border border-white/10 bg-zinc-950 px-1.5 py-1" />
-      </label>
-      <div className="mt-2 flex items-center justify-between">
-        <span className="text-[10px] text-zinc-500">{o.kinds.find((k) => k.kind === kind)?.instant ? "Settles the moment it happens to either of you." : "Settles when the period ends; a tie returns both stakes."}</span>
-        <button type="submit" disabled={g.busy || cap === 0} className="rounded-md border-2 border-black bg-[#c8472b] px-3 py-1 text-xs font-black uppercase text-[#f6efe0] shadow-[2px_2px_0_#000] disabled:opacity-40">
-          {against ? "Challenge" : "Put it up"}
-        </button>
-      </div>
-      {cap === 0 ? <div className="mt-1 text-[11px] text-zinc-500">Your purse is empty until the Monday top-up.</div> : null}
-    </form>
-  );
-}
-

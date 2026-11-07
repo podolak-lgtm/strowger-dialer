@@ -354,6 +354,53 @@ export function timeLeft(endsAt: Date | string, now = new Date()): string {
   return `${Math.max(1, mins)} min left`;
 }
 
+// ---- The bet board (owner's mockup, 7 Nov)
+
+/** When a period bet's period ends (UTC): the next midnight for a day key, the next Monday for a week key. */
+export function periodEnd(period: string): Date | null {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(period)) return new Date(new Date(`${period}T00:00:00Z`).getTime() + 86_400_000);
+  const m = period.match(/^(\d{4})-W(\d{2})$/);
+  if (!m) return null;
+  const jan4 = new Date(Date.UTC(Number(m[1]), 0, 4));
+  const monday = jan4.getTime() - ((jan4.getUTCDay() || 7) - 1) * 86_400_000;
+  return new Date(monday + Number(m[2]) * 7 * 86_400_000);
+}
+
+function clock(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  const d = Math.floor(s / 86_400);
+  const h = Math.floor((s % 86_400) / 3600);
+  const mm = String(Math.floor((s % 3600) / 60)).padStart(2, "0");
+  const ss = String(s % 60).padStart(2, "0");
+  if (d > 0) return `${d}d ${h}h`;
+  return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
+}
+
+/** The clock on a live bet. A period bet counts down to its period's end ("02:05", "5:02:05", "2d 5h");
+ *  an instant bet has no deadline (it settles on the next event), so it counts up from when it was posted. */
+export function betClock(w: { period: string | null; createdAt: Date | string }, now = new Date()): { mode: "left" | "riding"; text: string; label: string } {
+  const end = w.period ? periodEnd(w.period) : null;
+  if (end) {
+    const ms = end.getTime() - now.getTime();
+    return { mode: "left", text: clock(ms), label: ms > 0 ? `${clock(ms)} left on this bet` : "settling" };
+  }
+  const ms = now.getTime() - new Date(w.createdAt).getTime();
+  return { mode: "riding", text: clock(ms), label: `riding for ${clock(ms)}; settles on the next one` };
+}
+
+/** "SM" for "Sarah M.", "B" for "Brian", "?" for nobody. */
+export function initials(name: string | null | undefined): string {
+  const parts = (name ?? "").replace(/[^\p{L}\p{N}\s]/gu, " ").trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return "?";
+  return (parts[0]![0]! + (parts.length > 1 ? parts[parts.length - 1]![0]! : "")).toUpperCase();
+}
+
+/** The stake slider's range: 1 up to the smaller of the purse and the campaign cap; empty when the purse is. */
+export function stakeRange(points: number, maxStake: number): { min: number; max: number; step: number } {
+  const max = Math.max(0, Math.min(Math.floor(points), Math.floor(maxStake)));
+  return { min: max > 0 ? 1 : 0, max, step: max >= 1000 ? 50 : max >= 100 ? 10 : 1 };
+}
+
 // ---- Points ledger, as the purse's history shows it
 
 export type LedgerKind = "topup" | "stake" | "won" | "lost" | "refund" | "other";
