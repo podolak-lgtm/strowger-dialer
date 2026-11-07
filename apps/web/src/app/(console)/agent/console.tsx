@@ -14,6 +14,7 @@ import { isStaleBuildError, NewVersionBanner, useNewVersion } from "@/components
 import { myTeams } from "@/lib/chat-actions";
 import { assistSuggest, campaignRebuttals, type Suggestion } from "@/lib/games-actions";
 import { GamesLayer, GamesPanel, PointsPurse, useGames } from "./games";
+import { useAudioWatchdog } from "./audio-watchdog";
 import { superviseStart, superviseStop, type SuperviseMode } from "../floor/actions";
 import { formatPhone } from "@strowger/shared/phone";
 import { DEFAULT_SCREENER_SCRIPT, renderScript } from "@strowger/shared/scripts";
@@ -35,6 +36,7 @@ import {
   holdCall,
   leadById,
   leadForCall,
+  reportAudioProblem,
   leadHistory,
   leaveVoicemail,
   manualDial,
@@ -1192,6 +1194,16 @@ export function AgentConsole(props: ConsoleProps) {
   const lineUpIdle = (state === "READY" || state === "PAUSED") && Boolean(agent?.agentCallSid);
   // Games: one overview for the purse, the panel and the deal moment (games.tsx).
   const games = useGames({ campaignId, socket: sock, meId: me.id, enabled: can("games"), onCall });
+  // One-way audio (7 Nov): the browser's own numbers say which side went quiet, on screen and in the web log.
+  useAudioWatchdog({
+    callRef: roomCallRef,
+    active: onCall && screen === "main",
+    callId,
+    onProblem: (kind, message, detail) => {
+      setNotice(message);
+      if (callId) void reportAudioProblem(callId, kind, detail).catch(() => undefined);
+    },
+  });
   const canDialOut = campaign ? campaign.agentMode !== "CLOSER" || (campaign.closersMayDial && campaign.outboundOn) : false;
 
   // Screener banner steps. "Say it" gives way to "stay quiet" after 5 s (or the Said it click);

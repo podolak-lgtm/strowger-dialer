@@ -23,6 +23,7 @@ import { config } from "../config";
 import { callIdForSid, callStatusOf, leadCallAnswered, leadCallBridged, leadCallEnded, screenerFields } from "../dialer/calls";
 import { readyAgents, recordLedger } from "../dialer/pacing";
 import { detectScreener } from "@strowger/shared/compliance";
+import { TTS_ONLY_VENDORS } from "@strowger/shared/assist";
 import { emitToAgent } from "../realtime";
 import type { Call, Campaign } from "@strowger/db";
 import { getSupervision, supervisorJoinVerbs, supervisorLegEnded } from "../supervise";
@@ -116,7 +117,11 @@ export async function registerJambonzRoutes(app: FastifyInstance): Promise<void>
     // A text-to-speech failure: spoken queue prompts pause for 15 minutes instead of failing on every caller.
     const text = JSON.stringify(req.body ?? {}).toLowerCase();
     if (/\btts\b|synthes|text[- ]to[- ]speech/.test(text)) await markTtsDown(text.slice(0, 200));
-    if (/no-stt|\bstt\b|speech[- ]to[- ]text|recogni[sz]/.test(text)) await markSttDown(text.slice(0, 200));
+    // Only a failure of a vendor we would transcribe with pauses transcription: an alert naming a voice-only vendor
+    // (Cartesia and the like, picked by jambonz's application default, never by us) says nothing about ours.
+    const alertVendor = String((req.body as { vendor?: unknown } | null)?.vendor ?? "").toLowerCase();
+    const notOurs = Boolean(alertVendor) && TTS_ONLY_VENDORS.includes(alertVendor);
+    if (!notOurs && /no-stt|\bstt\b|speech[- ]to[- ]text|recogni[sz]/.test(text)) await markSttDown(text.slice(0, 200));
     return reply.send({ ok: true });
   });
 

@@ -158,6 +158,18 @@ export async function leadForCall(callId: string): Promise<LeadCard | null> {
   return call?.leadId ? loadLeadCard(s.tenant.id, call.leadId) : null;
 }
 
+/**
+ * The console's audio watchdog (audio-watchdog.ts) saw one side of a call go quiet. Written to the web log as
+ * one JSON line ("agent audio problem") with the call, so a "couldn't hear" report can be matched to what the
+ * browser measured at that moment.
+ */
+export async function reportAudioProblem(callId: string, kind: string, detail: Record<string, unknown>): Promise<void> {
+  const s = await me();
+  const safe: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(detail ?? {}).slice(0, 12)) safe[k] = typeof v === "number" || typeof v === "boolean" ? v : String(v).slice(0, 200);
+  console.warn(JSON.stringify({ msg: "agent audio problem", tenantId: s.tenant.id, userId: s.user.id, callId: String(callId).slice(0, 40), kind: String(kind).slice(0, 30), ...safe }));
+}
+
 export async function skipLead(leadId: string): Promise<{ ok: boolean }> {
   const s = await me();
   return engine("/leads/skip", { method: "POST", body: JSON.stringify({ tenantId: s.tenant.id, userId: s.user.id, leadId }) });

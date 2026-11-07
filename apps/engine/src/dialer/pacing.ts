@@ -13,6 +13,7 @@ import { toE164 } from "@strowger/shared/phone";
 import { listAgents, type AgentLive } from "../agents/state";
 import { config } from "../config";
 import { agentRoom, hookUrl, jambonz, jambonzConfigured } from "../jambonz/client";
+import { amdRecognizer } from "../assist/live";
 import { log } from "../log";
 import { redis } from "../redis";
 import { emitToTenant } from "../realtime";
@@ -131,6 +132,7 @@ async function dialUnreserved(campaign: Campaign, lead: Lead): Promise<boolean> 
   await addInflight(campaign.id, call.id);
   try {
     type CreateReq = Parameters<typeof jambonz.calls.create>[0];
+    const amdRec = campaign.amdEnabled ? await amdRecognizer() : null;
     const req = {
       from: toE164(callerId),
       to: { type: "phone", number: toE164(lead.phone) },
@@ -140,8 +142,9 @@ async function dialUnreserved(campaign: Campaign, lead: Lead): Promise<boolean> 
         : { call_hook: { url: hookUrl("/jambonz/call"), method: "post" as const }, call_status_hook: { url: hookUrl("/jambonz/status"), method: "post" as const } }),
       timeout: 30,
       tag: { kind: "lead", callId: call.id, campaignId: campaign.id, tenantId: campaign.tenantId, pacer: true },
-      ...(campaign.amdEnabled
-        ? { amd: { actionHook: hookUrl("/jambonz/amd", { callId: call.id }), timers: { decisionTimeoutMs: 5000, noSpeechTimeoutMs: 3500, greetingCompletionTimeoutMs: 1200 } } }
+      // AMD on our speech-to-text vendor only (see dialer/calls.ts); none usable = no AMD on this call.
+      ...(amdRec
+        ? { amd: { actionHook: hookUrl("/jambonz/amd", { callId: call.id }), timers: { decisionTimeoutMs: 5000, noSpeechTimeoutMs: 3500, greetingCompletionTimeoutMs: 1200 }, recognizer: amdRec } }
         : {}),
     } as CreateReq;
     const sid = await jambonz.calls.create(req);

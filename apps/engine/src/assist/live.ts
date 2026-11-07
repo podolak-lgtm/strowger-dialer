@@ -254,12 +254,37 @@ export async function liveLeadVerbs(call: CallRef): Promise<Verb[]> {
 }
 
 /**
+ * Off (owner, 7 Nov: one-way audio again, "make sure it doesn't happen anymore"). Transcription on the agent's
+ * nailed-up line meant a transcribe config on that line plus a REST pause/resume on it around every call, on the
+ * one leg every call's audio depends on. Both one-way incidents with transcription on (6 and 7 Nov) broke the
+ * agent's side while the lead's side transcribed fine, and in two days not one agent-side result ever arrived.
+ * So the agent's line is never touched by transcription; only the lead leg is transcribed.
+ */
+const AGENT_LEG_TRANSCRIPTION = false;
+
+/**
+ * The recognizer jambonz's answering-machine detection must use. Without one, AMD takes the application's
+ * default speech vendor, which on this account is Cartesia (voice only): every AMD call raised "no-stt", the
+ * verdict never came, and the alert paused live transcription for an hour. null = no usable speech-to-text,
+ * so the caller skips AMD rather than run it on a vendor that cannot listen.
+ */
+export async function amdRecognizer(): Promise<{ vendor: string; language: string } | null> {
+  try {
+    const ready = await transcriptionReady();
+    return ready.ok && ready.stt ? { vendor: ready.stt, language: config.SCREENER_STT_LANGUAGE } : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Verbs before the agent's nailed-up conference join: a transcription that is
  * paused a few seconds later and resumed per call. Only when the workspace has
  * transcription on somewhere, the account can do it, and pausing works.
  */
 export async function liveAgentLegVerbs(userId: string, tenantId: string, callSid: string): Promise<Verb[]> {
   try {
+    if (!AGENT_LEG_TRANSCRIPTION) return [];
     if (!(await tenantTranscribes(tenantId))) return [];
     if (await redis.get(PAUSE_BROKEN)) return [];
     const ready = await transcriptionReady();
@@ -305,7 +330,7 @@ export async function liveCallBridged(callId: string): Promise<void> {
         agentSid = legSid;
         await redis.set(AGENT_ON(agentId), callId, "EX", TTL);
       } else missing = "Your side could not be started; only the customer is transcribed on this call.";
-    } else missing = (await redis.get(PAUSE_BROKEN)) ? "Your side is not transcribed today (the engine could not pause it between calls)." : "Your line came up before transcription was switched on: your side starts after your next log in.";
+    } else missing = !AGENT_LEG_TRANSCRIPTION ? "Only the customer is transcribed: your own line is kept free of transcription so your audio is never affected." : (await redis.get(PAUSE_BROKEN)) ? "Your side is not transcribed today (the engine could not pause it between calls)." : "Your line came up before transcription was switched on: your side starts after your next log in.";
   }
   const next = await patch(callId, { agentId, bridgedAt: now, agentSid, agentStartedAt: agentSid ? now : null, agentSideMissing: missing });
   if (!next) return;

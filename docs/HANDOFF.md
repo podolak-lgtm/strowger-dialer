@@ -1774,6 +1774,34 @@ effect (React Compiler rule). The left panel is now a compact summary
 the call controls (above). On the assist screen the current-lead row in
 Lead Queue expands (`CollapsibleLeadCard`) to the same editor.
 
+## One-way audio on the agent's line (owner, 7 Nov)
+
+"I couldn't hear myself ... only one-way. Make sure it doesn't happen anymore." The engine log of the call
+(16:29 UTC): the lead leg answered, joined the agent's room, and its speech was transcribed (`leg=lead`), so
+the lead's side reached jambonz; the agent's side never did. Same shape as 6 Nov (lead transcribed, nothing in
+the headset). Both with live transcription on, and an `no-stt` alert for **Cartesia** the same minute.
+
+- **The agent's nailed-up line is never transcribed** (`AGENT_LEG_TRANSCRIPTION = false`, `assist/live.ts`).
+  It used to get a transcribe `config` at line-up plus a REST `transcribe_status` pause/resume around every
+  call: on the one leg every call's audio depends on. In two days not one `leg=agent` result arrived, so it
+  never worked either. Only the lead leg is transcribed; assist works from the customer's words, and the
+  console says "Only the customer is transcribed". Bringing the agent's side back must not touch that leg
+  (e.g. dual-channel recognition on the lead leg); do not re-enable the flag.
+- **AMD names its recognizer** (`amdRecognizer()`, used by `dialer/calls.ts` and `dialer/pacing.ts`).
+  jambonz's AMD otherwise uses the application's default speech vendor, which on this account is Cartesia
+  (voice only): every AMD call raised `no-stt`, the verdict never came (also why the 5 Nov 4 s hold waited
+  for nothing), and the alert paused live transcription for an hour. No usable STT vendor = the call goes out
+  without AMD.
+- **An alert naming a voice-only vendor** (`TTS_ONLY_VENDORS`) no longer pauses transcription.
+- **The console's audio watchdog** (`agent/audio-watchdog.ts`): while a call is up it reads the browser's
+  WebRTC stats every 2 s. It unmutes a line still muted from the last call (the line outlives calls, and so
+  did the mute), puts a fresh microphone on the line if the track ended, and otherwise says which side went
+  quiet (`not-sending`, `not-receiving`, `mic-muted` by the OS or headset, `mic-silent` = exactly zero input)
+  on screen. Each problem is one JSON line `agent audio problem` in the **web** service log with the call id,
+  so the next report can be matched to what the browser measured.
+- Not fixed here: jambonz's application default STT is still Cartesia in the portal. Set it to Deepgram
+  (jambonz → Applications → the Strowger app → speech recognizer) so nothing else falls back to it.
+
 ## Live transcription and agent assist (6 Nov)
 
 **6 Nov incident, and the guards it added.** Transcription was switched on

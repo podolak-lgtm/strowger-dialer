@@ -1,6 +1,7 @@
 // Placing a call to a lead, and what happens when it ends or is dispositioned.
 import { onDispositioned, onDialed } from "../games";
 import { chargeCallMinutes, outboundAllowed } from "../billing";
+import { amdRecognizer } from "../assist/live";
 import { prisma, type Call, type Campaign, type Lead } from "@strowger/db";
 import { toE164 } from "@strowger/shared/phone";
 import { DID_RULES, capForNumber, hourlyCap } from "@strowger/shared/did-hygiene";
@@ -113,12 +114,17 @@ export async function dialLeadForAgent(campaign: Campaign, lead: Lead, agentId: 
     },
   });
 
-  const amd = campaign.amdEnabled
-    ? {
-        actionHook: hookUrl("/jambonz/amd", { callId: call.id }),
-        timers: { decisionTimeoutMs: 6000, noSpeechTimeoutMs: 4000, greetingCompletionTimeoutMs: 1500 },
-      }
-    : undefined;
+  // AMD listens with our speech-to-text vendor, never jambonz's application default (7 Nov: that was voice-only
+  // Cartesia, so every AMD call raised no-stt). No usable vendor: the call goes out without AMD.
+  const amdRec = campaign.amdEnabled ? await amdRecognizer() : null;
+  const amd =
+    campaign.amdEnabled && amdRec
+      ? {
+          actionHook: hookUrl("/jambonz/amd", { callId: call.id }),
+          timers: { decisionTimeoutMs: 6000, noSpeechTimeoutMs: 4000, greetingCompletionTimeoutMs: 1500 },
+          recognizer: amdRec,
+        }
+      : undefined;
 
   try {
     type CreateReq = Parameters<typeof jambonz.calls.create>[0];
