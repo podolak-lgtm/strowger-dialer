@@ -1774,6 +1774,27 @@ effect (React Compiler rule). The left panel is now a compact summary
 the call controls (above). On the assist screen the current-lead row in
 Lead Queue expands (`CollapsibleLeadCard`) to the same editor.
 
+## The second screen has nothing to do with the phone; one phone per browser (owner, 7 Nov)
+
+"I'm pretty sure it's because of the second monitor. Make sure that second screen has nothing to do with the
+telephony." What the logs showed: during the failed call a console window from an older deployment was still
+making requests ("Failed to find Server Action"), an agent line came up and was logged out within a second
+(`/internal/agents/logout` hangs up the line), and a new line came up after a fresh login. The second screen
+(`/agent?screen=assist`) carried the same top bar as the main window, so its **Log out** hung up the phone,
+and the rail's ⌂ / ▦ links turned either window into the other, so a second-screen window could become a
+"main" one and take the phone.
+
+- `screen !== "main"`: no campaign picker actions, no Log in / Go Ready / Pause / Log out, no phone badge;
+  a read-only "Second screen · <state> · controls are on the main window" chip. The rail shows what the
+  window is and links nowhere.
+- **One phone per browser** (`BroadcastChannel("strowger-phone-<userId>")` in `console.tsx`): before
+  registering, a main window asks "who" and waits 500 ms; a window that holds the phone answers "mine", and
+  the new one shows "phone is in another window · use it here" instead of registering. That button sends
+  "release": the holder hangs up its line, disconnects, and answers "released"; then this window registers.
+  A window is never silently robbed of its phone, so a call in progress elsewhere is never dropped.
+- After deploying, old windows keep the old code until reloaded: close every console window, open one, and
+  reopen the second screen from it.
+
 ## Ten seconds after Ready before the ratio dialer dials (owner, 7 Nov)
 
 "When an agent goes to ready, let's wait ... 10 seconds before we start dialing, in case people accidentally

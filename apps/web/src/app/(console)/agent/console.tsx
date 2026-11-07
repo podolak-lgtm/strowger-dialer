@@ -472,6 +472,11 @@ export function AgentConsole(props: ConsoleProps) {
   const roomCallRef = useRef<JambonzCall | null>(null);
   // One automatic re-register after a failure; after that the "phone error" badge / banner is the retry.
   const phoneAutoRetriedRef = useRef(false);
+  // One phone per browser (owner, 7 Nov): another console window that already holds the phone keeps it. This
+  // window only takes it over when the agent clicks "Use the phone here" (the other window then hangs up and lets go).
+  const [phoneElsewhere, setPhoneElsewhere] = useState(false);
+  const tabIdRef = useRef<string>("");
+  const phoneChanRef = useRef<BroadcastChannel | null>(null);
   const socketRef = useRef<Socket | null>(null);
   // The campaign on screen, for socket handlers that outlive a campaign switch.
   const campaignIdRef = useRef(campaignId);
@@ -752,11 +757,64 @@ export function AgentConsole(props: ConsoleProps) {
     return () => clearTimeout(t);
   }, [isLeader]);
 
+  // The phone channel between this agent's console windows in this browser.
+  useEffect(() => {
+    if (screen !== "main" || typeof BroadcastChannel === "undefined") return;
+    tabIdRef.current = Math.random().toString(36).slice(2);
+    const chan = new BroadcastChannel(`strowger-phone-${me.id}`);
+    phoneChanRef.current = chan;
+    const onMsg = (e: MessageEvent<{ t: string; from: string }>) => {
+      if (e.data?.from === tabIdRef.current) return;
+      if (e.data?.t === "who" && clientRef.current) chan.postMessage({ t: "mine", from: tabIdRef.current });
+      if (e.data?.t === "release" && clientRef.current) {
+        roomCallRef.current?.hangup();
+        roomCallRef.current = null;
+        clientRef.current.disconnect();
+        clientRef.current = null;
+        setPhone("off");
+        setPhoneElsewhere(true);
+        chan.postMessage({ t: "released", from: tabIdRef.current });
+      }
+    };
+    chan.addEventListener("message", onMsg);
+    return () => {
+      chan.removeEventListener("message", onMsg);
+      chan.close();
+      phoneChanRef.current = null;
+    };
+  }, [screen, me.id]);
+
   // Softphone: register once; the nailed-up leg is raised when the agent goes Ready.
   // Only the main window owns the phone (5 Nov: the assist pop-up raised its own line, the engine hung up the main
   // window's, and the pop-up's audio was blocked by the browser, so calls went silent).
-  const connectPhone = useCallback(async () => {
+  const connectPhone = useCallback(async (takeOver = false) => {
     if (!sip || clientRef.current || screen !== "main") return;
+    const chan = phoneChanRef.current;
+    if (chan) {
+      // Does another window hold the phone? Wait briefly for an answer.
+      const theirs = await new Promise<boolean>((resolve) => {
+        const onMsg = (e: MessageEvent<{ t: string; from: string }>) => {
+          if (e.data?.from === tabIdRef.current) return;
+          if (e.data?.t === (takeOver ? "released" : "mine")) {
+            chan.removeEventListener("message", onMsg);
+            resolve(!takeOver);
+          }
+        };
+        chan.addEventListener("message", onMsg);
+        chan.postMessage({ t: takeOver ? "release" : "who", from: tabIdRef.current });
+        setTimeout(() => {
+          chan.removeEventListener("message", onMsg);
+          resolve(false);
+        }, takeOver ? 1500 : 500);
+      });
+      if (theirs) {
+        setPhoneElsewhere(true);
+        setPhone("off");
+        return;
+      }
+    }
+    if (clientRef.current) return;
+    setPhoneElsewhere(false);
     setPhone("connecting");
     setPhoneError(null);
     try {
@@ -1357,14 +1415,11 @@ export function AgentConsole(props: ConsoleProps) {
       {/* Rail */}
       <aside className="flex w-16 flex-col items-center gap-3 border-r border-white/10 bg-black/20 py-4">
         <div className="mb-3 grid h-10 w-10 place-items-center rounded-xl bg-gradient-to-br from-fuchsia-500 to-cyan-400 text-lg font-black text-white">S</div>
-        {[
-          ["main", "Console", "⌂"],
-          ["assist", "Assist", "▦"],
-        ].map(([key, label, glyph]) => (
-          <a key={key} href={`/agent?screen=${key}`} title={label} className={`grid h-10 w-10 place-items-center rounded-xl text-lg ${screen === key ? "bg-white/15 text-cyan-300" : "text-zinc-400 hover:bg-white/10"}`}>
-            {glyph}
-          </a>
-        ))}
+        {/* A window stays what it was opened as: the main window keeps the phone, the second screen never gets one.
+            (Switching a window between the two used to move or drop the phone mid-shift.) */}
+        <span title={screen === "main" ? "Console (this window has the phone)" : "Second screen (no phone)"} className="grid h-10 w-10 place-items-center rounded-xl bg-white/15 text-lg text-cyan-300">
+          {screen === "main" ? "⌂" : "▦"}
+        </span>
         {screen === "main" ? (
           <button onClick={openAssist} title="Open the assist screen in a second window (drag it to your other monitor)" className="grid h-10 w-10 place-items-center rounded-xl text-lg text-zinc-400 hover:bg-white/10">
             ⧉
@@ -1388,7 +1443,11 @@ export function AgentConsole(props: ConsoleProps) {
                 </option>
               ))}
             </select>
-            {sip && phone === "error" ? (
+            {sip && screen === "main" && phoneElsewhere ? (
+              <button type="button" onClick={() => void connectPhone(true)} title="Another console window in this browser has your phone. Click to hang it up there and use it here." className="rounded-full bg-amber-500/20 px-2 py-0.5 text-xs text-amber-200 hover:bg-amber-500/30">
+                phone is in another window · use it here
+              </button>
+            ) : screen !== "main" ? null : sip && phone === "error" ? (
               <button type="button" onClick={retryPhone} title={`${phoneError ?? "Softphone error"} — click to retry`} className="rounded-full bg-red-500/20 px-2 py-0.5 text-xs text-red-300 hover:bg-red-500/30">
                 phone error · retry
               </button>
@@ -1412,7 +1471,13 @@ export function AgentConsole(props: ConsoleProps) {
                 </button>
               </label>
             ) : null}
-            {!agent ? (
+            {screen !== "main" ? (
+              // The second screen never touches the phone or the agent's state (owner, 7 Nov: "on that second screen it has
+              // nothing to do with the telephony"). Its Log out used to hang up the line from the other monitor.
+              <span className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-zinc-400" title="Log in, Ready, Pause, Log out and the phone are on the main console window">
+                Second screen · {agent ? agent.state.toLowerCase().replace("_", " ") : "logged out"} · controls are on the main window
+              </span>
+            ) : !agent ? (
               <button onClick={login} disabled={busy || !campaignId} className="rounded-lg bg-white px-3 py-1.5 font-medium text-zinc-900 disabled:opacity-50">
                 Log in
               </button>
