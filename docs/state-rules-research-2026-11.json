@@ -1,0 +1,1182 @@
+[
+  {
+    "state": "AK",
+    "startHour": 8,
+    "endHour": 21,
+    "dayOverrides": {},
+    "noHolidayCalls": false,
+    "holidays": [],
+    "maxAttemptsPerDay": null,
+    "attemptScope": "none beyond federal (no numeric per-consumer cap)",
+    "textRules": null,
+    "appliesTo": "all telemarketing (telephone solicitations)",
+    "registration": "Yes - campaign registration with Alaska Department of Law at least 30 days in advance (AS 45.63.010 et seq.) unless exempt (AS 45.63.080)",
+    "emergencyBan": null,
+    "citation": "federal baseline",
+    "sourceUrls": [
+      "https://www.trellus.ai/calling-laws/alaska"
+    ],
+    "verified": "secondary-sources",
+    "notes": "No state calling-hours rule stricter than federal found; apply federal 8am-9pm called party's local time (TSR 16 CFR 310.4(c); TCPA 47 CFR 64.1200(c)(1)). Texts: not addressed by state law found."
+  },
+  {
+    "state": "AL",
+    "startHour": 8,
+    "endHour": 20,
+    "dayOverrides": {
+      "0": null
+    },
+    "noHolidayCalls": true,
+    "holidays": [
+      "New Year's Day (Jan 1)",
+      "Robert E. Lee/MLK Day (3rd Mon Jan)",
+      "George Washington/Thomas Jefferson Birthday (3rd Mon Feb)",
+      "Mardi Gras (Baldwin & Mobile counties only)",
+      "Confederate Memorial Day (4th Mon Apr)",
+      "National Memorial Day (last Mon May)",
+      "Jefferson Davis Birthday (1st Mon Jun)",
+      "Independence Day (Jul 4)",
+      "Labor Day (1st Mon Sep)",
+      "Columbus Day/American Indian Heritage Day (2nd Mon Oct)",
+      "Veterans Day (Nov 11)",
+      "Thanksgiving (4th Thu Nov)",
+      "Christmas (Dec 25)",
+      "Any day designated by the Governor"
+    ],
+    "maxAttemptsPerDay": null,
+    "attemptScope": "none beyond federal (no numeric per-consumer cap)",
+    "textRules": null,
+    "appliesTo": "all telemarketing (telephone solicitations)",
+    "registration": "Yes - commercial telephone seller license, Attorney General Consumer Interest Division (Ala. Code 8-19A-4/-5) unless exempt; ADAD users register with PSC (Ala. Admin. Code r. 770-X-5-.17)",
+    "emergencyBan": null,
+    "citation": "Ala. Admin. Code r. 770-X-5-.17, 770-X-5-.31 (PSC rules); holiday list Ala. Code 1-3-8(a); Ala. Code 8-19A, 8-19C",
+    "sourceUrls": [
+      "https://www.trellus.ai/calling-laws/alabama",
+      "https://a-us.storyblok.com/f/1020997/5fa5ef9f5b/convoso-state-by-state-calling-restrictions.pdf",
+      "https://blog.clickpointsoftware.com/telemarketing-calling-hours-by-state"
+    ],
+    "verified": "secondary-sources",
+    "notes": "Matrix said 8-20 citing 8-19A-14: hours are correct but the source is the PSC rule, and the matrix MISSED the Sunday and holiday ban. Holiday falling on Sunday -> observed Monday; on Saturday -> observed Friday (1-3-8(a)). Alabama HB427 (2026) would have added a 3-per-24h cap; it failed - not law. Text coverage of the PSC rule not confirmed."
+  },
+  {
+    "state": "AR",
+    "startHour": 8,
+    "endHour": 21,
+    "dayOverrides": {},
+    "noHolidayCalls": false,
+    "holidays": [],
+    "maxAttemptsPerDay": null,
+    "attemptScope": "none beyond federal (no numeric per-consumer cap)",
+    "textRules": "Act 847 of 2025 (HB1957, Apr 17 2025) extended Arkansas's unsolicited commercial email law to unsolicited commercial text messages - specific SMS requirements not reviewed.",
+    "appliesTo": "all telemarketing (telephone solicitations)",
+    "registration": "Yes (narrow) - telephonic seller registration with Secretary of State 10 days before doing business, $100 (Ark. Code 4-99-103(9), 4-99-104); ordinary sales calls without specified representations generally outside it",
+    "emergencyBan": null,
+    "citation": "Ark. Code 4-99-101 et seq.; Act 847 of 2025",
+    "sourceUrls": [
+      "https://www.trellus.ai/calling-laws/arkansas"
+    ],
+    "verified": "secondary-sources",
+    "notes": "No state calling-hours rule stricter than federal found; apply federal 8am-9pm called party's local time (TSR 16 CFR 310.4(c); TCPA 47 CFR 64.1200(c)(1)). Verify Act 847 text requirements with counsel."
+  },
+  {
+    "state": "AZ",
+    "startHour": 8,
+    "endHour": 21,
+    "dayOverrides": {},
+    "noHolidayCalls": false,
+    "holidays": [],
+    "maxAttemptsPerDay": null,
+    "attemptScope": "none beyond federal (no numeric per-consumer cap)",
+    "textRules": "2023 HB 2498 extended do-not-call prohibition (A.R.S. 44-1278) to text messages.",
+    "appliesTo": "all telemarketing (telephone solicitations)",
+    "registration": "Yes - telephone seller registration with Arizona Secretary of State, renew by June 30, up to $500 fee, $100,000 surety bond (A.R.S. 44-1272 to 44-1276); unregistered soliciting is a class 5 felony; exemptions/limited registration available",
+    "emergencyBan": null,
+    "citation": "A.R.S. 44-1271 to 44-1282 (44-1278(B)(6) makes violating federal hours a state violation)",
+    "sourceUrls": [
+      "https://www.trellus.ai/calling-laws/arizona",
+      "https://enzodialer.com/resources/compliance/state-mini-tcpa-laws"
+    ],
+    "verified": "secondary-sources",
+    "notes": "No state calling-hours rule stricter than federal found; apply federal 8am-9pm called party's local time (TSR 16 CFR 310.4(c); TCPA 47 CFR 64.1200(c)(1))."
+  },
+  {
+    "state": "CA",
+    "startHour": 8,
+    "endHour": 21,
+    "dayOverrides": {},
+    "noHolidayCalls": false,
+    "holidays": [],
+    "maxAttemptsPerDay": null,
+    "attemptScope": "none beyond federal (no numeric per-consumer cap)",
+    "textRules": null,
+    "appliesTo": "all telemarketing (telephone solicitations)",
+    "registration": "Yes (narrow) - telephonic seller registration with Attorney General, $50, $100,000 bond, only for sellers making specified representations (Cal. Bus. & Prof. Code 17511.1, 17511.3)",
+    "emergencyBan": null,
+    "citation": "federal baseline; Cal. Pub. Util. Code 2872(c) (ADAD prerecorded: no calls 9pm-9am)",
+    "sourceUrls": [
+      "https://www.trellus.ai/calling-laws/california"
+    ],
+    "verified": "secondary-sources",
+    "notes": "No state calling-hours rule stricter than federal found; apply federal 8am-9pm called party's local time (TSR 16 CFR 310.4(c); TCPA 47 CFR 64.1200(c)(1)). ADAD (prerecorded message) calls limited to 9am-9pm California time (Pub. Util. Code 2872(c)); not relevant to live-agent predictive dialing but relevant to any prerecorded drop."
+  },
+  {
+    "state": "CO",
+    "startHour": 8,
+    "endHour": 21,
+    "dayOverrides": {},
+    "noHolidayCalls": false,
+    "holidays": [],
+    "maxAttemptsPerDay": null,
+    "attemptScope": "none beyond federal (no numeric per-consumer cap)",
+    "textRules": "Colorado No-Call List covers telephone solicitations including texts (C.R.S. 6-1-903(10), 6-1-904).",
+    "appliesTo": "all telemarketing (telephone solicitations)",
+    "registration": "Yes - commercial telephone seller registration with Attorney General 10 days before doing business, $200 then $100/yr (C.R.S. 6-1-303, 6-1-304) unless exempt; plus No-Call list subscription (C.R.S. 6-1-905)",
+    "emergencyBan": null,
+    "citation": "federal baseline",
+    "sourceUrls": [
+      "https://www.trellus.ai/calling-laws/colorado"
+    ],
+    "verified": "secondary-sources",
+    "notes": "No state calling-hours rule stricter than federal found; apply federal 8am-9pm called party's local time (TSR 16 CFR 310.4(c); TCPA 47 CFR 64.1200(c)(1))."
+  },
+  {
+    "state": "CT",
+    "startHour": 9,
+    "endHour": 20,
+    "dayOverrides": {},
+    "noHolidayCalls": false,
+    "holidays": [],
+    "maxAttemptsPerDay": null,
+    "attemptScope": "no numeric cap found (matrix's 'max 3' not supported)",
+    "textRules": "Since P.A. 23-98 (SB 1058, eff. Oct 1 2023): telephonic sales calls include texts, media messages and over-the-top/app messages; prior express written consent required for ANY telephonic sales call (live, automated, prerecorded, soundboard, text) (Conn. Gen. Stat. 42-288a(l),(m)); P.A. 24-75 clarified (m).",
+    "appliesTo": "telephonic sales calls to residential, mobile or paging numbers of CT consumers or CT area codes; definition excludes calls to existing customers, responses to consumer inquiries, B2B (42-284)",
+    "registration": "None found in telemarketing chapter",
+    "emergencyBan": null,
+    "citation": "Conn. Gen. Stat. 42-284, 42-288a (as amended by P.A. 23-98 and P.A. 24-75)",
+    "sourceUrls": [
+      "https://www.trellus.ai/calling-laws/connecticut",
+      "https://manatt.com/insights/newsletters/tcpa-connect/connecticut-senate-bill-1058",
+      "https://www.cga.ct.gov/current/pub/chap_743m.htm"
+    ],
+    "verified": "secondary-sources",
+    "notes": "Hours 9-20 confirmed by multiple sources. CORRECTION: matrix 'max 3' is not supported - no frequency cap found in 42-288a. The official cga.ct.gov page could not be retrieved (TLS/503), so not verified against official text. Must identify within 10 seconds. Strongest consent rule in the country: PEWC for every sales call/text unless excluded."
+  },
+  {
+    "state": "DC",
+    "startHour": 8,
+    "endHour": 21,
+    "dayOverrides": {},
+    "noHolidayCalls": false,
+    "holidays": [],
+    "maxAttemptsPerDay": null,
+    "attemptScope": "none beyond federal (no numeric per-consumer cap)",
+    "textRules": null,
+    "appliesTo": "all telemarketing (telephone solicitations)",
+    "registration": "Yes - annual certificate of registration (apply 60 business days before selling), $50,000 bond (D.C. Code 22-3226.01 to .05); many exclusions",
+    "emergencyBan": null,
+    "citation": "D.C. Code 22-3226.08(3) (8am-9pm, same as federal)",
+    "sourceUrls": [
+      "https://www.trellus.ai/calling-laws/district-of-columbia"
+    ],
+    "verified": "secondary-sources",
+    "notes": "DC sets 8am-9pm, same as federal; no Sunday/holiday ban."
+  },
+  {
+    "state": "DE",
+    "startHour": 8,
+    "endHour": 21,
+    "dayOverrides": {},
+    "noHolidayCalls": false,
+    "holidays": [],
+    "maxAttemptsPerDay": null,
+    "attemptScope": "none beyond federal (no numeric per-consumer cap)",
+    "textRules": null,
+    "appliesTo": "all telemarketing (telephone solicitations)",
+    "registration": "Yes - certificate of registration with DOJ Consumer Protection Unit, $100/yr, $50,000 bond or LOC (6 Del. C. 2503A, 2510A); publicly traded cos. and others exempt",
+    "emergencyBan": null,
+    "citation": "federal baseline",
+    "sourceUrls": [
+      "https://www.trellus.ai/calling-laws/delaware"
+    ],
+    "verified": "secondary-sources",
+    "notes": "No state calling-hours rule stricter than federal found; apply federal 8am-9pm called party's local time (TSR 16 CFR 310.4(c); TCPA 47 CFR 64.1200(c)(1))."
+  },
+  {
+    "state": "FL",
+    "startHour": 8,
+    "endHour": 20,
+    "dayOverrides": {},
+    "noHolidayCalls": false,
+    "holidays": [],
+    "maxAttemptsPerDay": 3,
+    "attemptScope": "max 3 commercial telephone solicitation calls to the same person per 24h on the same subject matter or issue, from any number(s) (501.616(6)(b)); whether texts count toward the cap is NOT settled",
+    "textRules": "FTSA (Fla. Stat. 501.059, as amended 2023 by ch. 2023-150/HB 761): 'telephonic sales call' includes calls, texts and voicemail; prior express written consent required for unsolicited telephonic sales calls using an automated system for selection AND dialing (2023 narrowed from 'or') or a recorded message; text plaintiffs must first reply STOP and sender has 15 days to stop (501.059(10)(c)); state DNC list (FDACS) covers texts.",
+    "appliesTo": "hours and 3-cap: 'commercial telephone solicitation' (Florida Telemarketing Act; defined in 501.603 essentially as unsolicited sales calls) subject to 501.604 exemptions (many: licensed insurance, securities, etc.); FTSA consent: unsolicited automated telephonic sales calls/texts",
+    "registration": "Yes - commercial telephone seller license from FDACS, $1,500 fee + bond/LOC/CD (commonly $50,000) (Fla. Stat. 501.605) unless exempt under 501.604; salespersons also licensed (501.607)",
+    "emergencyBan": null,
+    "citation": "Fla. Stat. 501.616(6) (hours, 3-cap; ch. 2021-185/SB 1120); 501.059 (FTSA, consent, DNC); 501.603-501.605",
+    "sourceUrls": [
+      "https://www.flsenate.gov/Laws/Statutes/2025/501.616",
+      "https://www.flsenate.gov/Laws/Statutes/2025/501.059",
+      "https://www.trellus.ai/calling-laws/florida"
+    ],
+    "verified": "verified-official",
+    "notes": "CORRECTION: hours (8-20) and the 3-per-24h cap are in 501.616(6) (Florida Telemarketing Act, added by SB 1120 in 2021), NOT 501.059 (FTSA). FTSA itself has no hours or frequency limit. Statute text speaks of 'phone calls'; treat texts as counting to be conservative. Exemptions in 501.604 may take some callers outside 501.616."
+  },
+  {
+    "state": "GA",
+    "startHour": 8,
+    "endHour": 21,
+    "dayOverrides": {},
+    "noHolidayCalls": false,
+    "holidays": [],
+    "maxAttemptsPerDay": null,
+    "attemptScope": "none beyond federal (no numeric per-consumer cap)",
+    "textRules": null,
+    "appliesTo": "all telemarketing (telephone solicitations)",
+    "registration": "No general telemarketer registration found; ADAD equipment needs PSC permit (O.C.G.A. 46-5-23(c))",
+    "emergencyBan": null,
+    "citation": "federal baseline; O.C.G.A. 46-5-23(a)(2) (ADAD 8am-9pm), 46-5-27 (DNC)",
+    "sourceUrls": [
+      "https://www.trellus.ai/calling-laws/georgia"
+    ],
+    "verified": "secondary-sources",
+    "notes": "No state calling-hours rule stricter than federal found; apply federal 8am-9pm called party's local time (TSR 16 CFR 310.4(c); TCPA 47 CFR 64.1200(c)(1))."
+  },
+  {
+    "state": "HI",
+    "startHour": 8,
+    "endHour": 21,
+    "dayOverrides": {},
+    "noHolidayCalls": false,
+    "holidays": [],
+    "maxAttemptsPerDay": null,
+    "attemptScope": "no numeric cap; a telemarketing call may not ring more than 10 times (HRS 481P-3)",
+    "textRules": null,
+    "appliesTo": "all telemarketing (telephone solicitations)",
+    "registration": "None - Hawaii does not require registration; claiming state registration is a violation (HRS 481P-2)",
+    "emergencyBan": null,
+    "citation": "HRS 481P-3(8) (8am-9pm, same as federal)",
+    "sourceUrls": [
+      "https://www.trellus.ai/calling-laws/hawaii"
+    ],
+    "verified": "secondary-sources",
+    "notes": "Hawaii sets 8am-9pm, same as federal."
+  },
+  {
+    "state": "IA",
+    "startHour": 8,
+    "endHour": 21,
+    "dayOverrides": {},
+    "noHolidayCalls": false,
+    "holidays": [],
+    "maxAttemptsPerDay": null,
+    "attemptScope": "none beyond federal (no numeric per-consumer cap)",
+    "textRules": null,
+    "appliesTo": "all telemarketing (telephone solicitations)",
+    "registration": "None found (unverified)",
+    "emergencyBan": null,
+    "citation": "federal baseline",
+    "sourceUrls": [
+      "https://www.trellus.ai/calling-laws/iowa"
+    ],
+    "verified": "unverified",
+    "notes": "No state calling-hours rule stricter than federal found; apply federal 8am-9pm called party's local time (TSR 16 CFR 310.4(c); TCPA 47 CFR 64.1200(c)(1)). Only one secondary source reviewed."
+  },
+  {
+    "state": "ID",
+    "startHour": 8,
+    "endHour": 21,
+    "dayOverrides": {},
+    "noHolidayCalls": false,
+    "holidays": [],
+    "maxAttemptsPerDay": null,
+    "attemptScope": "none beyond federal (no numeric per-consumer cap)",
+    "textRules": null,
+    "appliesTo": "all telemarketing (telephone solicitations)",
+    "registration": "Yes - telephone solicitor registration with Attorney General 10 days before soliciting, $50 + $25/yr (Idaho Code 48-1004 to 48-1006) unless exempt",
+    "emergencyBan": null,
+    "citation": "federal baseline",
+    "sourceUrls": [
+      "https://www.trellus.ai/calling-laws/idaho"
+    ],
+    "verified": "secondary-sources",
+    "notes": "No state calling-hours rule stricter than federal found; apply federal 8am-9pm called party's local time (TSR 16 CFR 310.4(c); TCPA 47 CFR 64.1200(c)(1))."
+  },
+  {
+    "state": "IL",
+    "startHour": 8,
+    "endHour": 21,
+    "dayOverrides": {},
+    "noHolidayCalls": false,
+    "holidays": [],
+    "maxAttemptsPerDay": null,
+    "attemptScope": "none beyond federal (no numeric per-consumer cap)",
+    "textRules": null,
+    "appliesTo": "all telemarketing (telephone solicitations)",
+    "registration": "None (2024 HB 5566 to require registration died)",
+    "emergencyBan": null,
+    "citation": "815 ILCS 413/15(a) (live: not 9pm-8am); 815 ILCS 305/15(a) (autodialer w/ recorded message: 9am-9pm only)",
+    "sourceUrls": [
+      "https://www.trellus.ai/calling-laws/illinois",
+      "https://a-us.storyblok.com/f/1020997/5fa5ef9f5b/convoso-state-by-state-calling-restrictions.pdf"
+    ],
+    "verified": "secondary-sources",
+    "notes": "Live-agent calls 8am-9pm (same as federal). Autodialed calls playing a recorded message only 9am-9pm. A predictive dialer bridging to a live agent is normally treated as a live call, but any prerecorded/abandon message use should honor 9am. Some vendor charts list IL as 9-9 for all calls; that conflates the two statutes."
+  },
+  {
+    "state": "IN",
+    "startHour": 8,
+    "endHour": 21,
+    "dayOverrides": {},
+    "noHolidayCalls": false,
+    "holidays": [],
+    "maxAttemptsPerDay": null,
+    "attemptScope": "none beyond federal (no numeric per-consumer cap)",
+    "textRules": "P.L. 148-2024 extended 'telephone sales call' (Ind. Code 24-4.7-2-9) to texts, images and multimedia (SMS/MMS/other messaging) for the state DNC law.",
+    "appliesTo": "all telemarketing (telephone solicitations)",
+    "registration": "No general registration; certain 'sellers' using listed practices register with AG ($50) (Ind. Code 24-5-12)",
+    "emergencyBan": null,
+    "citation": "federal baseline for live calls; Ind. Code 24-5-14-8 (ADAD 9am-8pm per secondary source); 24-4.7 (DNC)",
+    "sourceUrls": [
+      "https://www.trellus.ai/calling-laws/indiana"
+    ],
+    "verified": "secondary-sources",
+    "notes": "Matrix IN 8-21 is right for live calls. Indiana's ADAD statute (prerecorded message devices) reportedly limits those calls to 9am-8pm; verify 24-5-14-8 text. Indiana DNC list is strict (few exemptions) and now covers texts."
+  },
+  {
+    "state": "KS",
+    "startHour": 8,
+    "endHour": 21,
+    "dayOverrides": {},
+    "noHolidayCalls": false,
+    "holidays": [],
+    "maxAttemptsPerDay": null,
+    "attemptScope": "none beyond federal (no numeric per-consumer cap)",
+    "textRules": null,
+    "appliesTo": "all telemarketing (telephone solicitations)",
+    "registration": "None found",
+    "emergencyBan": null,
+    "citation": "federal baseline; K.S.A. 50-670 to 50-675 (no-call act)",
+    "sourceUrls": [
+      "https://www.trellus.ai/calling-laws/kansas"
+    ],
+    "verified": "secondary-sources",
+    "notes": "No state calling-hours rule stricter than federal found; apply federal 8am-9pm called party's local time (TSR 16 CFR 310.4(c); TCPA 47 CFR 64.1200(c)(1)). Some older charts claim Kansas hours of 9am-8pm or similar; not confirmed - flag for counsel."
+  },
+  {
+    "state": "KY",
+    "startHour": 10,
+    "endHour": 21,
+    "dayOverrides": {},
+    "noHolidayCalls": false,
+    "holidays": [],
+    "maxAttemptsPerDay": null,
+    "attemptScope": "no numeric cap; no repeated/harassing calls; may not ring more than 30 seconds (KRS 367.46955)",
+    "textRules": null,
+    "appliesTo": "all telemarketing (telephone solicitations)",
+    "registration": "Yes - telemarketing company registration with Attorney General 10 days before doing business, $300 + $50 renewal, $50,000 bond (KRS 367.46951, 367.46971, 367.46981) unless exempt",
+    "emergencyBan": null,
+    "citation": "KRS 367.46955 (hours 10am-9pm)",
+    "sourceUrls": [
+      "https://www.trellus.ai/calling-laws/kentucky",
+      "https://a-us.storyblok.com/f/1020997/5fa5ef9f5b/convoso-state-by-state-calling-restrictions.pdf",
+      "https://blog.clickpointsoftware.com/telemarketing-calling-hours-by-state"
+    ],
+    "verified": "secondary-sources",
+    "notes": "Matrix KY 10-21 confirmed by multiple secondary sources."
+  },
+  {
+    "state": "LA",
+    "startHour": 8,
+    "endHour": 20,
+    "dayOverrides": {
+      "0": null
+    },
+    "noHolidayCalls": true,
+    "holidays": [
+      "New Year's Day",
+      "Martin Luther King Jr. Day",
+      "Mardi Gras Day",
+      "Good Friday",
+      "Memorial Day",
+      "Independence Day",
+      "Labor Day",
+      "All Saints' Day (Nov 1)",
+      "Veterans Day",
+      "Election Day (even years)",
+      "Thanksgiving",
+      "Acadian Day (per one chart - verify)",
+      "Christmas Eve",
+      "Christmas Day",
+      "New Year's Eve",
+      "Inauguration Day (per one chart - verify)",
+      "Juneteenth (per one chart - verify)"
+    ],
+    "maxAttemptsPerDay": null,
+    "attemptScope": "none beyond federal (no numeric per-consumer cap)",
+    "textRules": null,
+    "appliesTo": "telephonic solicitation of Louisiana residential subscribers (incl. cell phones per LPSC); hours apply even to DNC-exempt callers per secondary source",
+    "registration": "Yes - annual registration with LPSC Do Not Call program (La. R.S. 45:844.14); ADAD users and live operators selling consumer goods need LPSC permit with $10,000 surety bond (La. R.S. 45:813)",
+    "emergencyBan": "Yes - during a governor-declared state of emergency, telephonic solicitation of residential subscribers in the affected area is banned (La. R.S. 45:844.31; LPSC orders), with listed exemptions (express request, existing business relationship, debt collection, approved nonprofits, market research per sources). LPSC posts active bans at lpsc.louisiana.gov/DNC_Emergency.",
+    "citation": "La. R.S. 45:811, 45:844.11 et seq., 45:844.31; LPSC General Orders (R-35852 cited by one source - not verified)",
+    "sourceUrls": [
+      "https://www.trellus.ai/calling-laws/louisiana",
+      "https://a-us.storyblok.com/f/1020997/5fa5ef9f5b/convoso-state-by-state-calling-restrictions.pdf",
+      "https://lpsc.louisiana.gov/DNC_Program",
+      "https://www.legis.la.gov/Legis/LawPrint.aspx?d=207496"
+    ],
+    "verified": "secondary-sources",
+    "notes": "Matrix LA 8-20 no Sunday no holidays: confirmed. Holiday list is the LPSC DNC-holiday list as compiled by Convoso (Apr 2024); column alignment in that chart was ambiguous for some days (Acadian Day, Inauguration Day, Juneteenth, NYE) - confirm with LPSC. Whether 'telephonic solicitation' covers texts not confirmed."
+  },
+  {
+    "state": "MA",
+    "startHour": 8,
+    "endHour": 20,
+    "dayOverrides": {},
+    "noHolidayCalls": false,
+    "holidays": [],
+    "maxAttemptsPerDay": null,
+    "attemptScope": "none beyond federal (no numeric per-consumer cap)",
+    "textRules": null,
+    "appliesTo": "all telemarketing (telephone solicitations)",
+    "registration": "Yes - telephone solicitor registration with Office of Consumer Affairs and Business Regulation, annual fee due Jan 1 (201 CMR 12.04)",
+    "emergencyBan": null,
+    "citation": "M.G.L. c. 159C, 3(ii); 201 CMR 12.02(2)",
+    "sourceUrls": [
+      "https://www.trellus.ai/calling-laws/massachusetts",
+      "https://a-us.storyblok.com/f/1020997/5fa5ef9f5b/convoso-state-by-state-calling-restrictions.pdf",
+      "https://blog.clickpointsoftware.com/telemarketing-calling-hours-by-state"
+    ],
+    "verified": "secondary-sources",
+    "notes": "Unsolicited sales calls not 8pm-8am. No Sunday/holiday ban. Not in existing matrix (addition)."
+  },
+  {
+    "state": "MD",
+    "startHour": 8,
+    "endHour": 20,
+    "dayOverrides": {},
+    "noHolidayCalls": false,
+    "holidays": [],
+    "maxAttemptsPerDay": 3,
+    "attemptScope": "max 3 telephone solicitations to the same called party per 24h on the same subject matter or issue, regardless of number(s) used (Com. Law 14-4502(c)(2)); secondary sources say calls and texts both count",
+    "textRules": "Stop the Spam Calls Act of 2023 (eff. Jan 1 2024): prior express written consent required for telephone solicitations using an automated system for selection OR dialing, or a recorded/artificial voice; consent definition expressly covers telephone call, text message or voicemail (14-4501(d)). A reported 15-day text cure period is NOT confirmed (it is a Florida feature).",
+    "appliesTo": "all telephone solicitations (as defined in Pub. Util. 8-205: organized campaign to communicate by telephone with MD residents to sell); exempt: isolated transactions, certain nonprofits, single call responding to customer inquiry",
+    "registration": "None found",
+    "emergencyBan": null,
+    "citation": "Md. Code, Com. Law 14-4501 to 14-4503 (Ch. 413/414 of 2023, SB 90/HB 37)",
+    "sourceUrls": [
+      "https://mgaleg.maryland.gov/mgawebsite/Laws/StatuteText?article=gcl&section=14-4502&enactments=false",
+      "https://mgaleg.maryland.gov/mgawebsite/Laws/StatuteText?article=gcl&section=14-4501&enactments=false",
+      "https://www.trellus.ai/calling-laws/maryland"
+    ],
+    "verified": "verified-official",
+    "notes": "Matrix MD 8-20 max 3 confirmed, but cite 14-4502 (not 14-4601). Statute text does not mention texts in the 3-cap; underlying definition says 'by telephone'. Treat texts as counting."
+  },
+  {
+    "state": "ME",
+    "startHour": 8,
+    "endHour": 21,
+    "dayOverrides": {},
+    "noHolidayCalls": false,
+    "holidays": [],
+    "maxAttemptsPerDay": null,
+    "attemptScope": "automated telephone calling device: max 1 solicitation call to the same number per 8 hours (10 M.R.S. 1498(3)); no cap for live-agent calls",
+    "textRules": "Caller-ID anti-spoofing extends to texts (10 M.R.S. 1499-A, 1499-B); no separate texting consent/time rule found.",
+    "appliesTo": "all telemarketing (telephone solicitations)",
+    "registration": "Transient sellers (no permanent Maine place of business) must be licensed by OPOR with up to $10,000 bond (32 M.R.S. 14701 et seq.)",
+    "emergencyBan": null,
+    "citation": "federal baseline for live calls; 10 M.R.S. 1498 (automated devices)",
+    "sourceUrls": [
+      "https://www.trellus.ai/calling-laws/maine",
+      "https://a-us.storyblok.com/f/1020997/5fa5ef9f5b/convoso-state-by-state-calling-restrictions.pdf"
+    ],
+    "verified": "secondary-sources",
+    "notes": "Live-agent calls: federal 8-21. Automated calling devices (device that dials AND plays a recorded message): weekdays 9am-5pm only per one secondary source, and 1 call per number per 8 hours (confirmed by two sources). Predictive dialers with live agents are probably not 'automated telephone calling devices', but confirm."
+  },
+  {
+    "state": "MI",
+    "startHour": 9,
+    "endHour": 21,
+    "dayOverrides": {},
+    "noHolidayCalls": false,
+    "holidays": [],
+    "maxAttemptsPerDay": null,
+    "attemptScope": "none beyond federal (no numeric per-consumer cap)",
+    "textRules": null,
+    "appliesTo": "all telemarketing (telephone solicitations)",
+    "registration": "None found",
+    "emergencyBan": null,
+    "citation": "MCL 750.540e(1)(f); MCL 445.111a-445.111c (home solicitation/DNC)",
+    "sourceUrls": [
+      "https://www.trellus.ai/calling-laws/michigan",
+      "https://a-us.storyblok.com/f/1020997/5fa5ef9f5b/convoso-state-by-state-calling-restrictions.pdf",
+      "https://blog.clickpointsoftware.com/telemarketing-calling-hours-by-state"
+    ],
+    "verified": "secondary-sources",
+    "notes": "Addition: 9am-9pm. Not in existing matrix."
+  },
+  {
+    "state": "MN",
+    "startHour": 9,
+    "endHour": 21,
+    "dayOverrides": {},
+    "noHolidayCalls": false,
+    "holidays": [],
+    "maxAttemptsPerDay": null,
+    "attemptScope": "none beyond federal (no numeric per-consumer cap)",
+    "textRules": null,
+    "appliesTo": "commercial telephone solicitation; exempt where caller has a current business or personal relationship",
+    "registration": "None found",
+    "emergencyBan": null,
+    "citation": "Minn. Stat. 325E.27(b), 325E.30",
+    "sourceUrls": [
+      "https://www.trellus.ai/calling-laws/minnesota",
+      "https://a-us.storyblok.com/f/1020997/5fa5ef9f5b/convoso-state-by-state-calling-restrictions.pdf",
+      "https://blog.clickpointsoftware.com/telemarketing-calling-hours-by-state"
+    ],
+    "verified": "secondary-sources",
+    "notes": "Addition: 9am-9pm. Not in existing matrix."
+  },
+  {
+    "state": "MO",
+    "startHour": 8,
+    "endHour": 21,
+    "dayOverrides": {},
+    "noHolidayCalls": false,
+    "holidays": [],
+    "maxAttemptsPerDay": null,
+    "attemptScope": "none beyond federal (no numeric per-consumer cap)",
+    "textRules": "State No-Call list covers voice calls, texts (SMS/MMS) and faxes (Mo. Rev. Stat. 407.1095-407.1107).",
+    "appliesTo": "all telemarketing (telephone solicitations)",
+    "registration": "No telemarketer license/bond; must register with AG and pay to obtain the No-Call list",
+    "emergencyBan": null,
+    "citation": "Mo. Rev. Stat. 407.1076(5) (8am-9pm, same as federal)",
+    "sourceUrls": [
+      "https://www.trellus.ai/calling-laws/missouri"
+    ],
+    "verified": "secondary-sources",
+    "notes": "Missouri sets 8am-9pm, same as federal."
+  },
+  {
+    "state": "MS",
+    "startHour": 8,
+    "endHour": 20,
+    "dayOverrides": {
+      "0": null
+    },
+    "noHolidayCalls": false,
+    "holidays": [],
+    "maxAttemptsPerDay": null,
+    "attemptScope": "none beyond federal (no numeric per-consumer cap)",
+    "textRules": null,
+    "appliesTo": "telephone solicitations (Mississippi Telephone Solicitation Act); 'consumer' includes person or business receiving a call or text per secondary source",
+    "registration": "Yes - registration with Attorney General (enforcement moved from PSC by HB 1225 of 2023), annual renewal, $75,000 surety bond (Miss. Code 77-3-713, 77-3-605)",
+    "emergencyBan": null,
+    "citation": "Miss. Code 77-3-723(1) (8am-8pm Central Standard Time, no Sunday); 77-3-603(a) (unsolicited residential sales calls: until 9pm Mon-Sat, no Sunday)",
+    "sourceUrls": [
+      "https://www.trellus.ai/calling-laws/mississippi",
+      "https://dnc.com/blog/no-more-holidays-mississippi-marketers-magnolia-state-lifts-prohibition-telemarketing-legal",
+      "https://a-us.storyblok.com/f/1020997/5fa5ef9f5b/convoso-state-by-state-calling-restrictions.pdf"
+    ],
+    "verified": "secondary-sources",
+    "notes": "CORRECTION: matrix MS 8-21 is wrong - 77-3-723 sets 8am-8pm (statute says Central Standard Time; apply local time). Sunday ban confirmed. Holiday ban was a PSC rule repealed after the 2023 transfer to the AG (DNC.com, Jun 2024) - so no holiday ban now; older charts (Convoso Apr 2024) still list MS holidays. Also cite 77-3-723, not 77-3-707 (that is the no-call list section)."
+  },
+  {
+    "state": "MT",
+    "startHour": 8,
+    "endHour": 21,
+    "dayOverrides": {},
+    "noHolidayCalls": false,
+    "holidays": [],
+    "maxAttemptsPerDay": null,
+    "attemptScope": "none beyond federal (no numeric per-consumer cap)",
+    "textRules": null,
+    "appliesTo": "all telemarketing (telephone solicitations)",
+    "registration": "Yes - seller/telemarketer registration with Montana DOJ, annual, $50,000 surety bond (Mont. Code 30-14-1404, -1405) unless exempt",
+    "emergencyBan": null,
+    "citation": "Mont. Code 30-14-1412(1)(d) (8am-9pm, same as federal)",
+    "sourceUrls": [
+      "https://www.trellus.ai/calling-laws/montana"
+    ],
+    "verified": "secondary-sources",
+    "notes": "Montana sets 8am-9pm, same as federal."
+  },
+  {
+    "state": "NC",
+    "startHour": 8,
+    "endHour": 21,
+    "dayOverrides": {},
+    "noHolidayCalls": false,
+    "holidays": [],
+    "maxAttemptsPerDay": null,
+    "attemptScope": "none beyond federal (no numeric per-consumer cap)",
+    "textRules": "S.L. 2019-188 (eff. Dec 1 2019) extended NC telephone solicitation rules (incl. DNC) to text messages.",
+    "appliesTo": "all telemarketing (telephone solicitations)",
+    "registration": "Yes (narrow) - telephonic seller registration with Secretary of State 10 days before soliciting, $100/yr (N.C. Gen. Stat. 66-260, 66-261), many exemptions",
+    "emergencyBan": null,
+    "citation": "N.C. Gen. Stat. 75-102(f) (8am-9pm, same as federal)",
+    "sourceUrls": [
+      "https://www.trellus.ai/calling-laws/north-carolina"
+    ],
+    "verified": "secondary-sources",
+    "notes": "NC sets 8am-9pm, same as federal."
+  },
+  {
+    "state": "ND",
+    "startHour": 8,
+    "endHour": 21,
+    "dayOverrides": {},
+    "noHolidayCalls": false,
+    "holidays": [],
+    "maxAttemptsPerDay": null,
+    "attemptScope": "none beyond federal (no numeric per-consumer cap)",
+    "textRules": null,
+    "appliesTo": "all telemarketing (telephone solicitations)",
+    "registration": "None found in N.D.C.C. ch. 51-28",
+    "emergencyBan": null,
+    "citation": "N.D. Cent. Code 51-28-05 (8am-9pm, same as federal)",
+    "sourceUrls": [
+      "https://www.trellus.ai/calling-laws/north-dakota"
+    ],
+    "verified": "secondary-sources",
+    "notes": "CORRECTION: matrix ND 9-21 not supported - 51-28-05 reportedly bars calls before 8am or after 9pm. Not in vendor stricter-than-federal charts. Statute text not retrieved; verify."
+  },
+  {
+    "state": "NE",
+    "startHour": 8,
+    "endHour": 21,
+    "dayOverrides": {},
+    "noHolidayCalls": false,
+    "holidays": [],
+    "maxAttemptsPerDay": null,
+    "attemptScope": "none beyond federal (no numeric per-consumer cap)",
+    "textRules": null,
+    "appliesTo": "all telemarketing (telephone solicitations)",
+    "registration": "No general registration; ADAD permit from PSC ($500/device, 2 years) (Neb. Rev. Stat. 86-212 to 86-235, 86-250)",
+    "emergencyBan": null,
+    "citation": "federal baseline for live calls; Neb. Rev. Stat. 86-248; 291 Neb. Admin. Code ch. 11 003 (prerecorded)",
+    "sourceUrls": [
+      "https://www.trellus.ai/calling-laws/nebraska",
+      "https://a-us.storyblok.com/f/1020997/5fa5ef9f5b/convoso-state-by-state-calling-restrictions.pdf"
+    ],
+    "verified": "secondary-sources",
+    "notes": "No state calling-hours rule stricter than federal found; apply federal 8am-9pm called party's local time (TSR 16 CFR 310.4(c); TCPA 47 CFR 64.1200(c)(1)). Prerecorded/ADAD solicitations to residential lines: 8am-9pm Mon-Sat and 1pm-9pm on Sundays and legal holidays; max 2-minute message. Applies only if prerecorded messages are used."
+  },
+  {
+    "state": "NH",
+    "startHour": 8,
+    "endHour": 21,
+    "dayOverrides": {},
+    "noHolidayCalls": false,
+    "holidays": [],
+    "maxAttemptsPerDay": null,
+    "attemptScope": "none beyond federal (no numeric per-consumer cap)",
+    "textRules": null,
+    "appliesTo": "all telemarketing (telephone solicitations)",
+    "registration": "No general registration; prerecorded autodialer users register with AG Consumer Protection Bureau 10 business days before first use, $20/yr (RSA 359-E)",
+    "emergencyBan": null,
+    "citation": "federal baseline; RSA 359-E:8, II (incorporates federal hours)",
+    "sourceUrls": [
+      "https://www.trellus.ai/calling-laws/new-hampshire"
+    ],
+    "verified": "secondary-sources",
+    "notes": "No state calling-hours rule stricter than federal found; apply federal 8am-9pm called party's local time (TSR 16 CFR 310.4(c); TCPA 47 CFR 64.1200(c)(1))."
+  },
+  {
+    "state": "NJ",
+    "startHour": 8,
+    "endHour": 21,
+    "dayOverrides": {},
+    "noHolidayCalls": false,
+    "holidays": [],
+    "maxAttemptsPerDay": null,
+    "attemptScope": "no numeric cap found (matrix's 'max 3' not supported)",
+    "textRules": "Unsolicited telemarketing sales calls to wireless numbers restricted (N.J.S.A. 56:8-130, 48:17-28); text-specific statute not confirmed.",
+    "appliesTo": "unsolicited telemarketing sales calls",
+    "registration": "Yes - annual registration with Division of Consumer Affairs, $150-$2,000 fee, criminal-history disclosure; Director may require bond of at least $25,000 (N.J.S.A. 56:8-121, -122, -126; N.J.A.C. 13:45D-3)",
+    "emergencyBan": null,
+    "citation": "N.J.S.A. 56:8-128(d); N.J.A.C. 13:45D-4.1(a)2",
+    "sourceUrls": [
+      "https://www.trellus.ai/calling-laws/new-jersey",
+      "https://enzodialer.com/resources/compliance/state-mini-tcpa-laws"
+    ],
+    "verified": "secondary-sources",
+    "notes": "CORRECTION: matrix NJ 8-20 max 3 is wrong - NJ bars unsolicited calls 9pm-8am (i.e. 8-21, same as federal) and has no frequency cap. Bills proposing stricter rules have been introduced but none found enacted as of Nov 2026. Official text not retrieved (403)."
+  },
+  {
+    "state": "NM",
+    "startHour": 9,
+    "endHour": 21,
+    "dayOverrides": {},
+    "noHolidayCalls": false,
+    "holidays": [],
+    "maxAttemptsPerDay": null,
+    "attemptScope": "none beyond federal (no numeric per-consumer cap)",
+    "textRules": null,
+    "appliesTo": "all telemarketing (telephone solicitations)",
+    "registration": "None found",
+    "emergencyBan": null,
+    "citation": "NMSA 1978, 57-12-22(B)(5)",
+    "sourceUrls": [
+      "https://www.trellus.ai/calling-laws/new-mexico",
+      "https://a-us.storyblok.com/f/1020997/5fa5ef9f5b/convoso-state-by-state-calling-restrictions.pdf",
+      "https://blog.clickpointsoftware.com/telemarketing-calling-hours-by-state"
+    ],
+    "verified": "secondary-sources",
+    "notes": "Addition: 9am-9pm. Not in existing matrix."
+  },
+  {
+    "state": "NV",
+    "startHour": 9,
+    "endHour": 20,
+    "dayOverrides": {},
+    "noHolidayCalls": false,
+    "holidays": [],
+    "maxAttemptsPerDay": null,
+    "attemptScope": "none beyond federal (no numeric per-consumer cap)",
+    "textRules": null,
+    "appliesTo": "telephone solicitation of a person at their residence",
+    "registration": "Yes (narrow) - seller registration with Consumer Affairs Unit, $6,000 fee, $50,000 bond, only for specified offer types (NRS 599B) - ordinary sales calls generally outside",
+    "emergencyBan": null,
+    "citation": "NRS 598.0918(3), 597.814(2)(a)",
+    "sourceUrls": [
+      "https://www.trellus.ai/calling-laws/nevada",
+      "https://a-us.storyblok.com/f/1020997/5fa5ef9f5b/convoso-state-by-state-calling-restrictions.pdf",
+      "https://blog.clickpointsoftware.com/telemarketing-calling-hours-by-state"
+    ],
+    "verified": "secondary-sources",
+    "notes": "CORRECTION: matrix NV 8-21 is likely wrong - two chart sources and Trellus give 9am-8pm for residential solicitations; one vendor table (citing NRS 598.0917) says 8-9. Statute text not retrieved; flag for counsel. Use 9-20 to be safe."
+  },
+  {
+    "state": "NY",
+    "startHour": 8,
+    "endHour": 21,
+    "dayOverrides": {},
+    "noHolidayCalls": false,
+    "holidays": [],
+    "maxAttemptsPerDay": null,
+    "attemptScope": "none beyond federal (no numeric per-consumer cap)",
+    "textRules": "Texts covered by GBL 399-z since 2021 (Ch. 239).",
+    "appliesTo": "unsolicited telemarketing sales calls; hours may be varied with customer's express consent",
+    "registration": "Yes - telemarketer certificate of registration from Department of State, $500 for 2 years, $25,000 bond/LOC/CD (GBL 399-pp) unless exempt",
+    "emergencyBan": "Yes - no unsolicited telemarketing sales calls to any person in a county, city, town or village under a declared state of emergency or disaster emergency (GBL 399-z(5-a), 399-pp(7)(d)); no central portal - monitor Governor's executive orders.",
+    "citation": "N.Y. Gen. Bus. Law 399-z, 399-pp",
+    "sourceUrls": [
+      "https://www.trellus.ai/calling-laws/new-york",
+      "https://a-us.storyblok.com/f/1020997/5fa5ef9f5b/convoso-state-by-state-calling-restrictions.pdf",
+      "https://dos.ny.gov/get-telemarketer-business-license"
+    ],
+    "verified": "secondary-sources",
+    "notes": "Matrix NY 8-21 confirmed; matrix missed the emergency ban and registration."
+  },
+  {
+    "state": "OH",
+    "startHour": 8,
+    "endHour": 21,
+    "dayOverrides": {},
+    "noHolidayCalls": false,
+    "holidays": [],
+    "maxAttemptsPerDay": null,
+    "attemptScope": "none beyond federal (no numeric per-consumer cap)",
+    "textRules": null,
+    "appliesTo": "all telemarketing (telephone solicitations)",
+    "registration": "Yes - telephone solicitor certificate of registration from Attorney General, $250/yr, $50,000 bond (R.C. 4719.02-4719.04) unless exempt under 4719.01(B)",
+    "emergencyBan": null,
+    "citation": "federal baseline",
+    "sourceUrls": [
+      "https://www.trellus.ai/calling-laws/ohio"
+    ],
+    "verified": "secondary-sources",
+    "notes": "No state calling-hours rule stricter than federal found; apply federal 8am-9pm called party's local time (TSR 16 CFR 310.4(c); TCPA 47 CFR 64.1200(c)(1))."
+  },
+  {
+    "state": "OK",
+    "startHour": 8,
+    "endHour": 20,
+    "dayOverrides": {},
+    "noHolidayCalls": false,
+    "holidays": [],
+    "maxAttemptsPerDay": 3,
+    "attemptScope": "max 3 commercial telephonic sales calls to a person per 24h on the same subject matter or issue, from any number(s) (15 O.S. 775C.4(A)(2)); texts likely count (consent definition covers 'telephone call, text message')",
+    "textRules": "Oklahoma Telephone Solicitation Act (HB 3168, eff. Nov 1 2022): prior express written consent required for commercial telephonic sales calls using an automated system for selection OR dialing, or a recorded message (775C.3); $500/violation private right (treble if willful); consent definition covers texts. State DNC (Telemarketer Restriction Act, 775B) covers calls and texts.",
+    "appliesTo": "hours and cap: all commercial telephonic sales calls (live, autodialed, recorded) to persons in Oklahoma",
+    "registration": "Yes - commercial telephone seller registration with Attorney General, fee and $10,000 bond (15 O.S. 775A.2-775A.5) unless exempt",
+    "emergencyBan": null,
+    "citation": "15 O.S. 775C.1-775C.6 (esp. 775C.4); 775B; 775A",
+    "sourceUrls": [
+      "https://www.trellus.ai/calling-laws/oklahoma",
+      "https://www.hallestill.com/news-insights/new-liability-in-marketing-communications",
+      "https://oklegislature.gov/cf_pdf/2021-22%20ENR/hB/HB3168%20ENR.PDF"
+    ],
+    "verified": "secondary-sources",
+    "notes": "Matrix OK 8-20 max 3 confirmed (secondary; official OSCN text not retrieved). Precise section: 775C.4(A)."
+  },
+  {
+    "state": "OR",
+    "startHour": 8,
+    "endHour": 20,
+    "dayOverrides": {},
+    "noHolidayCalls": false,
+    "holidays": [],
+    "maxAttemptsPerDay": 3,
+    "attemptScope": "no more than 3 separate telephone solicitations (calls or texts) to a party within 24 hours unless established business relationship (transaction within prior 18 months) (ORS 646.563(1)(b)); ADAD: max 3 calls in 24h (ORS 646A.372(5)). Not limited to same subject.",
+    "textRules": "HB 3865 (Or. Laws 2025 ch. 580, eff. Jan 1 2026): 'telephone solicitation' = call or text message; texts count toward hours and the 3-in-24h cap; must honor request not to be called or texted; excludes B2B and replies to a message the party sent; may rely on mobile area code for location.",
+    "appliesTo": "all telephone solicitations (calls and texts) EXCEPT where an established business relationship exists (EBR exempts both the hours and the 3-cap)",
+    "registration": "Yes (narrow) - telephonic seller registration with Oregon DOJ, $400/yr (ORS 646.551, 646.553); ordinary sales calls generally outside",
+    "emergencyBan": null,
+    "citation": "ORS 646.561, 646.563, 646A.370-646A.374 as amended by HB 3865 (2025)",
+    "sourceUrls": [
+      "https://olis.oregonlegislature.gov/liz/2025R1/Downloads/MeasureDocument/HB3865/Enrolled",
+      "https://olis.oregonlegislature.gov/liz/2025r1/Measures/Overview/HB3865",
+      "https://www.trellus.ai/calling-laws/oregon"
+    ],
+    "verified": "verified-official",
+    "notes": "ADDITION (not in matrix): new since Jan 1 2026. Verified against enrolled bill text. Note the cap counts per party regardless of subject. Debt collectors exempt from ADAD opt-out provisions."
+  },
+  {
+    "state": "PA",
+    "startHour": 9,
+    "endHour": 19,
+    "dayOverrides": {
+      "0": null,
+      "6": {
+        "startHour": 9,
+        "endHour": 12
+      }
+    },
+    "noHolidayCalls": true,
+    "holidays": [
+      "New Year's Day",
+      "Martin Luther King Jr. Day",
+      "Presidents' Day",
+      "Good Friday",
+      "Memorial Day",
+      "Flag Day (Jun 14)",
+      "Juneteenth (Jun 19)",
+      "Independence Day",
+      "Labor Day",
+      "Columbus Day",
+      "Election Day (general, Nov)",
+      "Veterans Day",
+      "Thanksgiving",
+      "Christmas",
+      "Saturday after 12 noon (statutory half-holiday, 44 P.S. 11 - conservative reading, see notes)",
+      "Any day appointed by the Governor or President"
+    ],
+    "maxAttemptsPerDay": null,
+    "attemptScope": "none beyond federal (no numeric per-consumer cap)",
+    "textRules": "Act 47 of 2026 (SB 992, approved Jul 20 2026, eff. ~Oct 18 2026): 'telephone solicitation' includes telephone calls, voicemail, ringless voicemail and text messages; texts subject to the same hours/Sunday/holiday rules; opt-out by replying STOP, QUIT, END, CANCEL, UNSUBSCRIBE etc.; robocalls require prior express written consent; state DNC covers texts.",
+    "appliesTo": "telephone solicitations; excluded: communications in response to prior express written consent, EBR within prior 12 months, existing debt/contract",
+    "registration": "Yes - registration with Attorney General at least 30 days before selling, $500 per 2 years (secondary sources vary $200/yr), bond $50,000 (secondary sources vary $25,000-$50,000) (73 P.S. 2243, 2244)",
+    "emergencyBan": null,
+    "citation": "Telemarketer Registration Act, 73 P.S. 2241 et seq., 5(a)(1) and 5(a)(10) as amended by Act 47 of 2026 (P.L. 532, No. 47)",
+    "sourceUrls": [
+      "https://www.legis.state.pa.us/WU01/LI/LI/US/HTM/2026/0/0047..HTM",
+      "https://www.trellus.ai/calling-laws/pennsylvania",
+      "https://blog.clickpointsoftware.com/telemarketing-calling-hours-by-state",
+      "https://www.henson-legal.com/newsroom/pennsylvania-telemarketing-law-2026-amendments"
+    ],
+    "verified": "verified-official",
+    "notes": "MAJOR CORRECTION: matrix PA 8-21 is outdated. Since ~Oct 18 2026: no solicitations before 9am, after 7pm, on Sundays, or on legal holidays. Saturday 9-12 is a CONSERVATIVE choice: PA law (44 P.S. 11) makes Saturday afternoons statutory half-holidays and at least one dialer vendor (Convoso) blocks PA Saturday afternoons; whether that counts as a 'legal holiday' for the telemarketing ban is unresolved - ask counsel; if not, Saturday is 9-19. One source dates effectiveness Oct 19. No frequency cap."
+  },
+  {
+    "state": "RI",
+    "startHour": 9,
+    "endHour": 18,
+    "dayOverrides": {
+      "0": null,
+      "6": {
+        "startHour": 10,
+        "endHour": 17
+      }
+    },
+    "noHolidayCalls": true,
+    "holidays": [
+      "New Year's Day",
+      "Martin Luther King Jr. Day",
+      "Washington's Birthday/Presidents' Day",
+      "Memorial Day",
+      "Rhode Island Independence Day (May 4)",
+      "Juneteenth",
+      "Independence Day",
+      "Victory Day (2nd Mon Aug)",
+      "Labor Day",
+      "Columbus Day",
+      "Veterans Day",
+      "Election Day (even years)",
+      "Thanksgiving",
+      "Christmas",
+      "Any federal holiday (secondary sources say 'state or federal holidays')"
+    ],
+    "maxAttemptsPerDay": null,
+    "attemptScope": "none beyond federal (no numeric per-consumer cap)",
+    "textRules": "Unsolicited text advertising to RI cell phones banned except from carriers or businesses with an existing relationship offering an opt-out (R.I. Gen. Laws 5-61-3.5, per secondary source).",
+    "appliesTo": "all telemarketing (telephone solicitations)",
+    "registration": "Yes - telephonic seller registration with AG Consumer Protection Unit 10 days before doing business, $100/yr, $30,000 bond/LOC/CD (R.I. Gen. Laws 5-61-3); narrow definition with exemptions",
+    "emergencyBan": null,
+    "citation": "R.I. Gen. Laws 5-61-3.6 (hours per Trellus) / 5-61-3.4 (as cited in matrix); holidays R.I. Gen. Laws 25-1-1",
+    "sourceUrls": [
+      "https://www.trellus.ai/calling-laws/rhode-island",
+      "https://a-us.storyblok.com/f/1020997/5fa5ef9f5b/convoso-state-by-state-calling-restrictions.pdf",
+      "https://blog.clickpointsoftware.com/telemarketing-calling-hours-by-state"
+    ],
+    "verified": "secondary-sources",
+    "notes": "Matrix RI confirmed (Mon-Fri 9-18, Sat 10-17, no Sunday) and EXTENDED with holiday ban. Section number differs between sources (3.4 vs 3.6). Holidays on Sat/Sun -> following Monday for New Year's, Independence, Veterans, Christmas (25-1-1)."
+  },
+  {
+    "state": "SC",
+    "startHour": 8,
+    "endHour": 21,
+    "dayOverrides": {},
+    "noHolidayCalls": false,
+    "holidays": [],
+    "maxAttemptsPerDay": null,
+    "attemptScope": "none beyond federal (no numeric per-consumer cap)",
+    "textRules": "Telephone solicitation expressly includes text/media messages (S.C. Code 37-21-20) - hours apply to texts.",
+    "appliesTo": "all telephone solicitations (calls and texts to SC residents/SC area-code wireless numbers) unless the consumer gave prior written consent to other times",
+    "registration": "None in ch. 37-21",
+    "emergencyBan": null,
+    "citation": "S.C. Code 37-21-30 (Telephone Privacy Protection Act, 2018)",
+    "sourceUrls": [
+      "https://www.scstatehouse.gov/code/t37c021.php",
+      "https://www.trellus.ai/calling-laws/south-carolina"
+    ],
+    "verified": "verified-official",
+    "notes": "Matrix SC 8-21 hours confirmed, but the cite should be 37-21-30, not 16-17-446 (that is the ADAD statute). No Sunday/holiday ban found. DNC requests honored 5 years (37-21-70)."
+  },
+  {
+    "state": "SD",
+    "startHour": 8,
+    "endHour": 21,
+    "dayOverrides": {},
+    "noHolidayCalls": false,
+    "holidays": [],
+    "maxAttemptsPerDay": null,
+    "attemptScope": "none beyond federal (no numeric per-consumer cap)",
+    "textRules": null,
+    "appliesTo": "all telemarketing (telephone solicitations)",
+    "registration": "Yes - telephone solicitors making unsolicited calls to SD residential subscribers register with PUC annually (Oct 1-Sep 30), $0-$500 by size (SDCL 49-31-105); autodialer use registered 10 business days in advance (SDCL 37-30-25)",
+    "emergencyBan": null,
+    "citation": "federal baseline for live calls; SDCL 37-30-28 (autodialed prerecorded: weekdays 9am-9pm)",
+    "sourceUrls": [
+      "https://www.trellus.ai/calling-laws/south-dakota",
+      "https://a-us.storyblok.com/f/1020997/5fa5ef9f5b/convoso-state-by-state-calling-restrictions.pdf",
+      "https://blog.clickpointsoftware.com/telemarketing-calling-hours-by-state"
+    ],
+    "verified": "secondary-sources",
+    "notes": "CONFLICT: vendor charts (Convoso, ClickPoint) list SD as 9am-9pm with no Sunday calls for all calls; Trellus (Oct 2026) says that rule (SDCL 37-30-28) applies only to autodialed prerecorded solicitations and live calls follow federal. Conservative option: 9-21, no Sunday. JSON uses federal for live calls; counsel should confirm."
+  },
+  {
+    "state": "TN",
+    "startHour": 8,
+    "endHour": 21,
+    "dayOverrides": {},
+    "noHolidayCalls": false,
+    "holidays": [],
+    "maxAttemptsPerDay": null,
+    "attemptScope": "no per-person cap for live calls; automated prerecorded-voice solicitations capped at 10,000/month to TN residential subscribers with reporting (Tenn. Code 65-4-411, from Oct 1 2026)",
+    "textRules": "Hours and DNC ('Do Not Call/Text' register) apply to text solicitations to residential subscribers; registration applies to solicitors calling or texting.",
+    "appliesTo": "all telemarketing (telephone solicitations)",
+    "registration": "Yes - registration with Tennessee Public Utility Commission, $500/yr (Tenn. Code 65-4-405(d); TPUC Rule 1220-04-11-.04)",
+    "emergencyBan": null,
+    "citation": "Tenn. Code 65-4-402, 47-18-1502; TPUC Rule 1220-04-11-.02 (8am-9pm, same as federal)",
+    "sourceUrls": [
+      "https://www.trellus.ai/calling-laws/tennessee"
+    ],
+    "verified": "secondary-sources",
+    "notes": "Tennessee sets 8am-9pm, same as federal, for calls and texts."
+  },
+  {
+    "state": "TX",
+    "startHour": 9,
+    "endHour": 21,
+    "dayOverrides": {
+      "0": {
+        "startHour": 12,
+        "endHour": 21
+      }
+    },
+    "noHolidayCalls": false,
+    "holidays": [],
+    "maxAttemptsPerDay": null,
+    "attemptScope": "none beyond federal (no numeric per-consumer cap)",
+    "textRules": "SB 140 (Acts 2025, ch. 964, eff. Sep 1 2025): Chapter 302 'telephone solicitation' now includes text, graphic and image messages, so text marketers need SOS registration unless exempt; private right of action via DTPA for ch. 302/304 violations. Nov 2025 settlement + SOS FAQ: texts sent with the consumer's prior consent do not require registration solely for those texts. Whether 301.051 hours apply to texts is not settled - apply them.",
+    "appliesTo": "hours: unsolicited consumer telephone calls to residences (exempt: consumer request, existing debt/contract, prior/existing business relationship, B2B)",
+    "registration": "Yes - Texas Secretary of State telephone solicitation registration certificate per business location, $200/yr, $10,000 security (Tex. Bus. & Com. Code 302.101-302.107); many exemptions (302.051-302.065); ADAD prerecorded calls need PUC permit",
+    "emergencyBan": null,
+    "citation": "Tex. Bus. & Com. Code 301.051 (hours); ch. 302 (registration) as amended by SB 140 (2025); ch. 304 (DNC); Tex. Util. Code 55.125",
+    "sourceUrls": [
+      "https://www.trellus.ai/calling-laws/texas",
+      "https://capitol.texas.gov/tlodocs/89R/analysis/html/SB00140F.htm",
+      "https://natlawreview.com/article/texas-sb-140-after-november-settlement-consent-cold-texting-out",
+      "https://www.paulhastings.com/insights/ph-privacy/marketing-texts-in-texas-sb-140-broadens-state-telemarketing-regulations"
+    ],
+    "verified": "secondary-sources",
+    "notes": "Matrix TX 9-21, Sunday 12-21 confirmed. Additions: texts now 'telephone solicitations' for registration (SB 140), registration requirement."
+  },
+  {
+    "state": "UT",
+    "startHour": 8,
+    "endHour": 21,
+    "dayOverrides": {
+      "0": null
+    },
+    "noHolidayCalls": true,
+    "holidays": [
+      "New Year's Day",
+      "Martin Luther King Jr./Human Rights Day",
+      "Washington and Lincoln Day (Presidents' Day)",
+      "Memorial Day",
+      "Juneteenth (observed Monday rule)",
+      "Independence Day",
+      "Pioneer Day (Jul 24)",
+      "Labor Day",
+      "Columbus Day",
+      "Veterans Day",
+      "Thanksgiving",
+      "Christmas",
+      "Any day designated by the Governor"
+    ],
+    "maxAttemptsPerDay": null,
+    "attemptScope": "none beyond federal (no numeric per-consumer cap)",
+    "textRules": null,
+    "appliesTo": "telephone solicitations to residential or cellular phones WITHOUT prior express consent (consent lifts hours/Sunday/holiday restrictions)",
+    "registration": "Yes - telephone solicitor registration with Division of Consumer Protection, annual, Utah registered agent, fingerprints, surety bond/CD $25,000-$75,000 (Utah Code 13-26; renumbered 13-26-101 to -108 by SB 38, eff. May 6 2026; letters of credit no longer accepted)",
+    "emergencyBan": null,
+    "citation": "Utah Code 13-25a-103(3); holidays Utah Code 63G-1-301",
+    "sourceUrls": [
+      "https://www.trellus.ai/calling-laws/utah",
+      "https://a-us.storyblok.com/f/1020997/5fa5ef9f5b/convoso-state-by-state-calling-restrictions.pdf",
+      "https://blog.clickpointsoftware.com/telemarketing-calling-hours-by-state"
+    ],
+    "verified": "secondary-sources",
+    "notes": "CORRECTION/EXTENSION: matrix UT 8-21 hours are right but the matrix MISSED the Sunday and legal-holiday ban. Holiday on Sunday -> Monday; on Saturday -> Friday."
+  },
+  {
+    "state": "VA",
+    "startHour": 8,
+    "endHour": 21,
+    "dayOverrides": {},
+    "noHolidayCalls": false,
+    "holidays": [],
+    "maxAttemptsPerDay": null,
+    "attemptScope": "none beyond federal (no numeric per-consumer cap)",
+    "textRules": "2025 Va. Acts ch. 626 (SB 1339, eff. Jan 1 2026): Virginia Telephone Privacy Protection Act covers texts to Virginia-area-code wireless numbers; hours apply to texts; opt-out by replying STOP/UNSUBSCRIBE must be honored for at least 10 years.",
+    "appliesTo": "telephone solicitation calls and texts unless prior consent",
+    "registration": "None (VTPPA has no registration)",
+    "emergencyBan": null,
+    "citation": "Va. Code 59.1-510 to 59.1-518 (59.1-511 hours 8am-9pm)",
+    "sourceUrls": [
+      "https://www.trellus.ai/calling-laws/virginia",
+      "https://enzodialer.com/resources/compliance/state-mini-tcpa-laws"
+    ],
+    "verified": "secondary-sources",
+    "notes": "Addition: hours same as federal but texts now expressly covered (from Jan 1 2026); 10-year opt-out retention matters for suppression logic."
+  },
+  {
+    "state": "VT",
+    "startHour": 8,
+    "endHour": 21,
+    "dayOverrides": {},
+    "noHolidayCalls": false,
+    "holidays": [],
+    "maxAttemptsPerDay": null,
+    "attemptScope": "none beyond federal (no numeric per-consumer cap)",
+    "textRules": null,
+    "appliesTo": "all telemarketing (telephone solicitations)",
+    "registration": "Yes - telemarketer registration with Secretary of State, $125, agent for service (9 V.S.A. 2464a, 2464b) unless exempt",
+    "emergencyBan": null,
+    "citation": "federal baseline",
+    "sourceUrls": [
+      "https://www.trellus.ai/calling-laws/vermont"
+    ],
+    "verified": "secondary-sources",
+    "notes": "No state calling-hours rule stricter than federal found; apply federal 8am-9pm called party's local time (TSR 16 CFR 310.4(c); TCPA 47 CFR 64.1200(c)(1))."
+  },
+  {
+    "state": "WA",
+    "startHour": 8,
+    "endHour": 20,
+    "dayOverrides": {},
+    "noHolidayCalls": false,
+    "holidays": [],
+    "maxAttemptsPerDay": null,
+    "attemptScope": "no numeric cap found (matrix's 'max 3' not supported); if a called party asks not to be called, no further solicitation calls for at least 1 year; end call within 10 seconds of being asked",
+    "textRules": "CEMA (RCW 19.190.060): no unsolicited commercial electronic text messages to Washington cell numbers (effectively consent required); CEMA amended by ESHB 2274 (Ch. 135, Laws of 2026, eff. Jun 11 2026) - reduced email damages; effect on text-message damages unclear. RCW 80.36.390 (calls) does not mention texts.",
+    "appliesTo": "unsolicited telephone solicitations (calls); texts governed separately by CEMA",
+    "registration": "Yes - commercial telephone solicitor registration (endorsement) with Department of Licensing (RCW 19.158.020, 19.158.050) unless exempt",
+    "emergencyBan": null,
+    "citation": "RCW 80.36.390 (hours 8am-8pm, 1-year DNC); RCW 19.158 (commercial telephone solicitation); RCW 19.190 (CEMA)",
+    "sourceUrls": [
+      "https://app.leg.wa.gov/RCW/default.aspx?cite=80.36.390",
+      "https://www.trellus.ai/calling-laws/washington",
+      "https://lawfilesext.leg.wa.gov/Law/RCW/RCW%20%2019%20%20TITLE/RCW%20%2019%20.190%20%20CHAPTER/RCW%20%2019%20.190%20.060.htm",
+      "https://www.ashurstperkinscoie.com/en/insights/amendments-to-washingtons-cema-statute-take-effect/"
+    ],
+    "verified": "verified-official",
+    "notes": "CORRECTION: matrix WA 'max 3' is wrong - RCW 80.36.390 has no attempt cap (verified on official RCW page, last amended 2023 c 103). Hours 8-20 confirmed."
+  },
+  {
+    "state": "WI",
+    "startHour": 8,
+    "endHour": 21,
+    "dayOverrides": {},
+    "noHolidayCalls": false,
+    "holidays": [],
+    "maxAttemptsPerDay": null,
+    "attemptScope": "none beyond federal (no numeric per-consumer cap)",
+    "textRules": "State DNC: solicitors may not call or text listed numbers (Wis. Stat. 100.52).",
+    "appliesTo": "all telemarketing (telephone solicitations)",
+    "registration": "Yes - annual registration with DATCP (expires Nov 30), $700 first year/$500 after + $75 per line if 4+ lines (Wis. Stat. 100.52(3); ATCP 127.81)",
+    "emergencyBan": null,
+    "citation": "Wis. Admin. Code ATCP 127.16(3) (8am-9pm, same as federal)",
+    "sourceUrls": [
+      "https://www.trellus.ai/calling-laws/wisconsin"
+    ],
+    "verified": "secondary-sources",
+    "notes": "Wisconsin sets 8am-9pm, same as federal."
+  },
+  {
+    "state": "WV",
+    "startHour": 8,
+    "endHour": 21,
+    "dayOverrides": {},
+    "noHolidayCalls": false,
+    "holidays": [],
+    "maxAttemptsPerDay": null,
+    "attemptScope": "none beyond federal (no numeric per-consumer cap)",
+    "textRules": null,
+    "appliesTo": "all telemarketing (telephone solicitations)",
+    "registration": "Yes - telemarketer registration with Department of Tax and Revenue 60 days before offering, annual, $100,000 bond per location or $500,000 all locations (W. Va. Code 46A-6F-301, -302) unless exempt",
+    "emergencyBan": null,
+    "citation": "W. Va. Code 46A-6F-601(a)(4) (8am-9pm, same as federal)",
+    "sourceUrls": [
+      "https://www.trellus.ai/calling-laws/west-virginia"
+    ],
+    "verified": "secondary-sources",
+    "notes": "WV sets 8am-9pm, same as federal."
+  },
+  {
+    "state": "WY",
+    "startHour": 8,
+    "endHour": 20,
+    "dayOverrides": {},
+    "noHolidayCalls": false,
+    "holidays": [],
+    "maxAttemptsPerDay": null,
+    "attemptScope": "none beyond federal (no numeric per-consumer cap)",
+    "textRules": null,
+    "appliesTo": "unsolicited sales calls to consumers",
+    "registration": "Notice filing with Attorney General naming agent for service; no fee or bond (Wyo. Stat. 40-12-305)",
+    "emergencyBan": null,
+    "citation": "Wyo. Stat. 40-12-302(d)",
+    "sourceUrls": [
+      "https://www.trellus.ai/calling-laws/wyoming",
+      "https://a-us.storyblok.com/f/1020997/5fa5ef9f5b/convoso-state-by-state-calling-restrictions.pdf",
+      "https://blog.clickpointsoftware.com/telemarketing-calling-hours-by-state"
+    ],
+    "verified": "secondary-sources",
+    "notes": "Addition: 8am-8pm. Not in existing matrix."
+  }
+]

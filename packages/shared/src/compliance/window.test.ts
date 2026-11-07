@@ -15,7 +15,7 @@ const base = {
 };
 
 test("localTimeIn resolves hour and weekday", () => {
-  assert.deepEqual(localTimeIn("America/New_York", WED_1830Z), { hour: 13, weekday: 3 });
+  assert.deepEqual(localTimeIn("America/New_York", WED_1830Z), { hour: 13, weekday: 3, date: "2026-11-04" });
   assert.equal(localTimeIn("Not/AZone", WED_1830Z), null);
 });
 

@@ -2681,6 +2681,31 @@ pnpm exec prisma migrate diff --from-migrations prisma/migrations \
 pnpm exec prisma migrate deploy && pnpm exec prisma generate
 ```
 
+## State dialing rules rebuilt; holidays enforced (owner, 7 Nov)
+
+A 50-state research pass (docs/state-rules-research-2026-11.md and .json: every state + DC, hours, days,
+holidays, caps, text rules, registration, citations, and which entries rest on official text vs secondary
+sources) found the matrix in `packages/shared/src/compliance/state-rules.ts` looser than the law in places:
+
+- **PA**: Act 47 of 2026 (in force ~18 Oct 2026): 9am-7pm, no Sundays or legal holidays; Saturday blocked
+  after noon (statutory half-holiday; open question for counsel). Was 8am-9pm.
+- **MS** 8pm cutoff (was 9pm), cite §77-3-723. **NV** 9am-8pm (stricter of conflicting sources). **OR** new
+  (2026): 8am-8pm, 3 a day. **MA, WY** 8pm cutoff. **MI, MN, NM** 9am start. **UT, AL** no Sundays or holidays.
+- **WA, CT, NJ** had a 3-a-day cap no source supports: removed (WA/CT keep their hours; NJ is federal hours).
+- Citations corrected for FL (§501.616(6) hours/cap), MD (§14-4502(c)), OK, SC, AL.
+- **Holidays were never enforced**: `noHolidayCalls` was a flag nothing read. Now each rule lists `holidays`
+  (`compliance/holidays.ts`: fixed dates, nth weekdays, Easter-based Good Friday / Mardi Gras, Election Day
+  every year; a weekend fixed-date holiday also blocks its observed weekday) and `evaluateDialWindow` refuses
+  on those local dates. LA, PA, RI, UT, AL carry lists.
+- Where a state applies a rule only to unsolicited calls, it is applied to every call (stricter).
+- **StateRule rows** (what the Compliance page lists) are now synced from the code on every engine start
+  (`apps/engine/src/compliance/sync-state-rules.ts`); a changed rule loses its verified mark.
+- Not yet modelled: Maine's 1 call per 8 h for automated devices, Illinois/Indiana prerecorded-message hours
+  (no prerecorded campaigns), Texas/NY registration, emergency-declaration bans (LA, NY). The research file
+  lists ten open questions for counsel; every rule still shows as unverified until counsel signs off.
+- Campaign-level "State dialing rules" tab (owner's request) is next: shows these as the floor, a campaign may
+  be stricter, never looser.
+
 ## Check a number (Compliance, 6 Nov)
 
 Compliance → "Check a number" (supervisors) posts to

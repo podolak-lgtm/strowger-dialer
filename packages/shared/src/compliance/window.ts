@@ -2,6 +2,7 @@
  * Decides whether one phone may be dialed right now. Rules are data; the most
  * restrictive wins; every refusal names the rule that caused it.
  */
+import { holidayOn } from "./holidays";
 import { FEDERAL_RULE, ruleForState, type StateRuleDef } from "./state-rules";
 
 export interface DialWindowInput {
@@ -39,6 +40,8 @@ export type DialDecision =
 interface LocalTime {
   hour: number;
   weekday: number; // 0 = Sunday
+  /** Local calendar date, YYYY-MM-DD. */
+  date: string;
 }
 
 export function localTimeIn(zone: string, at: Date): LocalTime | null {
@@ -48,6 +51,9 @@ export function localTimeIn(zone: string, at: Date): LocalTime | null {
       hour: "numeric",
       hour12: false,
       weekday: "short",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
     }).formatToParts(at);
     const hourPart = parts.find((p) => p.type === "hour")?.value;
     const dayPart = parts.find((p) => p.type === "weekday")?.value;
@@ -55,7 +61,10 @@ export function localTimeIn(zone: string, at: Date): LocalTime | null {
     const hour = Number(hourPart) % 24;
     const weekday = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(dayPart);
     if (weekday < 0 || Number.isNaN(hour)) return null;
-    return { hour, weekday };
+    const y = parts.find((p) => p.type === "year")?.value;
+    const mo = parts.find((p) => p.type === "month")?.value;
+    const d = parts.find((p) => p.type === "day")?.value;
+    return { hour, weekday, date: `${y}-${mo}-${d}` };
   } catch {
     return null;
   }
@@ -98,6 +107,10 @@ export function evaluateDialWindow(input: DialWindowInput): DialDecision {
         rule: rule.citation ?? rule.state,
         localHour: local.hour,
       };
+    }
+    const holiday = rule.holidays?.length ? holidayOn(rule.holidays, local.date) : null;
+    if (holiday) {
+      return { allowed: false, reason: `No calls on a ${rule.state} holiday (${holiday.toLowerCase().replace(/_/g, " ")})`, rule: rule.citation ?? rule.state, localHour: local.hour };
     }
     start = Math.max(start, hours.start);
     end = Math.min(end, hours.end);

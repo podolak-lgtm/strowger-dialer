@@ -8,6 +8,7 @@ import { registerInternalRoutes } from "./internal/routes";
 import { registerJambonzRoutes } from "./jambonz/routes";
 import { registerRecorder } from "./inbound/recorder";
 import { startScheduler } from "./jobs/scheduler";
+import { syncStateRules } from "./compliance/sync-state-rules";
 import { startPacing } from "./dialer/pacing";
 import { jambonz, jambonzConfigured } from "./jambonz/client";
 import { classifyReply, smsAiConfigured } from "./sms/classify";
@@ -125,5 +126,6 @@ async function logConferences(always: boolean): Promise<void> {
   }
 }
 void logConferences(true);
+void syncStateRules();
 const conferencesTimer = setInterval(() => void logConferences(false), 60_000);
 conferencesTimer.unref();
