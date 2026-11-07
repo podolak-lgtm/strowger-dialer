@@ -563,3 +563,25 @@ export function registrationTone(status: string | undefined | null): "pending" |
   if (/FAIL|REJECT|SUSPEND|EXPIRED|DECLINED|UNVERIFIED/i.test(status)) return "rejected";
   return "pending";
 }
+
+/**
+ * Where 10DLC texting registration stands, from the brand / campaign
+ * snapshots Telnyx returned (`Tenant.tenDlcBrand`, `tenDlcCampaign`). Used by
+ * the Numbers section's status line and the Texting tab.
+ */
+/** Campaign statuses that let numbers be assigned (the Texting tab's "Assign all numbers"). */
+export const TEN_DLC_CAMPAIGN_OK = /MNO_PROVISIONED|MNO_ACCEPTED|TELNYX_ACCEPTED|TCR_ACCEPTED/;
+export type TenDlcStage = { stage: "none" | "brand" | "review" | "registered" | "failed"; label: string };
+export function tenDlcStage(brand: Record<string, unknown> | null | undefined, campaign: Record<string, unknown> | null | undefined): TenDlcStage {
+  const campStatus = String(campaign?.campaignStatus ?? campaign?.status ?? "");
+  if (campaign) {
+    if (TEN_DLC_CAMPAIGN_OK.test(campStatus)) return { stage: "registered", label: "10DLC registered" };
+    if (registrationTone(campStatus) === "rejected") return { stage: "failed", label: "10DLC campaign rejected" };
+    return { stage: "review", label: "10DLC campaign in review" };
+  }
+  if (brand) {
+    if ([brand.status, brand.identityStatus].some((x) => registrationTone(x == null ? null : String(x)) === "rejected")) return { stage: "failed", label: "10DLC brand rejected" };
+    return { stage: "brand", label: "10DLC brand only (no campaign)" };
+  }
+  return { stage: "none", label: "10DLC not registered" };
+}

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  tenDlcStage,
   analyzeSite,
   blocking,
   defaultOptInWording,
@@ -198,4 +199,14 @@ test("ready checklist and registration tone", () => {
   assert.equal(registrationTone("UNVERIFIED"), "rejected");
   assert.equal(registrationTone("MNO_REJECTED"), "rejected");
   assert.equal(registrationTone(null), "none");
+});
+
+test("tenDlcStage: the Numbers status line's 10DLC words", () => {
+  assert.equal(tenDlcStage(null, null).stage, "none");
+  assert.equal(tenDlcStage({ status: "OK", identityStatus: "VERIFIED" }, null).stage, "brand");
+  assert.equal(tenDlcStage({ status: "OK", identityStatus: "UNVERIFIED" }, null).stage, "failed");
+  assert.equal(tenDlcStage({ status: "OK" }, { campaignStatus: "TCR_PENDING" }).stage, "review");
+  assert.equal(tenDlcStage({ status: "OK" }, { campaignStatus: "MNO_PROVISIONED" }).label, "10DLC registered");
+  assert.equal(tenDlcStage({ status: "OK" }, { status: "TELNYX_ACCEPTED" }).stage, "registered");
+  assert.equal(tenDlcStage({ status: "OK" }, { campaignStatus: "MNO_REJECTED" }).stage, "failed");
 });

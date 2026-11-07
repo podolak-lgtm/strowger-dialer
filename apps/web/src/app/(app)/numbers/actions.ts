@@ -7,11 +7,17 @@ import { requireRole } from "@/lib/auth";
 import { engine } from "@/lib/engine";
 import { blocking, validateBrand, validateCampaign } from "@strowger/shared/tendlc";
 
-const back = (msg: string, kind: "ok" | "error" = "ok", campaign?: string | null): never => {
-  const u = new URLSearchParams({ msg, kind });
-  if (campaign) u.set("campaign", campaign);
-  redirect(`/numbers?${u.toString()}`);
-};
+// Each action goes back to the Numbers tab it is on (7 Nov: /numbers split into tabs).
+type Tab = "/numbers" | "/numbers/order" | "/numbers/texting" | "/numbers/carrier";
+const backTo =
+  (tab: Tab) =>
+  (msg: string, kind: "ok" | "error" = "ok", campaign?: string | null): never => {
+    const u = new URLSearchParams({ msg, kind });
+    if (campaign) u.set("campaign", campaign);
+    // The section's status line (counts, 10DLC, carrier) is in the layout.
+    revalidatePath("/numbers", "layout");
+    redirect(`${tab}?${u.toString()}`);
+  };
 const errText = (e: unknown) => {
   const m = e instanceof Error ? e.message : String(e);
   // engine errors look like: engine /provision/x: 400 {"error":"..."}
@@ -21,6 +27,7 @@ const errText = (e: unknown) => {
 
 export async function runSetup() {
   const s = await requireRole("SUPERVISOR");
+  const back = backTo("/numbers/carrier");
   try {
     const r = await engine<{ steps: string[] }>("/provision/setup", { method: "POST", body: JSON.stringify({ tenantId: s.tenant.id }) });
     await prisma.auditLog.create({ data: { tenantId: s.tenant.id, actorId: s.user.id, action: "provision.setup", after: { steps: r.steps } } });
@@ -33,6 +40,7 @@ export async function runSetup() {
 
 export async function orderSelected(formData: FormData) {
   const s = await requireRole("SUPERVISOR");
+  const back = backTo("/numbers/order");
   const phones = formData.getAll("phones").map(String);
   const campaignId = String(formData.get("campaignId") ?? "") || null;
   const areaCode = String(formData.get("areaCode") ?? "");
@@ -54,6 +62,7 @@ export async function orderSelected(formData: FormData) {
 
 export async function syncNow() {
   const s = await requireRole("SUPERVISOR");
+  const back = backTo("/numbers");
   try {
     const r = await engine<{ adopted: number; finished: number; gone: number }>("/provision/sync", { method: "POST", body: JSON.stringify({ tenantId: s.tenant.id }) });
     revalidatePath("/dids");
@@ -66,6 +75,7 @@ export async function syncNow() {
 
 export async function releaseOne(formData: FormData) {
   const s = await requireRole("SUPERVISOR");
+  const back = backTo("/numbers");
   const id = String(formData.get("id"));
   try {
     await engine("/provision/release", { method: "POST", body: JSON.stringify({ tenantId: s.tenant.id, id }) });
@@ -83,12 +93,13 @@ export async function assignCampaign(formData: FormData) {
   const id = String(formData.get("id"));
   const campaignId = String(formData.get("campaignId") ?? "") || null;
   await prisma.callerIdNumber.updateMany({ where: { id, tenantId: s.tenant.id }, data: { campaignId } });
-  revalidatePath("/numbers");
+  revalidatePath("/numbers", "layout");
   revalidatePath("/dids");
 }
 
 export async function registerBrand(formData: FormData) {
   const s = await requireRole("SUPERVISOR");
+  const back = backTo("/numbers/texting");
   const f = (k: string) => String(formData.get(k) ?? "").trim();
   const brand = {
     entityType: f("entityType"),
@@ -114,7 +125,7 @@ export async function registerBrand(formData: FormData) {
   try {
     await engine("/provision/tendlc/brand", { method: "POST", body: JSON.stringify({ tenantId: s.tenant.id, brand }) });
     await prisma.auditLog.create({ data: { tenantId: s.tenant.id, actorId: s.user.id, action: "provision.brand", after: { displayName: brand.displayName } } });
-    back("Brand submitted to The Campaign Registry. Verification usually takes minutes to a day; refresh this page to see the status.");
+    back("Brand submitted to The Campaign Registry. Verification usually takes minutes to a day; refresh this tab to see the status.");
   } catch (e) {
     unstable_rethrow(e);
     back(errText(e), "error");
@@ -123,6 +134,7 @@ export async function registerBrand(formData: FormData) {
 
 export async function registerCampaign(formData: FormData) {
   const s = await requireRole("SUPERVISOR");
+  const back = backTo("/numbers/texting");
   const f = (k: string) => String(formData.get(k) ?? "").trim();
   const on = (k: string) => formData.get(k) === "on";
   const campaign = {
@@ -167,6 +179,7 @@ export async function registerCampaign(formData: FormData) {
 
 export async function assignNumbersToTenDlc() {
   const s = await requireRole("SUPERVISOR");
+  const back = backTo("/numbers/texting");
   try {
     const r = await engine<{ taskId: string }>("/provision/tendlc/assign", { method: "POST", body: JSON.stringify({ tenantId: s.tenant.id }) });
     back(`Assignment started (task ${r.taskId}). Every number on the messaging profile joins the campaign over the next few minutes.`);

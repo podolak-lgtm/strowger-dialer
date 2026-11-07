@@ -2169,8 +2169,9 @@ container queries, `@container` / `@min-[…]:`).
   inside a client; Partner portal for affiliates):
   Dashboard = Overview `/dashboard` | Reports `/reports`;
   Leads = Find a lead `/leads` | Lists | Cadences | Affiliates;
-  Numbers = Numbers `/numbers` | Reputation `/dids` | Inbound routing
-  `/inbound` (also `/skills`) | Voicemails;
+  Numbers = Numbers `/numbers` | Order `/numbers/order` | Texting
+  `/numbers/texting` | Carrier setup `/numbers/carrier` | Reputation `/dids` |
+  Inbound routing `/inbound` (also `/skills`) | Voicemails;
   Compliance (one page, no tabs); People = People | Teams & rooms | Games.
 - **A tab is its own page at its old URL.** Each tab folder has a one-line
   `layout.tsx` rendering `components/section-shell.tsx` (server: the tabs
@@ -2195,6 +2196,43 @@ container queries, `@container` / `@min-[…]:`).
   now scroll inside their card) and `PageHeader` actions wrap.
 - Agent and Floor are full-bleed `(console)` pages; Campaigns is an
   ordinary `(app)` page in the main window.
+
+- **Default page layout (owner, 7 Nov).** A page with three or more
+  independent parts gets tabs: **one row only**, the section's bar, each
+  tab its own URL (a sub-route such as `/numbers/order` added to `nav.ts`
+  with the page's roles; the longest URL wins in `tabOfPath`, so the
+  section root stays its own tab). Never a second tab bar under the
+  section's, never a long stack of cards. A settings form spread over tabs
+  gets a single Save with per-tab unsaved dots, as on the campaign page. A
+  page whose job is one table stays one page. Each tab should fit
+  1365×900 where it can; nothing scrolls sideways down to 390 px (row
+  tables become stacked cards via `@container` / `@min-[…]:`). A section
+  can show a short status line above its bar on every tab
+  (`components/section-status.tsx`, database only, no engine call) and a
+  mark after a tab label (`marks`, e.g. Carrier setup ✓); only Numbers has
+  one so far.
+- **Numbers split (7 Nov).** `/numbers` was six stacked cards. Now:
+  Numbers (inventory table, stacked cards under 760 px of card width, plus
+  the idle-in-the-pool card folded into a `<details>` with release),
+  Order (search and buy, "Plan numbers for a list" = the same
+  `NumbersCard` as the list page, picked by `?plan=<listId>`, and the
+  order history), Texting (10DLC brand + campaign, unchanged forms),
+  Carrier setup (✓ in the tab when the tenant has the Telnyx connection,
+  jambonz carrier and messaging profile ids). Status line: numbers (pool),
+  pending orders, `tenDlcStage` (shared/tendlc.ts, tested), carrier ready;
+  shown only to people who can open the inventory tab. Shared bits in
+  `numbers/parts.tsx`. Actions are the same; each now redirects back to its
+  own tab (`backTo(tab)` in `numbers/actions.ts`) and revalidates the
+  `/numbers` layout so the status line refreshes. Old links:
+  `/numbers?campaign=…` / `?areaCode=` / `?qty=` redirect to
+  `/numbers/order` with the same params (the campaign page link now points
+  there directly; Reputation's "Order & provision numbers" too);
+  `/numbers?tab=order|texting|carrier` work through `TAB_ALIASES`. The
+  wizard's Done step, the onboarding email and Settings still say
+  `/numbers` (the inventory), which is right.
+- **Next long stacks to convert** (not done): Settings (10 cards: one form
+  over tabs + single Save), Platform (11 cards), Inbound routing (6),
+  Compliance (5), Billing / Refer & earn, the list page (`/lists/<id>`, 6).
 
 ## Campaign builder
 

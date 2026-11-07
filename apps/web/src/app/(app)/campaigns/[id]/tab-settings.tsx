@@ -59,7 +59,7 @@ export function DialingTab({ campaignId, pinned }: { campaignId: string; pinned:
         <div className="space-y-2.5">
           <Hint>
             Numbers pinned to this campaign are ordered and registered on the{" "}
-            <NavLink href={`/numbers?campaign=${campaignId}`} className="text-sky-300 underline">
+            <NavLink href={`/numbers/order?campaign=${campaignId}`} className="text-sky-300 underline">
               Numbers page
             </NavLink>
             ; they must be registered with the carrier and jambonz before the campaign dials.
