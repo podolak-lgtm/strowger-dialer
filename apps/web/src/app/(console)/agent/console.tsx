@@ -15,6 +15,7 @@ import { myTeams } from "@/lib/chat-actions";
 import { assistSuggest, campaignRebuttals, type Suggestion } from "@/lib/games-actions";
 import { GamesLayer, GamesPanel, PointsPurse, useGames } from "./games";
 import { useAudioWatchdog } from "./audio-watchdog";
+import { askPhoneChannel, newTabId, phoneChannelName, playAllAudio, postPhone, SUPERVISION_ANSWER_WINDOW_MS, withTimeout, type PhoneMsg } from "@/lib/phone-lock";
 import { superviseStart, superviseStop, type SuperviseMode } from "../floor/actions";
 import { formatPhone } from "@strowger/shared/phone";
 import { DEFAULT_SCREENER_SCRIPT, renderScript } from "@strowger/shared/scripts";
@@ -28,6 +29,7 @@ import {
   upcomingLeads,
   agentLogout,
   agentSetState,
+  lineTakeover,
   callScreener,
   screenerSaidIt,
   dialLead,
@@ -416,11 +418,22 @@ function CollapsibleLeadCard({ summary, children }: { summary: React.ReactNode; 
 
 export function AgentConsole(props: ConsoleProps) {
   const { me, campaigns, sip, engineUrl, rtToken, screen, roles, rights, billing, version } = props;
+  // Primitive SIP settings for hook deps: the `sip` object is a new one on every server render.
+  const hasSip = Boolean(sip);
+  const sipServer = sip?.server ?? "";
+  const sipUser = sip?.username ?? "";
+  const sipPassword = sip?.password ?? "";
+  const sipRealm = sip?.realm ?? "";
+  const sipAppSid = sip?.applicationSid ?? "";
   const can = (r: string) => rights.includes(r);
   const [campaignId, setCampaignId] = useState<string>(campaigns[0]?.id ?? "");
   const campaign = campaigns.find((c) => c.id === campaignId) ?? null;
   const [agent, setAgent] = useState<AgentLive | null>(null);
-  const [phone, setPhone] = useState<PhoneState>("off");
+  // Registration of this window's SIP client, and the agent's nailed-up line (the room leg), kept apart so a
+  // registration event can never overwrite "in room" (HANDOFF "Call path hardening, browser").
+  const [reg, setReg] = useState<Exclude<PhoneState, "in-room">>("off");
+  const [line, setLine] = useState<"down" | "raising" | "up">("down");
+  const phone: PhoneState = line === "up" ? "in-room" : reg;
   const [phoneError, setPhoneError] = useState<string | null>(null);
   const [lead, setLead] = useState<LeadCard | null>(null);
   const [history, setHistory] = useState<LeadHistory>([]);
@@ -474,9 +487,27 @@ export function AgentConsole(props: ConsoleProps) {
   const phoneAutoRetriedRef = useRef(false);
   // One phone per browser (owner, 7 Nov): another console window that already holds the phone keeps it. This
   // window only takes it over when the agent clicks "Use the phone here" (the other window then hangs up and lets go).
-  const [phoneElsewhere, setPhoneElsewhere] = useState(false);
+  // "idle": another window has it, "use it here" takes it; "busy": that window is on a call and keeps it.
+  const [phoneElsewhere, setPhoneElsewhere] = useState<false | "idle" | "busy">(false);
   const tabIdRef = useRef<string>("");
   const phoneChanRef = useRef<BroadcastChannel | null>(null);
+  /** This window holds the browser's phone lock: claimed before connecting, so it answers "mine" while connecting. */
+  const holdingRef = useRef(false);
+  /** The client between createJambonzClient() and a finished connect(), so a failure or teardown can disconnect it. */
+  const pendingClientRef = useRef<JambonzClient | null>(null);
+  /** connectPhone() in flight: a second call while the first is still connecting does nothing. */
+  const connectingRef = useRef(false);
+  /** Bumped on teardown: a connect that finishes after it throws its client away. */
+  const phoneGenRef = useRef(0);
+  /** When this page last asked for a supervision leg (TeamPanel); only then is an INVITE answered. */
+  const pendingSupervisionAtRef = useRef(0);
+  /** The agent's state for channel handlers ("release" is refused on a call or in wrap-up). */
+  const agentStateRef = useRef<string>("LOGGED_OUT");
+  /** The engine refused this window's line: another window or device has the agent's call screen. */
+  const [lineRefused, setLineRefused] = useState(false);
+  /** The browser refused to play the call audio without a click (SDK "jambonz-audio-blocked"). */
+  const [audioBlocked, setAudioBlocked] = useState<string | null>(null);
+  const [reconnecting, setReconnecting] = useState(false);
   const socketRef = useRef<Socket | null>(null);
   // The campaign on screen, for socket handlers that outlive a campaign switch.
   const campaignIdRef = useRef(campaignId);
@@ -523,6 +554,8 @@ export function AgentConsole(props: ConsoleProps) {
       setWatching(null);
       return;
     }
+    // Only an INVITE that follows this click is answered (connectPhone's "incoming").
+    pendingSupervisionAtRef.current = Date.now();
     const r = await superviseStart(agentId, mode);
     if (r.ok) setWatching({ agentId, mode });
     else setNotice(r.error);
@@ -757,146 +790,326 @@ export function AgentConsole(props: ConsoleProps) {
     return () => clearTimeout(t);
   }, [isLeader]);
 
-  // The phone channel between this agent's console windows in this browser.
+  // The agent's state, for the phone channel's handlers (they outlive renders).
+  useEffect(() => {
+    agentStateRef.current = agent?.state ?? "LOGGED_OUT";
+  }, [agent?.state]);
+
+  /** A call is up on this window's phone: the room line, or any other call (a supervision leg) on the client. */
+  const phoneBusy = useCallback(() => Boolean(roomCallRef.current) || (clientRef.current?.callCount ?? 0) > 0 || (pendingClientRef.current?.callCount ?? 0) > 0, []);
+
+  /** Hang up the line, disconnect every client this window made, and let go of the lock. */
+  const teardownPhone = useCallback(() => {
+    phoneGenRef.current += 1;
+    const room = roomCallRef.current;
+    roomCallRef.current = null;
+    room?.hangup();
+    for (const c of [clientRef.current, pendingClientRef.current]) {
+      try {
+        c?.disconnect();
+      } catch {
+        /* already gone */
+      }
+    }
+    clientRef.current = null;
+    pendingClientRef.current = null;
+    connectingRef.current = false;
+    setLine("down");
+    setMuted(false);
+    if (holdingRef.current) {
+      holdingRef.current = false;
+      postPhone(phoneChanRef.current, { t: "free", from: tabIdRef.current, kind: "console" });
+    }
+  }, []);
+
+  // The phone channel between this agent's windows in this browser (lib/phone-lock.ts).
   useEffect(() => {
     if (screen !== "main" || typeof BroadcastChannel === "undefined") return;
-    tabIdRef.current = Math.random().toString(36).slice(2);
-    const chan = new BroadcastChannel(`strowger-phone-${me.id}`);
+    tabIdRef.current = newTabId();
+    const chan = new BroadcastChannel(phoneChannelName(me.id));
     phoneChanRef.current = chan;
-    const onMsg = (e: MessageEvent<{ t: string; from: string }>) => {
-      if (e.data?.from === tabIdRef.current) return;
-      if (e.data?.t === "who" && clientRef.current) chan.postMessage({ t: "mine", from: tabIdRef.current });
-      if (e.data?.t === "release" && clientRef.current) {
-        roomCallRef.current?.hangup();
-        roomCallRef.current = null;
-        clientRef.current.disconnect();
-        clientRef.current = null;
-        setPhone("off");
-        setPhoneElsewhere(true);
-        chan.postMessage({ t: "released", from: tabIdRef.current });
+    const onMsg = (e: MessageEvent<PhoneMsg>) => {
+      const m = e.data;
+      if (!m || m.from === tabIdRef.current) return;
+      if (m.t === "who" && holdingRef.current) postPhone(chan, { t: "mine", from: tabIdRef.current, kind: "console" });
+      if (m.t === "release" && holdingRef.current) {
+        // Never hand the phone over in the middle of a call or its wrap-up: the customer would be dropped.
+        const st = agentStateRef.current;
+        if (st === "ON_CALL" || st === "WRAP_UP" || (clientRef.current?.callCount ?? 0) > (roomCallRef.current ? 1 : 0)) {
+          postPhone(chan, { t: "busy", from: tabIdRef.current, kind: "console" });
+          return;
+        }
+        holdingRef.current = false;
+        teardownPhone();
+        setReg("off");
+        setPhoneElsewhere("idle");
+        postPhone(chan, { t: "released", from: tabIdRef.current, kind: "console" });
       }
     };
     chan.addEventListener("message", onMsg);
     return () => {
       chan.removeEventListener("message", onMsg);
+      if (holdingRef.current) postPhone(chan, { t: "free", from: tabIdRef.current, kind: "console" });
       chan.close();
       phoneChanRef.current = null;
     };
-  }, [screen, me.id]);
+  }, [screen, me.id, teardownPhone]);
 
   // Softphone: register once; the nailed-up leg is raised when the agent goes Ready.
   // Only the main window owns the phone (5 Nov: the assist pop-up raised its own line, the engine hung up the main
   // window's, and the pop-up's audio was blocked by the browser, so calls went silent).
   const connectPhone = useCallback(async (takeOver = false) => {
-    if (!sip || clientRef.current || screen !== "main") return;
-    const chan = phoneChanRef.current;
-    if (chan) {
-      // Does another window hold the phone? Wait briefly for an answer.
-      const theirs = await new Promise<boolean>((resolve) => {
-        const onMsg = (e: MessageEvent<{ t: string; from: string }>) => {
-          if (e.data?.from === tabIdRef.current) return;
-          if (e.data?.t === (takeOver ? "released" : "mine")) {
-            chan.removeEventListener("message", onMsg);
-            resolve(!takeOver);
-          }
-        };
-        chan.addEventListener("message", onMsg);
-        chan.postMessage({ t: takeOver ? "release" : "who", from: tabIdRef.current });
-        setTimeout(() => {
-          chan.removeEventListener("message", onMsg);
-          resolve(false);
-        }, takeOver ? 1500 : 500);
-      });
-      if (theirs) {
-        setPhoneElsewhere(true);
-        setPhone("off");
-        return;
-      }
-    }
-    if (clientRef.current) return;
-    setPhoneElsewhere(false);
-    setPhone("connecting");
-    setPhoneError(null);
+    if (!hasSip || screen !== "main") return;
+    // One client per window, ever: not while one exists, is connecting, or another connectPhone() is in flight.
+    if (clientRef.current || pendingClientRef.current || connectingRef.current) return;
+    connectingRef.current = true;
+    const gen = phoneGenRef.current;
+    const where = `(registering ${sipUser}@${sipRealm || "(no realm)"} via ${sipServer})`;
     try {
-      const client = createJambonzClient({ server: sip.server, username: sip.username, password: sip.password, realm: sip.realm || undefined, displayName: me.name });
+      const chan = phoneChanRef.current;
+      if (chan && !holdingRef.current) {
+        // Does another window hold the phone? Wait briefly for an answer.
+        const answer = await askPhoneChannel(chan, tabIdRef.current, { takeOver, kind: "console" });
+        if (gen !== phoneGenRef.current) return;
+        if (answer !== "free") {
+          setPhoneElsewhere(answer === "busy" ? "busy" : "idle");
+          setReg("off");
+          return;
+        }
+      }
+      // Claim the lock before connecting: from here this window answers "mine".
+      holdingRef.current = true;
+      setPhoneElsewhere(false);
+      setReg("connecting");
+      setPhoneError(null);
+      const client = createJambonzClient({ server: sipServer, username: sipUser, password: sipPassword, realm: sipRealm || undefined, displayName: me.name });
+      pendingClientRef.current = client;
+      // Every handler is bound to this client: a late event from an old one never touches the new phone.
+      const mine = () => clientRef.current === client || pendingClientRef.current === client;
       client.on("registered", () => {
+        if (!mine()) return;
         phoneAutoRetriedRef.current = false;
-        setPhone((p) => (p === "in-room" ? p : "registered"));
+        setReg("registered");
+        setPhoneError(null);
       });
       client.on("registrationFailed", (e: Error) => {
-        setPhone("error");
-        setPhoneError(`${e.message} (registering ${sip.username}@${sip.realm || "(no realm)"} via ${sip.server})`);
+        if (!mine()) return;
+        setReg("error");
+        setPhoneError(`${e.message} ${where}`);
       });
-      client.on("disconnected", () => setPhone("off"));
-      client.on("error", (e: Error) => setPhoneError(e.message));
-      // The only thing that rings an agent's softphone is a supervision leg the engine placed for them (a team leader listening in): answer it unless the line is already up in a room.
+      client.on("disconnected", () => {
+        if (clientRef.current !== client) return;
+        setReg("off");
+      });
+      client.on("error", (e: Error) => {
+        if (mine()) setPhoneError(e.message);
+      });
+      // The only thing that rings an agent's softphone is a supervision leg the engine placed for them (a team
+      // leader listening in from My Team): answered only within 30 s of asking for it, and never with the line up.
       client.on("incoming", (call: { answer: () => void; hangup?: () => void }) => {
-        if (roomCallRef.current) call.hangup?.();
-        else call.answer();
+        const asked = pendingSupervisionAtRef.current;
+        if (!mine() || roomCallRef.current || !asked || Date.now() - asked > SUPERVISION_ANSWER_WINDOW_MS) {
+          call.hangup?.();
+          return;
+        }
+        pendingSupervisionAtRef.current = 0;
+        call.answer();
       });
-      await client.connect();
+      await withTimeout(client.connect(), 15_000, "Softphone registration");
+      if (gen !== phoneGenRef.current || pendingClientRef.current !== client) {
+        client.disconnect();
+        return;
+      }
+      pendingClientRef.current = null;
       clientRef.current = client;
       phoneAutoRetriedRef.current = false;
-      setPhone("registered");
+      setReg("registered");
     } catch (e) {
-      setPhone("error");
-      setPhoneError(`${e instanceof Error ? e.message : String(e)} (registering ${sip.username}@${sip.realm || "(no realm)"} via ${sip.server})`);
+      const failed = pendingClientRef.current;
+      pendingClientRef.current = null;
+      try {
+        failed?.disconnect();
+      } catch {
+        /* never connected */
+      }
+      if (gen === phoneGenRef.current) {
+        setReg("error");
+        setPhoneError(`${e instanceof Error ? e.message : String(e)} ${where}`);
+      }
+    } finally {
+      // A teardown meanwhile already cleared it, and a newer connect may be in flight: leave that one's flag alone.
+      if (gen === phoneGenRef.current) connectingRef.current = false;
     }
-  }, [sip, me.name, screen]);
+  }, [hasSip, sipServer, sipUser, sipPassword, sipRealm, me.name, screen]);
 
-  // Tear down whatever client exists (a failed registration may still hold one) and register afresh.
+  // Tear down whatever client exists (a failed registration may still hold one) and register afresh. Never with a
+  // call on the phone: disconnect() hangs up every call on the client, the customer's included (7 Nov review).
   const retryPhone = useCallback(() => {
-    if (!sip) return;
-    clientRef.current?.disconnect();
+    if (!hasSip) return;
+    if (phoneBusy()) {
+      setNotice("Your line is up, so the phone was not re-registered. Finish the call, then click Reconnect line.");
+      return;
+    }
+    const old = clientRef.current;
     clientRef.current = null;
+    try {
+      old?.disconnect();
+    } catch {
+      /* gone */
+    }
     setPhoneError(null);
     void connectPhone();
-  }, [sip, connectPhone]);
+  }, [hasSip, connectPhone, phoneBusy]);
 
   useEffect(() => {
     const t = setTimeout(() => {
-      if (sip) void connectPhone();
+      if (hasSip) void connectPhone();
     }, 0);
     return () => {
       clearTimeout(t);
-      clientRef.current?.disconnect();
-      clientRef.current = null;
+      teardownPhone();
       phoneAutoRetriedRef.current = false;
     };
-  }, [sip, connectPhone]);
+  }, [hasSip, connectPhone, teardownPhone]);
 
-  // After a registration failure retry once, 10 s later; further retries are the agent's click.
+  // After a registration failure retry once, 10 s later; further retries are the agent's click. Never while the
+  // line is up or any call is on the client (the retry would hang them up).
   useEffect(() => {
-    if (phone !== "error" || phoneAutoRetriedRef.current) return;
-    phoneAutoRetriedRef.current = true;
-    const t = setTimeout(retryPhone, 10_000);
+    if (reg !== "error" || line !== "down" || phoneAutoRetriedRef.current) return;
+    const t = setTimeout(() => {
+      if (phoneBusy()) return;
+      phoneAutoRetriedRef.current = true;
+      retryPhone();
+    }, 10_000);
     return () => clearTimeout(t);
-  }, [phone, retryPhone]);
+  }, [reg, line, retryPhone, phoneBusy]);
 
   const raiseLine = useCallback(async () => {
     const client = clientRef.current;
     if (screen !== "main") throw new Error("Go Ready from the main console window: this window has no phone");
-    if (!client || !sip) throw new Error("Softphone is not registered");
+    if (!client || !hasSip) throw new Error("Softphone is not registered");
     if (roomCallRef.current) return;
-    const call = sip.applicationSid ? client.callApplication(sip.applicationSid) : client.call("ready");
+    const call = sipAppSid ? client.callApplication(sipAppSid) : client.call("ready");
     roomCallRef.current = call;
-    call.on("accepted", () => setPhone("in-room"));
+    const startedAt = Date.now();
+    setLine("raising");
+    setMuted(false);
+    setLineRefused(false);
+    // The engine refuses a second line while the agent's first is alive (another window or device): the leg is
+    // rejected or hung up at once. A local failure (no microphone, WebRTC) is not that.
+    const quick = () => Date.now() - startedAt < 3_000;
+    call.on("accepted", () => {
+      if (roomCallRef.current === call) setLine("up");
+    });
     call.on("ended", () => {
+      if (roomCallRef.current !== call) return; // dropLine() / teardown already let go of it
       roomCallRef.current = null;
-      setPhone(client.isRegistered ? "registered" : "off");
+      setLine("down");
+      setMuted(false);
+      if (quick()) setLineRefused(true);
     });
     call.on("failed", (e: { code?: number; reason?: string }) => {
+      if (roomCallRef.current !== call) return;
       roomCallRef.current = null;
-      setPhone("registered");
-      setNotice(`Line failed: ${e.reason ?? e.code ?? "unknown"}`);
+      setLine("down");
+      setMuted(false);
+      const local = ["User Denied Media Access", "WebRTC Error", "Bad Media Description", "Missing SDP", "Connection Error", "Internal Error", "Canceled"].includes(e.reason ?? "");
+      if (quick() && !local) setLineRefused(true);
+      else setNotice(`Line failed: ${e.reason ?? e.code ?? "unknown"}`);
     });
-    call.on("mute", (m: boolean) => setMuted(m));
-  }, [sip, screen]);
+    call.on("mute", (m: boolean) => {
+      if (roomCallRef.current === call) setMuted(m);
+    });
+  }, [hasSip, sipAppSid, screen]);
 
   const dropLine = useCallback(() => {
-    roomCallRef.current?.hangup();
+    const call = roomCallRef.current;
     roomCallRef.current = null;
+    setLine("down");
+    setMuted(false);
+    call?.hangup();
+    return call;
   }, []);
+
+  /**
+   * Reconnect line: hang up this window's leg, wait for it to end (2 s at most), and raise a fresh one; with the
+   * registration in error, register afresh first. Only between calls (the button is hidden on a call and in wrap-up).
+   */
+  const reconnectLine = async () => {
+    if (agent?.state === "ON_CALL" || agent?.state === "WRAP_UP") {
+      setNotice("Finish the call, then click Reconnect line.");
+      return;
+    }
+    setReconnecting(true);
+    setNotice(null);
+    try {
+      const old = dropLine();
+      if (old && old.state !== "ended") {
+        await new Promise<void>((resolve) => {
+          const t = setTimeout(resolve, 2_000);
+          const done = () => {
+            clearTimeout(t);
+            resolve();
+          };
+          old.on("ended", done);
+          old.on("failed", done);
+        });
+      }
+      if (reg !== "registered" || !clientRef.current) {
+        const stale = clientRef.current;
+        clientRef.current = null;
+        try {
+          stale?.disconnect();
+        } catch {
+          /* gone */
+        }
+        await connectPhone();
+      }
+      if (!clientRef.current) throw new Error("the softphone did not register");
+      await raiseLine();
+      setNotice("Line reconnected.");
+    } catch (e) {
+      setNotice(`Line not reconnected: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setReconnecting(false);
+    }
+  };
+
+  /** "Use the phone here" after the engine refused this window's line: the engine ends the other one, this raises ours. */
+  const takeLineHere = () =>
+    run(async () => {
+      const r = await lineTakeover();
+      if (!r.ok) throw new Error(r.error);
+      setLineRefused(false);
+      await raiseLine();
+    });
+
+  // The engine refused this agent's second line (engine contract, 7 Nov): another window or device has it.
+  useEffect(() => {
+    if (screen !== "main" || !sock) return;
+    const onRefused = (p: { reason?: string }) => {
+      if (!p || p.reason === "another-screen" || !p.reason) setLineRefused(true);
+    };
+    sock.on("agent:line-refused", onRefused);
+    return () => {
+      sock.off("agent:line-refused", onRefused);
+    };
+  }, [screen, sock]);
+
+  // Remote audio relies on autoplay; a line raised without a click (the reload re-raise) can be refused by the
+  // browser. The patched SDK says so with "jambonz-audio-blocked"; the red banner's click plays it.
+  useEffect(() => {
+    if (screen !== "main") return;
+    const onBlocked = (e: Event) => setAudioBlocked((e as CustomEvent<unknown>).detail ? String((e as CustomEvent<unknown>).detail) : "blocked");
+    window.addEventListener("jambonz-audio-blocked", onBlocked);
+    return () => window.removeEventListener("jambonz-audio-blocked", onBlocked);
+  }, [screen]);
+  const unblockAudio = () => {
+    void playAllAudio().then((ok) => {
+      if (ok) setAudioBlocked(null);
+      else setNotice("The browser still blocks the call audio: allow sound for this site (address bar → site settings), then click the banner again.");
+    });
+  };
 
   // A reload or a closed tab kills this browser's half of the line, but the engine still holds the old
   // leg as the agent's line, so the next call joins a room nobody hears (6 Nov: "I couldn't hear him").
@@ -904,28 +1117,31 @@ export function AgentConsole(props: ConsoleProps) {
   // agent has one this page does not own (the engine hangs up the stale leg when the new one joins).
   useEffect(() => {
     if (screen !== "main") return;
-    const bye = () => roomCallRef.current?.hangup();
+    const bye = () => {
+      roomCallRef.current?.hangup();
+      if (holdingRef.current) postPhone(phoneChanRef.current, { t: "free", from: tabIdRef.current, kind: "console" });
+    };
     window.addEventListener("pagehide", bye);
     return () => window.removeEventListener("pagehide", bye);
   }, [screen]);
   const reraisedRef = useRef(false);
   useEffect(() => {
-    if (screen !== "main" || phone !== "registered" || roomCallRef.current || reraisedRef.current) return;
+    if (screen !== "main" || phone !== "registered" || line !== "down" || reraisedRef.current) return;
     if (!agent?.agentCallSid || !["READY", "PAUSED", "ON_CALL", "WRAP_UP"].includes(agent.state)) return;
     reraisedRef.current = true;
     // Mid-call, a fresh line would end the old room and drop the lead: say so instead of reconnecting.
     if (agent.state === "ON_CALL" || agent.state === "WRAP_UP") {
-      const t = setTimeout(() => setNotice("The page reloaded, so your headset is no longer on this call. Disposition it, then click Ready to reconnect."), 0);
+      const t = setTimeout(() => setNotice("The page reloaded, so your headset is no longer on this call. Disposition it, then click Reconnect line."), 0);
       return () => clearTimeout(t);
     }
     const t = setTimeout(() => {
       setNotice("Reconnecting your line after the page reload…");
       raiseLine()
         .then(() => setNotice("Line reconnected."))
-        .catch((e: unknown) => setNotice(`Line not reconnected: ${e instanceof Error ? e.message : String(e)}. Click Ready.`));
+        .catch((e: unknown) => setNotice(`Line not reconnected: ${e instanceof Error ? e.message : String(e)}. Click Reconnect line.`));
     }, 0);
     return () => clearTimeout(t);
-  }, [screen, phone, agent?.agentCallSid, agent?.state, raiseLine]);
+  }, [screen, phone, line, agent?.agentCallSid, agent?.state, raiseLine]);
 
   // Actions
   const run = async (fn: () => Promise<void>) => {
@@ -973,8 +1189,10 @@ export function AgentConsole(props: ConsoleProps) {
 
   const logout = () =>
     run(async () => {
+      // The engine refuses while the agent is on a call ({ ok: false, error }): the line stays up, the reason shows.
+      const r = await agentLogout();
+      if (!r.ok) throw new Error(r.error);
       dropLine();
-      await agentLogout();
       setAgent(null);
       setLead(null);
       setCallId(null);
@@ -1250,6 +1468,9 @@ export function AgentConsole(props: ConsoleProps) {
   const wrapUp = state === "WRAP_UP";
   const ready = state === "READY";
   const lineUpIdle = (state === "READY" || state === "PAUSED") && Boolean(agent?.agentCallSid);
+  // Reconnect line: between calls, when this window's line is up, the phone is in error, or the engine still
+  // has a line for the agent that this window does not (a reload mid-call).
+  const showReconnect = screen === "main" && hasSip && !phoneElsewhere && Boolean(agent) && !onCall && !wrapUp && (line === "up" || reg === "error" || (line === "down" && Boolean(agent?.agentCallSid)));
   // Games: one overview for the purse, the panel and the deal moment (games.tsx).
   const games = useGames({ campaignId, socket: sock, meId: me.id, enabled: can("games"), onCall });
   // One-way audio (7 Nov): the browser's own numbers say which side went quiet, on screen and in the web log.
@@ -1445,7 +1666,7 @@ export function AgentConsole(props: ConsoleProps) {
             </select>
             {sip && screen === "main" && phoneElsewhere ? (
               <button type="button" onClick={() => void connectPhone(true)} title="Another console window in this browser has your phone. Click to hang it up there and use it here." className="rounded-full bg-amber-500/20 px-2 py-0.5 text-xs text-amber-200 hover:bg-amber-500/30">
-                phone is in another window · use it here
+                {phoneElsewhere === "busy" ? "Your phone is on a call in another window — finish it there" : "phone is in another window · use it here"}
               </button>
             ) : screen !== "main" ? null : sip && phone === "error" ? (
               <button type="button" onClick={retryPhone} title={`${phoneError ?? "Softphone error"} — click to retry`} className="rounded-full bg-red-500/20 px-2 py-0.5 text-xs text-red-300 hover:bg-red-500/30">
@@ -1453,9 +1674,14 @@ export function AgentConsole(props: ConsoleProps) {
               </button>
             ) : (
               <span className={`rounded-full px-2 py-0.5 text-xs ${phone === "in-room" ? "bg-emerald-500/20 text-emerald-300" : phone === "registered" ? "bg-sky-500/20 text-sky-300" : "bg-white/10 text-zinc-400"}`}>
-                {sip ? (phone === "in-room" ? "line up" : phone === "registered" ? "phone registered" : phone === "connecting" ? "registering…" : "phone offline") : "no softphone line issued"}
+                {sip ? (phone === "in-room" ? "line up" : line === "raising" ? "line connecting…" : phone === "registered" ? "phone registered" : phone === "connecting" ? "registering…" : "phone offline") : "no softphone line issued"}
               </span>
             )}
+            {showReconnect ? (
+              <button type="button" onClick={() => void reconnectLine()} disabled={reconnecting || busy} title="Hang up your line and bring a fresh one up (between calls only)" className="rounded-full border border-white/15 px-2 py-0.5 text-xs text-zinc-200 hover:bg-white/10 disabled:opacity-50">
+                {reconnecting ? "reconnecting…" : "Reconnect line"}
+              </button>
+            ) : null}
           </div>
           <div className="flex items-center gap-2">
             {billing && !billing.isPlatform && (billing.suspended || billing.critical || billing.low) ? (
@@ -1519,6 +1745,19 @@ export function AgentConsole(props: ConsoleProps) {
         </div>
 
         <NewVersionBanner show={newVersion} onCall={onCall || wrapUp} />
+        {screen === "main" && audioBlocked ? (
+          <button type="button" onClick={unblockAudio} role="alert" title={audioBlocked} className="mb-4 block w-full rounded-xl border-2 border-red-500 bg-red-600/30 px-4 py-3 text-left text-base font-semibold text-red-50 shadow-[0_0_24px_rgba(239,68,68,0.35)] hover:bg-red-600/40">
+            Your browser blocked the call audio — click here to turn it on
+          </button>
+        ) : null}
+        {screen === "main" && lineRefused ? (
+          <div role="alert" className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border-2 border-amber-400 bg-amber-400/15 px-4 py-3 text-sm text-amber-50">
+            <span className="flex-1 font-semibold">You already have a call screen open in another window or device.</span>
+            <button type="button" onClick={takeLineHere} disabled={busy} className="rounded-lg bg-amber-400 px-3 py-1.5 font-semibold text-amber-950 hover:bg-amber-300 disabled:opacity-50">
+              Use the phone here
+            </button>
+          </div>
+        ) : null}
         {notice ? <div className="mb-4 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">{notice}</div> : null}
         {can("games") ? <GamesLayer g={games} /> : null}
 
@@ -1567,12 +1806,13 @@ export function AgentConsole(props: ConsoleProps) {
                     {campaign && !canDialOut ? <p className="text-xs">You are a closer on this campaign: you receive transfers and callbacks.</p> : null}
                     {lineUpIdle && canDialOut ? (
                       <div className="flex gap-2">
-                        <input value={manual} onChange={(e) => setManual(e.target.value)} onKeyDown={(e) => e.key === "Enter" && dialManual()} placeholder="Dial a number…" className="flex-1 rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm placeholder:text-zinc-600" />
-                        <button onClick={dialManual} disabled={busy || !manual.trim()} className="rounded-lg border border-white/15 px-3 py-2 text-sm text-zinc-200 hover:bg-white/10 disabled:opacity-40">
+                        <input value={manual} onChange={(e) => setManual(e.target.value)} onKeyDown={(e) => e.key === "Enter" && !ready && dialManual()} placeholder="Dial a number…" className="flex-1 rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm placeholder:text-zinc-600" />
+                        <button onClick={dialManual} disabled={busy || !manual.trim() || ready} title={ready ? "Pause first, then dial: while you are Ready the dialer can connect a call to you" : undefined} className="rounded-lg border border-white/15 px-3 py-2 text-sm text-zinc-200 hover:bg-white/10 disabled:opacity-40">
                           Dial
                         </button>
                       </div>
                     ) : null}
+                    {lineUpIdle && canDialOut && ready ? <p className="text-xs text-zinc-500">Pause first, then dial: while you are Ready the dialer can connect a call to you.</p> : null}
                   </div>
                 ) : (
                   <div className="space-y-3 text-sm">
@@ -1894,7 +2134,7 @@ export function AgentConsole(props: ConsoleProps) {
 
             {/* My team (leaders), chat, sprint, leaderboard */}
             <div className="space-y-4">
-              {isLeader && teams.length ? <TeamPanel teams={teams} live={liveAgents} me={me.id} phoneIdle={phone === "registered"} watching={watching} onWatch={watch} onMessage={(id) => setDmWith(id)} /> : null}
+              {isLeader && teams.length ? <TeamPanel teams={teams} live={liveAgents} me={me.id} phoneIdle={phone === "registered" && line === "down"} watching={watching} onWatch={watch} onMessage={(id) => setDmWith(id)} /> : null}
               {onCall ? <AssistPanel campaignId={campaignId} leadId={lead?.id ?? null} compact /> : null}
               <Panel title="Chat">
                 <ChatPanel socket={sock} meId={me.id} openDirectWith={dmWith} height="h-56" />
@@ -1971,7 +2211,7 @@ export function AgentConsole(props: ConsoleProps) {
                   {upcoming.length === 0 ? <li className="text-xs text-zinc-500">Nothing waiting that may be dialed right now.</li> : null}
                 </ul>
               </Panel>
-              {isLeader && teams.length ? <TeamPanel teams={teams} live={liveAgents} me={me.id} phoneIdle={phone === "registered"} watching={watching} onWatch={watch} onMessage={(id) => setDmWith(id)} /> : null}
+              {isLeader && teams.length ? <TeamPanel teams={teams} live={liveAgents} me={me.id} phoneIdle={phone === "registered" && line === "down"} watching={watching} onWatch={watch} onMessage={(id) => setDmWith(id)} /> : null}
               <Panel title="Chat">
                 <ChatPanel socket={sock} meId={me.id} openDirectWith={dmWith} height="h-64" />
               </Panel>

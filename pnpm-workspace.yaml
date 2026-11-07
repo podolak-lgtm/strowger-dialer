@@ -1,3 +1,7 @@
 packages:
   - apps/*
   - packages/*
+
+patchedDependencies:
+  '@jambonz/client-sdk-core@0.1.5': patches/@jambonz__client-sdk-core@0.1.5.patch
+  '@jambonz/client-sdk-web@0.1.5': patches/@jambonz__client-sdk-web@0.1.5.patch

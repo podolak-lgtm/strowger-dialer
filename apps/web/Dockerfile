@@ -5,6 +5,8 @@ COPY pnpm-lock.yaml pnpm-workspace.yaml package.json .npmrc ./
 COPY apps/web/package.json apps/web/
 COPY packages/db/package.json packages/db/
 COPY packages/shared/package.json packages/shared/
+# pnpm patches (patchedDependencies in pnpm-workspace.yaml): the install reads them, so they come before it.
+COPY patches/ patches/
 RUN pnpm install --frozen-lockfile
 COPY . .
 ARG NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY

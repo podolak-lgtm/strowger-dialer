@@ -1,0 +1,72 @@
+diff --git a/dist/index.d.mts b/dist/index.d.mts
+index cf1ba729bd17def22b503ac74aaf50bbb295de83..c19ade4188fde7c21209f0a3c1332c82181ba54a 100644
+--- a/dist/index.d.mts
++++ b/dist/index.d.mts
+@@ -155,7 +155,7 @@ interface PlatformAdapter {
+     /** Play remote audio stream from a peer connection */
+     attachRemoteStream(stream: MediaStream): void;
+     /** Stop playing remote audio */
+-    detachRemoteStream(): void;
++    detachRemoteStream(stream?: MediaStream): void;
+     /**
+      * Set the audio output device.
+      * - Web: uses HTMLAudioElement.setSinkId(deviceId)
+diff --git a/dist/index.d.ts b/dist/index.d.ts
+index cf1ba729bd17def22b503ac74aaf50bbb295de83..c19ade4188fde7c21209f0a3c1332c82181ba54a 100644
+--- a/dist/index.d.ts
++++ b/dist/index.d.ts
+@@ -155,7 +155,7 @@ interface PlatformAdapter {
+     /** Play remote audio stream from a peer connection */
+     attachRemoteStream(stream: MediaStream): void;
+     /** Stop playing remote audio */
+-    detachRemoteStream(): void;
++    detachRemoteStream(stream?: MediaStream): void;
+     /**
+      * Set the audio output device.
+      * - Web: uses HTMLAudioElement.setSinkId(deviceId)
+diff --git a/dist/index.js b/dist/index.js
+index 764acb2ac38b53f659ad803cf208586e76faafd9..81b5d8b2d52a56a1301174f4a1332034190502dc 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -398,6 +398,7 @@ var JambonzCall = class {
+               remoteStream.addTrack(receiver.track);
+             }
+           }
++          this._remoteStream = remoteStream;
+           this.platform.attachRemoteStream(remoteStream);
+         }
+       }
+@@ -440,7 +441,9 @@ var JambonzCall = class {
+     this.stopQualityMonitoring();
+     this.platform.stopTone?.();
+     this.setState("ended" /* Ended */);
+-    this.platform.detachRemoteStream();
++    const attached = this._remoteStream || null;
++    this._remoteStream = null;
++    if (attached) this.platform.detachRemoteStream(attached);
+     this.startTime = null;
+   }
+ };
+diff --git a/dist/index.mjs b/dist/index.mjs
+index 195fa4aff33ef9dc779f45acc41cc31f06388cd9..6725a374c0df0ab37c616844705050b6e54f6199 100644
+--- a/dist/index.mjs
++++ b/dist/index.mjs
+@@ -348,6 +348,7 @@ var JambonzCall = class {
+               remoteStream.addTrack(receiver.track);
+             }
+           }
++          this._remoteStream = remoteStream;
+           this.platform.attachRemoteStream(remoteStream);
+         }
+       }
+@@ -390,7 +391,9 @@ var JambonzCall = class {
+     this.stopQualityMonitoring();
+     this.platform.stopTone?.();
+     this.setState("ended" /* Ended */);
+-    this.platform.detachRemoteStream();
++    const attached = this._remoteStream || null;
++    this._remoteStream = null;
++    if (attached) this.platform.detachRemoteStream(attached);
+     this.startTime = null;
+   }
+ };

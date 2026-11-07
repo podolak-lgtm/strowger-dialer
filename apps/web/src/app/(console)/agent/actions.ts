@@ -39,9 +39,43 @@ export async function agentSetState(state: "READY" | "PAUSED", reason?: string):
   return engine("/agents/state", { method: "POST", body: JSON.stringify({ tenantId: s.tenant.id, userId: s.user.id, state, reason }) });
 }
 
-export async function agentLogout(): Promise<{ ok: boolean }> {
+/**
+ * An engine call whose answer is `{ ok, error? }`. A refusal sent as a non-2xx status comes back as
+ * `{ ok: false, error }` with the engine's own words instead of a thrown "engine /path: 409 {...}".
+ */
+async function engineResult<T extends { ok: boolean }>(path: string, init: RequestInit): Promise<T | Err> {
+  try {
+    return await engine<T | Err>(path, init);
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    const body = /^engine \S+: \d+ ([\s\S]*)$/.exec(message)?.[1];
+    if (body) {
+      try {
+        const j = JSON.parse(body) as { error?: unknown; message?: unknown };
+        if (typeof j.error === "string") return { ok: false, error: j.error };
+        if (typeof j.message === "string") return { ok: false, error: j.message };
+      } catch {
+        /* not JSON */
+      }
+    }
+    return { ok: false, error: message };
+  }
+}
+
+/** Refused by the engine while the agent is on a call (`{ ok: false, error }`): the console shows the reason. */
+export async function agentLogout(): Promise<{ ok: true } | Err> {
   const s = await me();
-  return engine("/agents/logout", { method: "POST", body: JSON.stringify({ tenantId: s.tenant.id, userId: s.user.id }) });
+  return engineResult<{ ok: true }>("/agents/logout", { method: "POST", body: JSON.stringify({ tenantId: s.tenant.id, userId: s.user.id }) });
+}
+
+/**
+ * "Use the phone here" (owner, 7 Nov: one agent, one call control). The engine refuses a second agent line while
+ * the first is alive (socket `agent:line-refused`); this asks it to end the line held by the other window or
+ * device so this console can raise its own.
+ */
+export async function lineTakeover(): Promise<{ ok: true } | Err> {
+  const s = await me();
+  return engineResult<{ ok: true }>("/agents/line/takeover", { method: "POST", body: JSON.stringify({ tenantId: s.tenant.id, userId: s.user.id }) });
 }
 
 export async function agentCurrent(): Promise<AgentLive | null> {
@@ -501,5 +535,6 @@ export async function currentTransfer(callId: string): Promise<LiveTransferView 
 export async function manualDial(phone: string): Promise<{ ok: true; callId: string } | { ok: false; error: string }> {
   const s = await me();
   requireRight(s, "manual_dial");
-  return engine("/calls/manual", { method: "POST", body: JSON.stringify({ tenantId: s.tenant.id, userId: s.user.id, phone }) });
+  // Refused while the agent is READY ("Pause first, then dial…"): the console disables the button too.
+  return engineResult<{ ok: true; callId: string }>("/calls/manual", { method: "POST", body: JSON.stringify({ tenantId: s.tenant.id, userId: s.user.id, phone }) });
 }

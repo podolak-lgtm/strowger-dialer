@@ -4,6 +4,14 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+patchedDependencies:
+  '@jambonz/client-sdk-core@0.1.5':
+    hash: c32b8af3cb8b4bb0ceeb943700c3f24a22ba4c8ea46a23d3a9b082f777c0c56b
+    path: patches/@jambonz__client-sdk-core@0.1.5.patch
+  '@jambonz/client-sdk-web@0.1.5':
+    hash: 00af9d01d7da5f8bcf6a1ed77b0e248a00000f2da0029297025dac4a92ecc371
+    path: patches/@jambonz__client-sdk-web@0.1.5.patch
+
 importers:
 
   .:
@@ -98,7 +106,7 @@ importers:
         version: 6.39.8(next@16.4.5(@babel/core@7.29.7)(@opentelemetry/api@1.10.0)(@types/node@22.20.5)(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@jambonz/client-sdk-web':
         specifier: ^0.1.5
-        version: 0.1.5(react@19.3.0)
+        version: 0.1.5(patch_hash=00af9d01d7da5f8bcf6a1ed77b0e248a00000f2da0029297025dac4a92ecc371)(react@19.3.0)
       '@strowger/db':
         specifier: workspace:*
         version: link:../../packages/db
@@ -4266,7 +4274,7 @@ snapshots:
 
   '@ioredis/commands@1.10.0': {}
 
-  '@jambonz/client-sdk-core@0.1.5(react@19.3.0)':
+  '@jambonz/client-sdk-core@0.1.5(patch_hash=c32b8af3cb8b4bb0ceeb943700c3f24a22ba4c8ea46a23d3a9b082f777c0c56b)(react@19.3.0)':
     dependencies:
       jssip: 3.13.9
     optionalDependencies:
@@ -4274,9 +4282,9 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@jambonz/client-sdk-web@0.1.5(react@19.3.0)':
+  '@jambonz/client-sdk-web@0.1.5(patch_hash=00af9d01d7da5f8bcf6a1ed77b0e248a00000f2da0029297025dac4a92ecc371)(react@19.3.0)':
     dependencies:
-      '@jambonz/client-sdk-core': 0.1.5(react@19.3.0)
+      '@jambonz/client-sdk-core': 0.1.5(patch_hash=c32b8af3cb8b4bb0ceeb943700c3f24a22ba4c8ea46a23d3a9b082f777c0c56b)(react@19.3.0)
     transitivePeerDependencies:
       - react
       - supports-color

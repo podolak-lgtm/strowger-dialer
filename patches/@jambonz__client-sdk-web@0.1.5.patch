@@ -1,0 +1,78 @@
+diff --git a/dist/index.d.mts b/dist/index.d.mts
+index 75f207d90147cbb46e82d76321df199ccd032fdf..a5ac83707087ff89e952d8aed49f1044e911e2ca 100644
+--- a/dist/index.d.mts
++++ b/dist/index.d.mts
+@@ -14,7 +14,7 @@ declare class WebPlatformAdapter implements PlatformAdapter {
+     getUserMedia(constraints: MediaStreamConstraints): Promise<MediaStream>;
+     enumerateDevices(): Promise<AudioDevice[]>;
+     attachRemoteStream(stream: MediaStream): void;
+-    detachRemoteStream(): void;
++    detachRemoteStream(stream?: MediaStream): void;
+     setOutputDevice(deviceId: string): Promise<void>;
+     playTone(type: 'ringtone' | 'ringback', loop?: boolean): void;
+     stopTone(): void;
+diff --git a/dist/index.d.ts b/dist/index.d.ts
+index 75f207d90147cbb46e82d76321df199ccd032fdf..a5ac83707087ff89e952d8aed49f1044e911e2ca 100644
+--- a/dist/index.d.ts
++++ b/dist/index.d.ts
+@@ -14,7 +14,7 @@ declare class WebPlatformAdapter implements PlatformAdapter {
+     getUserMedia(constraints: MediaStreamConstraints): Promise<MediaStream>;
+     enumerateDevices(): Promise<AudioDevice[]>;
+     attachRemoteStream(stream: MediaStream): void;
+-    detachRemoteStream(): void;
++    detachRemoteStream(stream?: MediaStream): void;
+     setOutputDevice(deviceId: string): Promise<void>;
+     playTone(type: 'ringtone' | 'ringback', loop?: boolean): void;
+     stopTone(): void;
+diff --git a/dist/index.js b/dist/index.js
+index b8f91e810e77313d0c63cbcdbb87bd5e5caad547..b8746af341c6e67151a741b9a9fa672b350e9dd0 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -67,9 +67,19 @@ var WebPlatformAdapter = class {
+       document.body.appendChild(this.audioElement);
+     }
+     this.audioElement.srcObject = stream;
++    const played = this.audioElement.play();
++    if (played && typeof played.catch === "function") {
++      played.catch((err) => {
++        if (err && err.name === "AbortError") return;
++        if (typeof window !== "undefined" && typeof window.dispatchEvent === "function") {
++          window.dispatchEvent(new CustomEvent("jambonz-audio-blocked", { detail: String(err) }));
++        }
++      });
++    }
+   }
+-  detachRemoteStream() {
+-    if (this.audioElement) {
++  detachRemoteStream(stream) {
++    if (!this.audioElement) return;
++    if (stream === void 0 || this.audioElement.srcObject === stream) {
+       this.audioElement.srcObject = null;
+     }
+   }
+diff --git a/dist/index.mjs b/dist/index.mjs
+index 84c1f3ea03884f6d24cf4b1bdcd41623f142c75c..9a45353d0ab31437d28ce986da8828bba3aa7126 100644
+--- a/dist/index.mjs
++++ b/dist/index.mjs
+@@ -31,9 +31,19 @@ var WebPlatformAdapter = class {
+       document.body.appendChild(this.audioElement);
+     }
+     this.audioElement.srcObject = stream;
++    const played = this.audioElement.play();
++    if (played && typeof played.catch === "function") {
++      played.catch((err) => {
++        if (err && err.name === "AbortError") return;
++        if (typeof window !== "undefined" && typeof window.dispatchEvent === "function") {
++          window.dispatchEvent(new CustomEvent("jambonz-audio-blocked", { detail: String(err) }));
++        }
++      });
++    }
+   }
+-  detachRemoteStream() {
+-    if (this.audioElement) {
++  detachRemoteStream(stream) {
++    if (!this.audioElement) return;
++    if (stream === void 0 || this.audioElement.srcObject === stream) {
+       this.audioElement.srcObject = null;
+     }
+   }
