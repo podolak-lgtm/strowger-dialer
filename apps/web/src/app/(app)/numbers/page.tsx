@@ -1,69 +1,34 @@
 import { prisma } from "@strowger/db";
 import { formatPhone } from "@strowger/shared";
-import Link from "next/link";
-import { requireClientWorkspace } from "@/lib/auth";
-import { engine } from "@/lib/engine";
-import { Badge, Button, Card, Field, Notice, PageHeader, Table, Td, inputClass } from "@/components/ui";
 import { PLAN_DEFAULTS, isIdlePoolNumber } from "@strowger/shared/did-plan";
+import { redirect } from "next/navigation";
+import { requireClientWorkspace } from "@/lib/auth";
+import { Badge, Button, Card, PageHeader, inputClass } from "@/components/ui";
+import { NavLink } from "@/components/nav-link";
 import { IdleRelease } from "./idle-release";
-import { USECASES, VERTICALS } from "@strowger/shared/tendlc";
-import { readOnboarding } from "@strowger/shared/onboarding";
-import { assignCampaign, assignNumbersToTenDlc, orderSelected, registerBrand, registerCampaign, releaseOne, runSetup, syncNow } from "./actions";
+import { assignCampaign, releaseOne, syncNow } from "./actions";
+import { Flash, param, statusTone } from "./parts";
 
-type Status = {
-  telnyx: boolean;
-  jambonz: boolean;
-  sbcFqdn: string;
-  smsWebhook: string;
-  carrierName: string;
-  connection: { id: string; name: string; fqdn: string | null } | null;
-  outboundProfileId: string | null;
-  messagingProfile: { id: string; name: string; webhook: string | null } | null;
-  carrier: { sid: string; name: string; gateways: number } | null;
-  counts: Record<string, number>;
-  missing: string[];
-};
-type Found = { phone: string; e164: string; city: string | null; state: string | null; monthly: string | null; upfront: string | null; features: string[] };
-type TenDlc = {
-  brandId: string | null;
-  campaignId: string | null;
-  messagingProfileId: string | null;
-  brand: Record<string, unknown> | null;
-  campaign: Record<string, unknown> | null;
-  numbersAssigned: number | null;
-};
-
-
-function statusTone(s: string): "zinc" | "green" | "amber" | "red" | "blue" {
-  if (s === "ready") return "green";
-  if (s === "voice") return "blue";
-  if (s === "ordered") return "amber";
-  if (s === "failed") return "red";
-  return "zinc";
-}
-function tenDlcTone(s: string | undefined): "zinc" | "green" | "amber" | "red" {
-  if (!s) return "zinc";
-  if (/PROVISIONED|ACCEPTED|VERIFIED|^OK$/.test(s)) return "green";
-  if (/FAIL|REJECT|SUSPEND|EXPIRED/.test(s)) return "red";
-  return "amber";
-}
-
+/**
+ * Numbers tab: the inventory (every number, pool or campaign, with release)
+ * and the idle-in-the-pool card. Ordering, 10DLC and the carrier setup are
+ * their own tabs (owner, 7 Nov); see HANDOFF "Navigation".
+ */
 export default async function NumbersPage({ searchParams }: PageProps<"/numbers">) {
   const s = await requireClientWorkspace("SUPERVISOR");
   const sp = await searchParams;
-  const str = (k: string) => (typeof sp[k] === "string" ? (sp[k] as string) : "");
-  const msg = str("msg");
-  const kind = str("kind") === "error" ? "error" : "ok";
-  const campaignPick = str("campaign");
-  const areaCode = str("areaCode").replace(/\D/g, "").slice(0, 3);
-  const qty = Math.min(50, Math.max(1, Number(str("qty")) || 10));
+  // Old links: /numbers?campaign=… (campaign page) and the order search (?areaCode=&qty=) belong to the Order tab now.
+  if (param(sp, "campaign") || param(sp, "areaCode") || param(sp, "qty")) {
+    const u = new URLSearchParams();
+    for (const k of ["campaign", "areaCode", "qty", "msg", "kind"]) if (param(sp, k)) u.set(k, param(sp, k));
+    redirect(`/numbers/order?${u.toString()}`);
+  }
 
   const now = new Date();
   const idleCutoff = new Date(now.getTime() - PLAN_DEFAULTS.idleDays * 86_400_000);
-  const [campaigns, numbers, orders, idleRows, platformRates, account] = await Promise.all([
+  const [campaigns, numbers, idleRows, platformRates, account] = await Promise.all([
     prisma.campaign.findMany({ where: { tenantId: s.tenant.id, status: { not: "ARCHIVED" } }, orderBy: { name: "asc" }, select: { id: true, name: true } }),
     prisma.callerIdNumber.findMany({ where: { tenantId: s.tenant.id, status: { not: "RETIRED" } }, orderBy: [{ createdAt: "desc" }], include: { campaign: { select: { name: true } } }, take: 300 }),
-    prisma.numberOrder.findMany({ where: { tenantId: s.tenant.id }, orderBy: { createdAt: "desc" }, take: 20, include: { campaign: { select: { name: true } }, _count: { select: { numbers: true } } } }),
     prisma.callerIdNumber.findMany({
       where: { tenantId: s.tenant.id, campaignId: null, status: { not: "RETIRED" }, provisionStatus: { not: "released" }, OR: [{ lastUsedAt: { lt: idleCutoff } }, { lastUsedAt: null, createdAt: { lt: idleCutoff } }] },
       orderBy: [{ lastUsedAt: "asc" }, { createdAt: "asc" }],
@@ -79,361 +44,99 @@ export default async function NumbersPage({ searchParams }: PageProps<"/numbers"
     .filter((n) => isIdlePoolNumber(n, now))
     .map((n) => ({ id: n.id, phone: n.phone, status: n.status, lastUsed: n.lastUsedAt ? n.lastUsedAt.toISOString().slice(0, 10) : "never used", idleDays: Math.floor((now.getTime() - (n.lastUsedAt ?? n.createdAt).getTime()) / 86_400_000), releasable: Boolean(n.telnyxNumberId) }));
   const inPool = numbers.filter((n) => !n.campaignId).length;
-
-  let status: Status | null = null;
-  let statusError: string | null = null;
-  let tenDlc: TenDlc | null = null;
-  try {
-    [status, tenDlc] = await Promise.all([engine<Status>(`/provision/status?tenantId=${s.tenant.id}`), engine<TenDlc>(`/provision/tendlc?tenantId=${s.tenant.id}`)]);
-  } catch (e) {
-    statusError = e instanceof Error ? e.message : String(e);
-  }
-  // The setup wizard's Business answers prefill the brand form.
-  const ob = readOnboarding(s.tenant.onboarding).steps.business ?? {};
-  const setupDone = Boolean(status?.connection && status?.carrier && status?.messagingProfile);
-
-  let found: Found[] = [];
-  let searchError: string | null = null;
-  if (areaCode.length === 3 && setupDone) {
-    try {
-      found = await engine<Found[]>("/provision/search", { method: "POST", body: JSON.stringify({ areaCode, limit: qty }) });
-    } catch (e) {
-      searchError = e instanceof Error ? e.message : String(e);
-    }
-  }
-
-  const brandStatus = (tenDlc?.brand?.status as string | undefined) ?? undefined;
-  const brandIdentity = (tenDlc?.brand?.identityStatus as string | undefined) ?? undefined;
-  const campStatus = (tenDlc?.campaign?.campaignStatus as string | undefined) ?? (tenDlc?.campaign?.status as string | undefined);
-  const campOk = Boolean(campStatus && /MNO_PROVISIONED|MNO_ACCEPTED|TELNYX_ACCEPTED|TCR_ACCEPTED/.test(campStatus));
+  const money = (c: number) => `$${(c / 100).toFixed(2)}`;
+  const th = "text-xs font-medium uppercase tracking-wide text-zinc-500";
+  const wide = "@min-[760px]:grid-cols-[150px_minmax(190px,1fr)_120px_96px_84px_84px_72px]";
 
   return (
     <div>
       <PageHeader
-        title="Numbers & provisioning"
-        subtitle="Buy local numbers, attach them to the voice trunk and texting profile, and register them in jambonz, all from here. Reputation, warm-up and daily caps live on the DIDs page."
+        title="Numbers"
+        subtitle="Every number on the workspace: pool or campaign, provisioning state, release. Reputation, warm-up and daily caps are on the Reputation tab."
         actions={
-          <>
-            <form action={syncNow}>
-              <Button type="submit" variant="ghost">
-                Sync with Telnyx
-              </Button>
-            </form>
-            <Link href="/dids" className="rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-zinc-200 hover:bg-zinc-800">
-              DIDs & reputation
-            </Link>
-          </>
-        }
-      />
-      {msg ? <Notice kind={kind}>{msg}</Notice> : null}
-      {statusError ? <Notice kind="error">The engine did not answer: {statusError}</Notice> : null}
-
-      <div className="grid gap-6 lg:grid-cols-2">
-        <Card title="1 · Carrier setup (once)">
-          {status ? (
-            <div className="space-y-3 text-sm">
-              {status.missing.length ? (
-                <Notice kind="warn">
-                  Set first (Railway dashboard, never in chat): {status.missing.join(", ")}.
-                </Notice>
-              ) : null}
-              <Row ok={Boolean(status.connection)} label="Telnyx voice connection">
-                {status.connection ? (
-                  <>
-                    {status.connection.name} → inbound to <code>{status.connection.fqdn ?? status.sbcFqdn}</code>
-                  </>
-                ) : (
-                  <>will point inbound calls at <code>{status.sbcFqdn || "(no SBC address)"}</code></>
-                )}
-              </Row>
-              <Row ok={Boolean(status.carrier)} label={`jambonz carrier "${status.carrierName}"`}>
-                {status.carrier ? `${status.carrier.gateways} gateways (sip.telnyx.com outbound; Telnyx signalling IPs inbound)` : "outbound via sip.telnyx.com with the connection's credentials"}
-              </Row>
-              <Row ok={Boolean(status.messagingProfile)} label="Telnyx messaging profile">
-                {status.messagingProfile ? (
-                  <>
-                    {status.messagingProfile.name} · webhook <code className="break-all">{status.messagingProfile.webhook ?? "none"}</code>
-                  </>
-                ) : (
-                  <>
-                    webhook <code className="break-all">{status.smsWebhook}</code>
-                  </>
-                )}
-              </Row>
-              <form action={runSetup} className="pt-2">
-                <Button type="submit" disabled={status.missing.length > 0}>
-                  {setupDone ? "Re-check setup" : "Run carrier setup"}
-                </Button>
-                <span className="ml-3 text-xs text-zinc-500">Idempotent: creates what is missing, reuses what exists by name.</span>
-              </form>
-              <p className="text-xs text-zinc-500">
-                If the SBC address shown is wrong for your jambonz account, set <code>JAMBONZ_SBC_FQDN</code> on the engine to the address the jambonz portal shows under Carriers and run setup again.
-              </p>
-            </div>
-          ) : (
-            <p className="text-sm text-zinc-500">Waiting for the engine…</p>
-          )}
-        </Card>
-
-        <Card title="2 · Order numbers">
-          {!setupDone ? <Notice kind="warn">Run carrier setup first; ordered numbers need the connection and profile to attach to.</Notice> : null}
-          <form method="GET" className="grid grid-cols-[1fr_1fr_2fr_auto] items-end gap-3">
-            <Field label="Area code">
-              <input name="areaCode" defaultValue={areaCode} maxLength={3} pattern="\d{3}" className={inputClass} placeholder="305" required />
-            </Field>
-            <Field label="How many">
-              <input name="qty" type="number" min={1} max={50} defaultValue={qty} className={inputClass} />
-            </Field>
-            <Field label="For campaign">
-              <select name="campaign" defaultValue={campaignPick} className={inputClass}>
-                <option value="">Shared pool (any campaign)</option>
-                {campaigns.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </select>
-            </Field>
-            <Button type="submit" variant="ghost" disabled={!setupDone}>
-              Search
+          <form action={syncNow}>
+            <Button type="submit" variant="ghost">
+              Sync with Telnyx
             </Button>
           </form>
-          {searchError ? <Notice kind="error">{searchError}</Notice> : null}
-          {found.length > 0 ? (
-            <form action={orderSelected} className="mt-4">
-              <input type="hidden" name="campaignId" value={campaignPick} />
-              <input type="hidden" name="areaCode" value={areaCode} />
-              <Table head={["", "Number", "Rate center", "State", "Monthly", "Features"]}>
-                {found.map((n) => (
-                  <tr key={n.e164}>
-                    <Td>
-                      <input type="checkbox" name="phones" value={n.phone} defaultChecked className="h-4 w-4" />
-                    </Td>
-                    <Td className="font-mono">{formatPhone(n.phone)}</Td>
-                    <Td>{n.city ?? "–"}</Td>
-                    <Td>{n.state ?? "–"}</Td>
-                    <Td>{n.monthly ? `$${n.monthly}` : "–"}</Td>
-                    <Td className="text-xs text-zinc-400">{n.features.join(", ")}</Td>
-                  </tr>
-                ))}
-              </Table>
-              <div className="mt-3 flex items-center gap-3">
-                <Button type="submit" className="bg-emerald-400 text-emerald-950 hover:bg-emerald-300">
-                  Buy the checked numbers
-                </Button>
-                <span className="text-xs text-zinc-500">
-                  Each is attached to the voice connection and the texting profile, registered in jambonz to the Strowger application, and added to the pool{campaignPick ? " for the chosen campaign" : ""}. New numbers
-                  start unregistered at the Free Caller Registry and will not dial until marked registered on the DIDs page.
-                </span>
-              </div>
-            </form>
-          ) : areaCode.length === 3 && !searchError && setupDone ? (
-            <p className="mt-3 text-sm text-zinc-500">Nothing available in {areaCode} right now with voice and SMS. Try a neighbouring area code.</p>
-          ) : null}
-        </Card>
-      </div>
-
-      <Card title="3 · Texting registration (10DLC)" className="mt-6">
-        <p className="mb-4 text-sm text-zinc-400">
-          US carriers require every business that texts from local numbers to register a brand and a campaign with The Campaign Registry. Unregistered traffic is filtered or blocked. Telnyx submits both;
-          brand verification is usually quick, campaign review by the carriers takes days.
-        </p>
-        <div className="grid gap-6 lg:grid-cols-2">
-          <div>
-            <h3 className="mb-2 text-sm font-semibold">
-              Brand{" "}
-              {tenDlc?.brandId ? (
-                <>
-                  <Badge tone={tenDlcTone(brandStatus)}>{brandStatus ?? "submitted"}</Badge> <Badge tone={tenDlcTone(brandIdentity)}>{brandIdentity ?? "identity pending"}</Badge>
-                </>
-              ) : (
-                <Badge tone="amber">not registered</Badge>
-              )}
-            </h3>
-            {tenDlc?.brandId ? (
-              <div className="text-sm text-zinc-300">
-                {String(tenDlc.brand?.displayName ?? "")} · {String(tenDlc.brand?.companyName ?? "")} · brand id <code>{tenDlc.brandId}</code>
-                {tenDlc.brand?.failureReasons ? <div className="mt-1 text-red-300">{String(tenDlc.brand.failureReasons)}</div> : null}
-              </div>
-            ) : (
-              <form action={registerBrand} className="grid grid-cols-2 gap-3 text-sm">
-                <p className="col-span-2 text-xs text-zinc-500">Prefilled from the setup wizard&apos;s Business step where it has answers; checked against the same 10DLC rules before it is sent.</p>
-                <Field label="Legal company name">
-                  <input name="companyName" defaultValue={ob.legalName ?? ""} className={inputClass} required />
-                </Field>
-                <Field label="Brand / display name">
-                  <input name="displayName" defaultValue={ob.dba || ob.legalName || s.tenant.name} className={inputClass} required />
-                </Field>
-                <Field label="Entity type">
-                  <select name="entityType" className={inputClass} defaultValue={ob.entityType || "PRIVATE_PROFIT"}>
-                    <option value="PRIVATE_PROFIT">Private company</option>
-                    <option value="PUBLIC_PROFIT">Public company</option>
-                    <option value="NON_PROFIT">Non-profit</option>
-                    <option value="SOLE_PROPRIETOR">Sole proprietor</option>
-                    <option value="GOVERNMENT">Government</option>
-                  </select>
-                </Field>
-                <Field label="EIN (tax id)">
-                  <input name="ein" defaultValue={ob.ein ?? ""} className={inputClass} placeholder="12-3456789" />
-                </Field>
-                <Field label="Industry (vertical)">
-                  <select name="vertical" className={inputClass} defaultValue={ob.vertical || "INSURANCE"}>
-                    {VERTICALS.map((v) => (
-                      <option key={v} value={v}>
-                        {v.replace("_", " ").toLowerCase()}
-                      </option>
-                    ))}
-                  </select>
-                </Field>
-                <Field label="Website">
-                  <input name="website" defaultValue={ob.website ?? ""} className={inputClass} placeholder="https://" />
-                </Field>
-                <Field label="Contact email">
-                  <input name="email" type="email" defaultValue={ob.supportEmail || s.user.email} className={inputClass} required />
-                </Field>
-                <Field label="Contact phone">
-                  <input name="phone" defaultValue={ob.phone ?? ""} className={inputClass} placeholder="+13055550100" />
-                </Field>
-                <Field label="Street">
-                  <input name="street" defaultValue={ob.street ?? ""} className={inputClass} />
-                </Field>
-                <Field label="City">
-                  <input name="city" defaultValue={ob.city ?? ""} className={inputClass} />
-                </Field>
-                <Field label="State (2 letters)">
-                  <input name="state" maxLength={2} defaultValue={ob.state ?? ""} className={inputClass} />
-                </Field>
-                <Field label="ZIP">
-                  <input name="postalCode" defaultValue={ob.zip ?? ""} className={inputClass} />
-                </Field>
-                <div className="col-span-2">
-                  <Button type="submit" disabled={!status?.telnyx}>
-                    Register brand
-                  </Button>
-                </div>
-              </form>
-            )}
-          </div>
-          <div>
-            <h3 className="mb-2 text-sm font-semibold">
-              Campaign {tenDlc?.campaignId ? <Badge tone={tenDlcTone(campStatus)}>{campStatus ?? "submitted"}</Badge> : <Badge tone="amber">not registered</Badge>}
-            </h3>
-            {tenDlc?.campaignId ? (
-              <div className="space-y-2 text-sm text-zinc-300">
-                <div>
-                  Use case {String(tenDlc.campaign?.usecase ?? "")} · campaign id <code>{tenDlc.campaignId}</code>
-                  {typeof tenDlc.numbersAssigned === "number" ? ` · ${tenDlc.numbersAssigned} numbers assigned` : ""}
-                </div>
-                {tenDlc.campaign?.failureReasons ? <div className="text-red-300">{String(tenDlc.campaign.failureReasons)}</div> : null}
-                <form action={assignNumbersToTenDlc}>
-                  <Button type="submit" variant="ghost" disabled={!campOk}>
-                    Assign all numbers on the texting profile to this campaign
-                  </Button>
-                  {!campOk ? <span className="ml-2 text-xs text-zinc-500">available once the carriers accept the campaign</span> : null}
-                </form>
-              </div>
-            ) : !tenDlc?.brandId ? (
-              <p className="text-sm text-zinc-500">Register the brand first.</p>
-            ) : (
-              <form action={registerCampaign} className="space-y-3 text-sm">
-                <Field label="Use case">
-                  <select name="usecase" className={inputClass} defaultValue="LOW_VOLUME">
-                    {USECASES.map(([v, l]) => (
-                      <option key={v} value={v}>
-                        {l}
-                      </option>
-                    ))}
-                  </select>
-                </Field>
-                <Field label="Description (what the texts are for)">
-                  <textarea name="description" rows={2} className={inputClass} required defaultValue={`${s.tenant.name} texts people who requested a quote or a callback on our website: a heads-up before we call, a note if we missed them with a link to pick a time, and replies from our agents.`} />
-                </Field>
-                <Field label="Message flow (how people opt in)" hint="Carriers check this against your website's form and privacy policy.">
-                  <textarea name="messageFlow" rows={2} className={inputClass} required defaultValue="Consumers opt in by submitting a web form that states they agree to receive calls and texts from us about their request; the form carries the consent language and a link to our privacy policy. They can reply STOP at any time." />
-                </Field>
-                <Field label="Sample message 1">
-                  <input name="sample1" className={inputClass} required defaultValue={`Hi Jane, this is ${String(((s.tenant.tenDlcBrand ?? {}) as { displayName?: string }).displayName || s.tenant.name)}. Your phone is going to ring within the next 30 seconds from (305) 555-0100. If you miss us, call that number back when you're ready. Reply STOP if you'd rather not get a call.`} />
-                </Field>
-                <Field label="Sample message 2">
-                  <input name="sample2" className={inputClass} defaultValue={`${String(((s.tenant.tenDlcBrand ?? {}) as { displayName?: string }).displayName || s.tenant.name)}: hey Jane, sorry I missed you! Call us back anytime, or tap the link to pick a quick callback time: https://strowger.crossbar.digital/cb/abc123 Reply STOP to opt out.`} />
-                </Field>
-                <div className="grid grid-cols-2 gap-3">
-                  <Field label="Privacy policy link">
-                    <input name="privacyPolicyLink" className={inputClass} placeholder="https://…/privacy" />
-                  </Field>
-                  <Field label="Terms link">
-                    <input name="termsAndConditionsLink" className={inputClass} placeholder="https://…/terms" />
-                  </Field>
-                </div>
-                <div className="flex flex-wrap gap-4 text-zinc-300">
-                  <label className="flex items-center gap-2">
-                    <input type="checkbox" name="embeddedLink" defaultChecked className="h-4 w-4" /> Messages contain links
-                  </label>
-                  <label className="flex items-center gap-2">
-                    <input type="checkbox" name="embeddedPhone" defaultChecked className="h-4 w-4" /> Messages contain phone numbers
-                  </label>
-                  <label className="flex items-center gap-2">
-                    <input type="checkbox" name="numberPool" className="h-4 w-4" /> More than 49 numbers (number pool)
-                  </label>
-                  <label className="flex items-center gap-2">
-                    <input type="checkbox" name="directLending" className="h-4 w-4" /> Lending / loans
-                  </label>
-                </div>
-                <Button type="submit">Submit campaign</Button>
-              </form>
-            )}
-          </div>
-        </div>
-      </Card>
+        }
+      />
+      <Flash sp={sp} />
 
       {idle.length ? (
-        <Card title={`Idle in the pool ${PLAN_DEFAULTS.idleDays}+ days (${idle.length})`} className="mt-6">
-          <p className="mb-3 text-sm text-zinc-400">
-            Pool numbers (not pinned to any campaign) that have not dialled in {PLAN_DEFAULTS.idleDays} days or more. Each costs ${(priceCents / 100).toFixed(2)} a month. Keep them for the next campaign, or release the ones you do not need back to Telnyx. Nothing is released automatically.
+        <details className="group mb-4 rounded-lg border border-amber-900/60 bg-zinc-900 p-4">
+          <summary className="cursor-pointer list-none text-sm">
+            <span className="font-semibold text-amber-300">
+              {idle.length} idle in the pool {PLAN_DEFAULTS.idleDays}+ days
+            </span>
+            <span className="text-zinc-400"> · {money(idle.length * priceCents)} a month · </span>
+            <span className="text-sky-300 underline group-open:hidden">review and release</span>
+            <span className="hidden text-sky-300 underline group-open:inline">hide</span>
+          </summary>
+          <p className="mb-3 mt-3 text-sm text-zinc-400">
+            Pool numbers (not pinned to any campaign) that have not dialled in {PLAN_DEFAULTS.idleDays} days or more. Each costs {money(priceCents)} a month. Keep them for the next campaign, or release the ones you do not need back to Telnyx. Nothing is released automatically.
           </p>
           <IdleRelease numbers={idle} priceCents={priceCents} />
-        </Card>
+        </details>
       ) : null}
 
-      <div className="mt-6 grid gap-6 lg:grid-cols-[2fr_1fr]">
-        <Card title={`Numbers (${numbers.length}: ${inPool} in the pool, ${numbers.length - inPool} on campaigns)`}>
-          {numbers.length === 0 ? (
-            <p className="text-sm text-zinc-500">No numbers yet. Order some above, or Sync to adopt numbers already on the Telnyx account.</p>
-          ) : (
-            <Table head={["Number", "Pool / campaign", "Provisioning", "Telnyx", "jambonz", "Added", ""]}>
+      <Card title={`Numbers (${numbers.length}: ${inPool} in the pool, ${numbers.length - inPool} on campaigns)`}>
+        {numbers.length === 0 ? (
+          <p className="text-sm text-zinc-500">
+            No numbers yet.{" "}
+            <NavLink href="/numbers/order" className="text-sky-300 underline">
+              Order some
+            </NavLink>
+            , or Sync to adopt numbers already on the Telnyx account.
+          </p>
+        ) : (
+          <div className="@container">
+            <div className={`hidden gap-3 px-1 pb-1.5 @min-[760px]:grid ${wide} ${th}`}>
+              <span>Number</span>
+              <span>Pool / campaign</span>
+              <span>Provisioning</span>
+              <span>Telnyx</span>
+              <span>jambonz</span>
+              <span>Added</span>
+              <span />
+            </div>
+            <div className="space-y-2 @min-[760px]:space-y-0 @min-[760px]:divide-y @min-[760px]:divide-zinc-800">
               {numbers.map((n) => (
-                <tr key={n.id}>
-                  <Td className="font-mono">
-                    {formatPhone(n.phone)}
-                    <div className="mt-0.5 flex gap-1 font-sans">
+                <div key={n.id} className={`grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-3 gap-y-1.5 rounded-md border border-zinc-800 p-2.5 text-sm @min-[760px]:rounded-none @min-[760px]:border-0 @min-[760px]:px-1 @min-[760px]:py-2 ${wide}`}>
+                  <div className="col-start-1 row-start-1 min-w-0">
+                    <span className="font-mono">{formatPhone(n.phone)}</span>
+                    <div className="mt-0.5 flex flex-wrap gap-1">
                       <Badge tone={n.campaignId ? "blue" : "zinc"}>{n.campaignId ? (n.campaign?.name ?? "campaign") : "pool"}</Badge>
                       {n.status !== "ACTIVE" ? <Badge tone={n.status === "SPAM_FLAGGED" ? "red" : "amber"}>{n.status.toLowerCase().replace("_", " ")}</Badge> : null}
                     </div>
-                  </Td>
-                  <Td>
-                    <form action={assignCampaign} className="flex items-center gap-1">
-                      <input type="hidden" name="id" value={n.id} />
-                      <select name="campaignId" defaultValue={n.campaignId ?? ""} className={`${inputClass} py-1 text-xs`}>
-                        <option value="">Shared pool</option>
-                        {campaigns.map((c) => (
-                          <option key={c.id} value={c.id}>
-                            {c.name}
-                          </option>
-                        ))}
-                      </select>
-                      <Button type="submit" variant="ghost" className="px-2 py-1 text-xs">
-                        Save
-                      </Button>
-                    </form>
-                  </Td>
-                  <Td>
-                    <Badge tone={statusTone(n.provisionStatus)}>{n.provisionStatus}</Badge>
-                    {n.provisionError ? <div className="mt-1 max-w-xs text-xs text-red-300">{n.provisionError}</div> : null}
-                  </Td>
-                  <Td className="text-xs text-zinc-400">{n.telnyxNumberId ? (n.smsEnabled ? "voice + SMS" : "voice") : "–"}</Td>
-                  <Td className="text-xs text-zinc-400">{n.jambonzPhoneNumberSid ? "registered" : "–"}</Td>
-                  <Td className="text-xs text-zinc-400">{n.createdAt.toLocaleDateString()}</Td>
-                  <Td>
+                  </div>
+                  <form action={assignCampaign} className="col-span-2 row-start-2 flex min-w-0 items-center gap-1 @min-[760px]:col-span-1 @min-[760px]:col-start-2 @min-[760px]:row-start-1">
+                    <input type="hidden" name="id" value={n.id} />
+                    <select name="campaignId" aria-label={`Pool or campaign for ${formatPhone(n.phone)}`} defaultValue={n.campaignId ?? ""} className={`${inputClass} min-w-0 py-1 text-xs`}>
+                      <option value="">Shared pool</option>
+                      {campaigns.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name}
+                        </option>
+                      ))}
+                    </select>
+                    <Button type="submit" variant="ghost" className="px-2 py-1 text-xs">
+                      Save
+                    </Button>
+                  </form>
+                  <div className="col-span-2 row-start-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-zinc-400 @min-[760px]:contents">
+                    <div className="@min-[760px]:col-start-3 @min-[760px]:row-start-1">
+                      <Badge tone={statusTone(n.provisionStatus)}>{n.provisionStatus}</Badge>
+                      {n.provisionError ? <div className="mt-1 text-xs text-red-300">{n.provisionError}</div> : null}
+                    </div>
+                    <span className="@min-[760px]:col-start-4 @min-[760px]:row-start-1">{n.telnyxNumberId ? (n.smsEnabled ? "voice + SMS" : "voice") : <span className="@max-[759px]:hidden">–</span>}</span>
+                    <span className="@min-[760px]:col-start-5 @min-[760px]:row-start-1">{n.jambonzPhoneNumberSid ? <>jambonz <span className="@min-[760px]:hidden">✓</span></> : <span className="@max-[759px]:hidden">–</span>}</span>
+                    <span className="@min-[760px]:col-start-6 @min-[760px]:row-start-1">
+                      <span className="@min-[760px]:hidden">added </span>
+                      {n.createdAt.toLocaleDateString()}
+                    </span>
+                  </div>
+                  <div className="col-start-2 row-start-1 text-right @min-[760px]:col-start-7">
                     {n.telnyxNumberId ? (
                       <form action={releaseOne}>
                         <input type="hidden" name="id" value={n.id} />
@@ -442,47 +145,13 @@ export default async function NumbersPage({ searchParams }: PageProps<"/numbers"
                         </Button>
                       </form>
                     ) : null}
-                  </Td>
-                </tr>
-              ))}
-            </Table>
-          )}
-        </Card>
-        <Card title="Orders">
-          {orders.length === 0 ? (
-            <p className="text-sm text-zinc-500">No orders yet.</p>
-          ) : (
-            <div className="space-y-2 text-sm">
-              {orders.map((o) => (
-                <div key={o.id} className="rounded-md border border-zinc-800 p-3">
-                  <div className="flex items-center justify-between">
-                    <span>
-                      {o.quantity} × {o.areaCode} {o.campaign ? `· ${o.campaign.name}` : "· shared pool"}
-                    </span>
-                    <Badge tone={o.status === "success" ? "green" : o.status === "pending" ? "amber" : "red"}>{o.status}</Badge>
                   </div>
-                  <div className="mt-1 text-xs text-zinc-500">
-                    {o.createdAt.toLocaleString()} · {o._count.numbers} numbers · {o.requestedBy ?? ""}
-                  </div>
-                  {o.error ? <div className="mt-1 text-xs text-red-300">{o.error}</div> : null}
                 </div>
               ))}
             </div>
-          )}
-        </Card>
-      </div>
-    </div>
-  );
-}
-
-function Row({ ok, label, children }: { ok: boolean; label: string; children: React.ReactNode }) {
-  return (
-    <div className="flex items-start gap-3">
-      <span className={`mt-0.5 inline-grid h-5 w-5 shrink-0 place-items-center rounded-full text-xs ${ok ? "bg-emerald-500/20 text-emerald-300" : "bg-zinc-800 text-zinc-500"}`}>{ok ? "✓" : "·"}</span>
-      <div>
-        <div className="font-medium text-zinc-200">{label}</div>
-        <div className="text-xs text-zinc-400">{children}</div>
-      </div>
+          </div>
+        )}
+      </Card>
     </div>
   );
 }

@@ -67,7 +67,11 @@ export const NAV_SECTIONS: readonly NavSection[] = [
     key: "numbers",
     label: "Numbers",
     tabs: [
+      // /numbers was one long page (7 Nov, owner): one row of tabs, each its own page; see HANDOFF "Navigation".
       { key: "numbers", label: "Numbers", href: "/numbers", roles: SUP, client: true },
+      { key: "order", label: "Order", href: "/numbers/order", roles: SUP, client: true },
+      { key: "texting", label: "Texting", href: "/numbers/texting", roles: SUP, client: true },
+      { key: "carrier", label: "Carrier setup", href: "/numbers/carrier", roles: SUP, client: true },
       { key: "reputation", label: "Reputation", href: "/dids", roles: SUP, client: true },
       { key: "inbound", label: "Inbound routing", href: "/inbound", also: ["/skills"], roles: SUP, client: true },
       { key: "voicemails", label: "Voicemails", href: "/voicemails", roles: FLOOR_STAFF, client: true },

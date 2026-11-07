@@ -60,3 +60,32 @@ test("?tab= on a section root points at the tab's page", () => {
   assert.ok(TAB_ALIASES.some((a) => a.source === "/leads" && a.tab === "lists" && a.destination === "/lists"));
   assert.ok(!TAB_ALIASES.some((a) => a.source === a.destination));
 });
+
+test("Numbers is one row of tabs: inventory, Order, Texting, Carrier setup, then the old pages", () => {
+  const tabs = visibleTabs(client(["SUPERVISOR"]), "numbers");
+  assert.deepEqual(
+    tabs.map((t) => [t.label, t.href]),
+    [
+      ["Numbers", "/numbers"],
+      ["Order", "/numbers/order"],
+      ["Texting", "/numbers/texting"],
+      ["Carrier setup", "/numbers/carrier"],
+      ["Reputation", "/dids"],
+      ["Inbound routing", "/inbound"],
+      ["Voicemails", "/voicemails"],
+    ],
+  );
+  // The longer URL wins, so a sub-route is its own tab and /numbers stays the inventory.
+  assert.equal(tabOfPath(tabs, "/numbers"), "numbers");
+  assert.equal(tabOfPath(tabs, "/numbers/order"), "order");
+  assert.equal(tabOfPath(tabs, "/numbers/texting"), "texting");
+  assert.equal(tabOfPath(tabs, "/numbers/carrier"), "carrier");
+  // ?tab= aliases reach the new tabs too.
+  for (const [tab, destination] of [["order", "/numbers/order"], ["texting", "/numbers/texting"], ["carrier", "/numbers/carrier"]]) {
+    assert.ok(TAB_ALIASES.some((a) => a.source === "/numbers" && a.tab === tab && a.destination === destination), tab);
+  }
+  // Same roles as the old single page: agents only see Voicemails, team leaders nothing from provisioning.
+  assert.deepEqual(visibleTabs(client(["AGENT"]), "numbers").map((t) => t.key), ["voicemails"]);
+  assert.deepEqual(visibleTabs(client(["TEAM_LEADER"]), "numbers").map((t) => t.key), ["voicemails"]);
+  assert.deepEqual(visibleTabs({ roles: ["ADMIN"], bare: true, platformTenant: true, acting: false }, "numbers"), []);
+});
