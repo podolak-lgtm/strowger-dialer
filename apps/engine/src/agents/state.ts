@@ -23,6 +23,22 @@ export interface AgentLive {
   afterCall?: "PAUSED" | null;
   /** WRAP_UP after an inbound queue call ends here (ms): the queue tick returns the agent to Ready, or clears the call if they paused (inbound/queues.ts). */
   wrapUntil?: number | null;
+  /** The ratio dialer counts this agent only from this time (ms): READY_DIAL_GRACE_MS after they click Ready. */
+  dialAfter?: number | null;
+}
+
+/**
+ * Owner, 7 Nov: wait 10 seconds after an agent goes Ready before dialing for them, so a quick Pause → Ready by
+ * mistake (or Ready → Pause) never leaves an answered customer with no agent (an abandoned call). Only a Ready
+ * the agent asked for (from Paused, logged in, or a line coming up); back to Ready after a call is at once, or
+ * every call would cost ten seconds.
+ */
+export const READY_DIAL_GRACE_MS = 10_000;
+const GRACE_FROM: readonly AgentState[] = ["PAUSED", "LOGGED_IN", "LOGGED_OUT"];
+
+/** May the ratio dialer place calls for this agent now? */
+export function dialableNow(a: Pick<AgentLive, "dialAfter">, now = Date.now()): boolean {
+  return !a.dialAfter || a.dialAfter <= now;
 }
 
 const key = (userId: string) => `agent:${userId}`;
@@ -54,6 +70,8 @@ export async function patchAgent(userId: string, patch: Partial<AgentLive>): Pro
   const next: AgentLive = { ...cur, ...patch };
   if (patch.state && patch.state !== cur.state) {
     next.since = Date.now();
+    if (patch.state === "READY") next.dialAfter = GRACE_FROM.includes(cur.state) ? next.since + READY_DIAL_GRACE_MS : null;
+    else next.dialAfter = null;
     if (cur.sessionId) {
       await prisma.agentSession
         .update({

@@ -1774,6 +1774,16 @@ effect (React Compiler rule). The left panel is now a compact summary
 the call controls (above). On the assist screen the current-lead row in
 Lead Queue expands (`CollapsibleLeadCard`) to the same editor.
 
+## Ten seconds after Ready before the ratio dialer dials (owner, 7 Nov)
+
+"When an agent goes to ready, let's wait ... 10 seconds before we start dialing, in case people accidentally
+pause and unpause." On 7 Nov the pacer dialed for an agent the moment they clicked Ready; they paused three
+seconds later, the customer answered with nobody free, and the call was abandoned. `patchAgent`
+(`agents/state.ts`) sets `AgentLive.dialAfter = since + READY_DIAL_GRACE_MS` (10 s) when an agent goes READY
+from PAUSED, LOGGED_IN or LOGGED_OUT, and clears it on any other state; `pacingTick` only counts agents for
+whom `dialableNow` is true. Back to READY after a call (WRAP_UP → READY) has no wait, or every call would
+cost ten seconds. Preview, manual dial and inbound are unchanged.
+
 ## One-way audio on the agent's line (owner, 7 Nov)
 
 "I couldn't hear myself ... only one-way. Make sure it doesn't happen anymore." The engine log of the call

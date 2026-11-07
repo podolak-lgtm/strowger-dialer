@@ -10,7 +10,7 @@
 // ledger that drives the throttle.
 import { prisma, type Campaign, type Lead } from "@strowger/db";
 import { toE164 } from "@strowger/shared/phone";
-import { listAgents, type AgentLive } from "../agents/state";
+import { dialableNow, listAgents, type AgentLive } from "../agents/state";
 import { config } from "../config";
 import { agentRoom, hookUrl, jambonz, jambonzConfigured } from "../jambonz/client";
 import { amdRecognizer } from "../assist/live";
@@ -183,7 +183,8 @@ export async function pacingTick(): Promise<PacingSnapshot[]> {
     // Blending: agents held for an inbound queue (oldest caller past blendWaitSeconds, or reserved) get no new outbound calls.
     if (!holdsByTenant.has(campaign.tenantId)) holdsByTenant.set(campaign.tenantId, await inboundHolds(campaign.tenantId));
     const held = holdsByTenant.get(campaign.tenantId)!;
-    const ready = (await readyAgents(campaign)).filter((a) => !held.has(a.userId));
+    // Agents who clicked Ready under 10 s ago are not dialed for yet (agents/state.ts READY_DIAL_GRACE_MS).
+    const ready = (await readyAgents(campaign)).filter((a) => !held.has(a.userId) && dialableNow(a));
     const inflight = await redis.scard(inflightKey(campaign.id));
     const stats = await abandonRate(campaign.id);
     const ratio = effectiveRatio(campaign, stats);
