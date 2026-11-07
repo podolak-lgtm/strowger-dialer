@@ -3,9 +3,11 @@
 // prompts (text to speech, with a fallback to silence when it is down).
 import { liveLeadVerbs } from "../assist/live";
 import { prisma, type Ivr, type VoicemailBox } from "@strowger/db";
-import { patchAgent, type AgentLive } from "../agents/state";
+import { getAgent, lockAgent, patchAgent, unlockAgent, type AgentLive } from "../agents/state";
 import { config } from "../config";
-import { agentRoom, hookUrl } from "../jambonz/client";
+import { hookUrl } from "../jambonz/client";
+import { leadJoinVerb } from "../jambonz/rooms";
+import { leadCallBridged } from "../dialer/calls";
 import { log } from "../log";
 import { redis } from "../redis";
 import { emitToAgent, emitToTenant } from "../realtime";
@@ -64,23 +66,44 @@ export function isFree(a: AgentLive): boolean {
   return a.state === "READY" && Boolean(a.agentCallSid) && !a.currentCallId && !a.reservedLeadId;
 }
 
-/** Conference-join verbs for an inbound caller into an agent's room (with the live transcription first, when the queue or campaign has it on). */
+/**
+ * Conference-join verbs for an inbound caller into an agent's room (with the live transcription first, when the
+ * queue or campaign has it on). Only while the agent still has a line and this call (owner, 7 Nov); otherwise the
+ * caller goes back in its queue (or, with no queue, to the agent's box). Sending the join counts as bridged.
+ */
 export async function joinAgentVerbs(callId: string, tenantId: string, agentId: string): Promise<Verbs> {
   const call = await prisma.call.findUnique({ where: { id: callId }, select: { id: true, tenantId: true, agentId: true, campaignId: true, queueId: true } });
-  const live = call ? await liveLeadVerbs({ ...call, agentId: call.agentId ?? agentId }) : [];
-  return [
-    ...live,
-    { verb: "conference", name: agentRoom(agentId), memberTag: "lead", startConferenceOnEnter: false, endConferenceOnExit: false, beep: false, statusHook: hookUrl("/jambonz/conf", { callId, tenantId }), statusEvents: ["join", "leave"], actionHook: hookUrl("/jambonz/conf-exit", { callId }) },
-    { verb: "hangup" },
-  ];
+  const agent = await getAgent(agentId);
+  if (!call || !agent?.agentCallSid || agent.currentCallId !== callId) {
+    log.warn({ callId, agentId, agentCallSid: agent?.agentCallSid ?? null, currentCallId: agent?.currentCallId ?? null }, "inbound bridge: the agent no longer has a line or this call");
+    if (!call) return [{ verb: "hangup" }];
+    const { requeueCaller } = await import("./queues");
+    return requeueCaller(callId, tenantId, agentId);
+  }
+  const live = await liveLeadVerbs({ ...call, agentId: call.agentId ?? agentId });
+  const verbs: Verbs = [...live, leadJoinVerb({ callId, tenantId, agentId, agent }), { verb: "hangup" }];
+  await leadCallBridged(callId);
+  return verbs;
 }
 
-export async function claimAgent(agent: AgentLive, callId: string, leadId: string | null, extra: Record<string, unknown> = {}): Promise<void> {
-  await prisma.call.update({ where: { id: callId }, data: { agentId: agent.userId } });
-  await patchAgent(agent.userId, { state: "ON_CALL", currentCallId: callId, reservedLeadId: null, wrapUntil: null });
+/**
+ * Give an answered inbound call to this agent. Atomic (owner, 7 Nov): `agentclaim:<userId>` first, then the
+ * agent re-read and still free; false = someone else got them, try the next agent.
+ */
+export async function claimAgent(agent: AgentLive, callId: string, leadId: string | null, extra: Record<string, unknown> = {}): Promise<boolean> {
+  if (!(await lockAgent(agent.userId, callId))) return false;
+  try {
+    const fresh = await getAgent(agent.userId);
+    if (!fresh || !isFree(fresh)) return false;
+    await prisma.call.update({ where: { id: callId }, data: { agentId: agent.userId } });
+    await patchAgent(agent.userId, { state: "ON_CALL", currentCallId: callId, reservedLeadId: null, wrapUntil: null });
+  } finally {
+    await unlockAgent(agent.userId, callId);
+  }
   if (leadId) await prisma.lead.update({ where: { id: leadId }, data: { ownerId: agent.userId } });
   emitToAgent(agent.userId, "call:update", { callId, status: "answered", leadId, inbound: true, ...extra });
   emitToTenant(agent.tenantId, "floor:call", { callId, status: "inbound", agentId: agent.userId });
+  return true;
 }
 
 // ── Voicemail ───────────────────────────────────────────────────────────────

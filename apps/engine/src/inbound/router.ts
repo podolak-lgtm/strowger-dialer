@@ -90,8 +90,7 @@ export async function ivrResult(ivrId: string, callId: string, digits: string, a
 export async function ringUser(tenantId: string, userId: string, callId: string, fromPhone: string): Promise<Verbs> {
   const live = await getAgent(userId);
   const call = await prisma.call.findUnique({ where: { id: callId } });
-  if (live && isFree(live)) {
-    await claimAgent(live, callId, call?.leadId ?? null, { direct: true, from: fromPhone });
+  if (live && isFree(live) && (await claimAgent(live, callId, call?.leadId ?? null, { direct: true, from: fromPhone }))) {
     return await joinAgentVerbs(callId, tenantId, userId);
   }
   const box = await boxForUser(tenantId, userId);
@@ -136,9 +135,16 @@ export async function routeInbound(callSid: string, fromRaw: string, toRaw: stri
       const preferredIds = [lead?.lastAgentId, lead?.ownerId].filter((x): x is string => Boolean(x));
       const owner = preferredIds.map((id) => free.find((a) => a.userId === id)).find(Boolean);
       const onCampaign = campaignId ? free.filter((a) => a.campaignId === campaignId).sort((a, b) => a.since - b.since) : [];
-      const agent = owner ?? onCampaign[0] ?? free.sort((a, b) => a.since - b.since)[0];
+      const ordered = [owner, ...onCampaign, ...free.sort((a, b) => a.since - b.since)].filter((a): a is NonNullable<typeof a> => Boolean(a));
+      // Atomic claim: the first of them nobody else is assigning right now.
+      let agent: (typeof ordered)[number] | undefined;
+      for (const a of ordered) {
+        if (await claimAgent(a, call.id, lead?.id ?? null, { from: fromPhone })) {
+          agent = a;
+          break;
+        }
+      }
       if (agent) {
-        await claimAgent(agent, call.id, lead?.id ?? null, { from: fromPhone });
         const verbs: Verbs = [];
         if (number.campaign?.disclosureOn) {
           const d = await audio(number.campaign.disclosureAudioId);

@@ -4,12 +4,12 @@
 // softphone, tagged kind=supervisor. When it is answered the call hook joins
 // it to the agent's room: muted for listen, coach-to-agent for whisper,
 // open for barge. Mode changes afterwards are participant actions on that
-// leg, so the room is never interrupted. Takeover = barge, then drop the
-// agent's leg; the lead stays with the supervisor.
+// leg, so the room is never interrupted. Take over is turned off (7 Nov):
+// dropping the agent's leg ended the room and the customer with it.
 import { prisma } from "@strowger/db";
-import { getAgent, patchAgent } from "../agents/state";
+import { getAgent } from "../agents/state";
 import { config } from "../config";
-import { agentRoom, hookUrl, jambonz, jambonzConfigured } from "../jambonz/client";
+import { hookUrl, jambonz, jambonzConfigured, roomOf } from "../jambonz/client";
 import { log } from "../log";
 import { redis } from "../redis";
 import { emitToTenant } from "../realtime";
@@ -85,12 +85,14 @@ export async function startSupervision(tenantId: string, supervisorId: string, a
   }
 }
 
-/** Verbs for the supervisor leg when jambonz answers it. */
-export function supervisorJoinVerbs(s: Supervision): Record<string, unknown>[] {
+/** Verbs for the supervisor leg when jambonz answers it: into the agent's current line room. */
+export async function supervisorJoinVerbs(s: Supervision): Promise<Record<string, unknown>[]> {
+  const agent = await getAgent(s.agentId);
+  if (!agent?.agentCallSid) return [{ verb: "hangup" }];
   return [
     {
       verb: "conference",
-      name: agentRoom(s.agentId),
+      name: roomOf(agent, s.agentId),
       memberTag: "supervisor",
       joinMuted: s.mode === "LISTEN",
       ...(s.mode === "WHISPER" ? { speakOnlyTo: "agent" } : {}),
@@ -115,7 +117,8 @@ export async function setSupervisionMode(supervisorId: string, mode: SuperviseMo
       await jambonz.calls.update(s.callSid, { conferenceParticipantAction: { action: "coach", tag: "agent" } });
       await jambonz.calls.update(s.callSid, { conf_mute_status: "unmute" });
     } else {
-      await jambonz.calls.update(s.callSid, { conferenceParticipantAction: { action: "uncoach" } });
+      // Uncoach fails when the leg was never coached (listen → barge): barge must still unmute.
+      await jambonz.calls.update(s.callSid, { conferenceParticipantAction: { action: "uncoach" } }).catch((e) => log.info({ err: e instanceof Error ? e.message : String(e), supervisorId }, "uncoach before barge failed"));
       await jambonz.calls.update(s.callSid, { conf_mute_status: "unmute" });
     }
   } catch (e) {
@@ -126,23 +129,25 @@ export async function setSupervisionMode(supervisorId: string, mode: SuperviseMo
   return { ok: true };
 }
 
-/** Barge, then drop the agent's leg. The lead stays on with the supervisor. */
+/**
+ * Take over is off (owner, 7 Nov): it hung up the agent's line, which ends the agent's room and so drops the
+ * customer. Barge instead. Bringing it back needs the lead moved into the supervisor's own room first.
+ */
 export async function takeOver(supervisorId: string): Promise<{ ok: true } | { ok: false; error: string }> {
-  const s = await getSupervision(supervisorId);
-  if (!s?.callSid) return { ok: false, error: "Not supervising anyone" };
-  const r = await setSupervisionMode(supervisorId, "BARGE");
-  if (!r.ok) return r;
-  const agent = await getAgent(s.agentId);
-  if (agent?.agentCallSid) {
-    await jambonz.calls.update(agent.agentCallSid, { call_status: "completed" }).catch((e) => log.warn({ err: e }, "takeover: agent leg hangup failed"));
+  log.info({ supervisorId }, "take over refused: turned off");
+  return { ok: false, error: "Take over is turned off for now; use Barge." };
+}
+
+/**
+ * A lead joined the agent's room: re-send coach on every whispering supervisor of that agent, so the whisper
+ * stays agent-only for the newcomer. Depends on conference join events (none logged since 6 Nov 22:10 UTC).
+ */
+export async function recoachWhisperers(agentId: string): Promise<void> {
+  for (const supervisorId of await watchersOf(agentId)) {
+    const s = await getSupervision(supervisorId);
+    if (!s?.callSid || s.agentId !== agentId || s.mode !== "WHISPER") continue;
+    await jambonz.calls.update(s.callSid, { conferenceParticipantAction: { action: "coach", tag: "agent" } }).catch((e) => log.warn({ err: e, supervisorId }, "re-coach failed"));
   }
-  if (agent?.currentCallId) {
-    await prisma.call.update({ where: { id: agent.currentCallId }, data: { agentId: supervisorId } }).catch(() => undefined);
-    await prisma.transfer.create({ data: { tenantId: s.tenantId, callId: agent.currentCallId, fromAgentId: s.agentId, toAgentId: supervisorId, kind: "COLD", completedAt: new Date() } }).catch(() => undefined);
-    await patchAgent(s.agentId, { currentCallId: null, state: "WRAP_UP" });
-  }
-  await audit(s.tenantId, supervisorId, "supervise.takeover", s.agentId, { callId: s.callId });
-  return { ok: true };
 }
 
 export async function stopSupervision(supervisorId: string): Promise<void> {

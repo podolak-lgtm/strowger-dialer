@@ -3,7 +3,8 @@
 import { prisma, type Campaign, type Lead } from "@strowger/db";
 import { prettyPhone, renderTemplate } from "@strowger/shared/cadence";
 import { getAgent, patchAgent } from "../agents/state";
-import { hookUrl, jambonz } from "../jambonz/client";
+import { hookUrl, jambonz, roomOf } from "../jambonz/client";
+import { clearConfExitNext, setConfExitNext } from "../jambonz/rooms";
 import { log } from "../log";
 import { dispositionCall } from "./calls";
 
@@ -30,14 +31,27 @@ export async function voicemailVerbs(campaign: Campaign, lead: Lead | null, call
   return [{ verb: "hangup" }];
 }
 
+/** What the lead leg runs for the agent's "Leave voicemail": a short pause (the beep), then the message. */
+export async function agentDropVerbs(callId: string): Promise<Verb[]> {
+  const call = await prisma.call.findUnique({ where: { id: callId }, include: { campaign: true, lead: true } });
+  if (!call?.campaign) return [{ verb: "hangup" }];
+  const agentUser = call.agentId ? await prisma.user.findUnique({ where: { id: call.agentId }, select: { firstName: true } }) : null;
+  // A beep has usually just played when the agent hears the greeting end; a short pause lands after it.
+  return [{ verb: "pause", length: 1 }, ...(await voicemailVerbs(call.campaign, call.lead, call.callerId, agentUser?.firstName ?? null))];
+}
+
 /** Agent hit a machine AMD missed: redirect the lead leg to the drop hook, auto-disposition, and move on. */
 export async function agentVoicemailDrop(callId: string, agentId: string): Promise<{ ok: true } | { ok: false; error: string }> {
   const call = await prisma.call.findUnique({ where: { id: callId }, include: { campaign: true } });
   if (!call?.campaign || call.agentId !== agentId) return { ok: false, error: "Not your call" };
   if (!call.providerCallId || call.endedAt) return { ok: false, error: "Call is not live" };
   try {
+    // The drop is the conf-exit marker first (jambonz/rooms.ts): the agent's room exit hook, which fires after the
+    // redirect and wins, then plays the drop instead of hanging the lead up (7 Nov: the drop never played).
+    await setConfExitNext(callId, await agentDropVerbs(callId), roomOf(await getAgent(agentId), agentId));
     await jambonz.calls.redirect(call.providerCallId, { url: hookUrl("/jambonz/vm-drop", { callId }), method: "POST" });
   } catch (e) {
+    await clearConfExitNext(callId);
     log.warn({ err: e, callId }, "voicemail drop redirect failed");
     return { ok: false, error: e instanceof Error ? e.message : String(e) };
   }

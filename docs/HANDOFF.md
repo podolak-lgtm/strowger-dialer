@@ -64,7 +64,8 @@ built and why; this says how it is wired and what will trip you.
 
 ## Telephony model
 
-- An agent's line is a **conference room named `agent-<userId>`**. Clicking
+- An agent's line is a **conference room of its own, `agent-<userId>-<sid8>`** (per line since 7 Nov,
+  "Call path hardening, engine"; `agent-<userId>` before). Clicking
   Ready makes the browser softphone call the jambonz application; the engine
   answers with a `conference` verb (`memberTag: agent`,
   `endConferenceOnExit: true`) and records the leg's call_sid in Redis
@@ -1660,12 +1661,109 @@ anytime 24/7, that's fine") stores `{ phones, until: null, always: true }`
 and stays on until an admin turns it off; the card's checkbox defaults to
 it. It still covers only the listed numbers.
 
+## Call path hardening, engine (owner, 7 Nov)
+
+Live calls connected with no audio or dropped by themselves. A review of the engine's call path found the
+causes below; this is what changed (engine only; the console's half is in its own section). Pure rules are in
+`packages/shared/src/telephony.ts` (tested): `agentLineRoom`, `newLineDecision`, `amdAction`.
+
+- **Hard rule: one agent, one line (call control), ever** (also in CLAUDE.md). Never more than one line per
+  agent; a second window, tab or device is told "you already have a call screen open elsewhere", never
+  silently takes over or doubles up. Server side (`agentLegVerbs`, `jambonz/routes.ts`): a softphone leg
+  calling in while `AgentLive.agentCallSid` names another leg asks jambonz whether the old leg is alive
+  (`callLegAlive` in `jambonz/client.ts`: `calls.get`; 404 / "not found" / "session is gone" / a final status
+  = gone; any other error counts as alive). Alive and no `linetakeover:<userId>` → the new leg gets `hangup`
+  and the agent's sockets get `agent:line-refused {reason: "another-screen", callSid, onCall}` (WARN "agent
+  line refused"). Gone, or the takeover flag set → the new leg is accepted, the flag deleted, the old leg hung
+  up only when it is alive. **An agent's line is never hung up while `currentCallId` is set**: with a call on
+  it the new leg is refused even with the takeover flag (stricter than "flag set → accept", on purpose: that
+  would leave two lines). `POST /internal/agents/line/takeover {tenantId, userId}` (same `Ids` shape as the
+  other `/internal/agents/*`): with a call → `{ok:false, error:"You are on a call in your other window.
+  Finish it there first."}`; else sets `linetakeover:<userId>` (30 s), hangs up the old leg if alive, clears
+  `agentCallSid`/`room`, leaves the agent PAUSED with `readyOnLine` when they were Ready (the 10 s Ready grace
+  applies when the new line joins), `{ok:true}`. The old 500 ms wait after replacing a leg is gone (rooms are
+  per line now).
+- **Logout refuses under a call**: `/internal/agents/logout` with `currentCallId` → `{ok:false,
+  error:"Finish or disposition the call before logging out."}` (logout hangs up the line, and the customer).
+- **Per-line rooms.** An agent line's room is `agent-<userId>-<first 8 chars of its call_sid>`
+  (`agentLineRoom`), stored as `AgentLive.room` beside `agentCallSid` (cleared with it when the line drops;
+  kept across re-login). `roomOf(agent, userId)` (`jambonz/client.ts`) = `agent.room ?? agentRoom(userId)`
+  and is used by every join into an agent's room: lead joins (outbound, ratio, inbound, closer transfer),
+  supervisor legs (`supervisorJoinVerbs`, now async), the warm external-transfer destination. A lead can no
+  longer be sent into a stale conference of the same name left by an older leg.
+- **One lead-join verb** (`leadJoinVerb`, `jambonz/rooms.ts`): the room from `roomOf`, `actionHook
+  /jambonz/conf-exit?callId=&room=`, and a `waitHook /jambonz/conf-wait?callId=&room=&agentId=`. INFO "lead
+  sent to agent room" {callId, agentId, room, agentCallSid} on every send. The waitHook only runs while the
+  room has not started (the agent's leg is not in it): WARN "lead waiting: agent room not started" with the
+  agent's live sid/room/state (once per call per 30 s), reply `pause 5` so the lead waits quietly.
+- **conf-exit marker** (`jambonz/rooms.ts`). jambonz runs the old room's conference actionHook ~0.2 s after
+  any engine move of a lead out of a room, and that answer wins (6 Nov). Before every such move the engine
+  writes `confexit:<callId>` = `{from: room being left, verbs}` (60 s). `/jambonz/conf-exit`, after
+  `movedTransferFor` (external transfers, unchanged) and the survey check, answers with the marker's verbs and
+  deletes it, only for the room it was written for (`room` in the hook query; hooks without it, from before,
+  take it). Writers: closer transfer (`transferCall`), agent Leave VM (`agentVoicemailDrop`), AMD tone drop,
+  and a re-sent queue bridge. The closer transfer now creates the closer's `Call` **before** the move (its id
+  goes in the closer-room hooks, so a later Leave VM by the closer finds its own marker), writes the closer-room
+  join as the marker, and redirects to **`/jambonz/moved?callId=`**, which answers the marker's verbs, behind a
+  2 s `pause` when they contain a conference: the exit hook then replaces a pause, not a room the lead already
+  joined (whose own exit hook would fire and hang up). `/jambonz/transfer` stays for redirects issued before.
+  The screener redirect is never reached for a call in a room (bridgedAt is set on join, below), so it needs
+  no marker.
+- **AMD hook** (`amdAction`): calls join the room at once, so the hook never rejoins or re-bridges (no more
+  `bridgeToReadyAgent`/`joinVerbs` from AMD). Joined = `agentId && answeredAt`. Human / no speech / timeout →
+  `[]`. Machine on a joined call → `[]` and `call:update {callId, amd: "machine"}` to the agent (they choose
+  Leave VM). HANGUP voicemail action only for calls nobody joined. Tone after a machine on a DROP campaign →
+  the drop verbs, with the marker when joined (`call:update … voicemail: "dropping"`). Abandoned calls → `[]`.
+  INFO "amd event" {type, joined, abandoned, action}.
+- **bridgedAt is set when the join is sent** (`joinVerbs`, `joinAgentVerbs`; `leadCallBridged` is now an
+  atomic `updateMany … bridgedAt: null`): no `/jambonz/conf` event has been logged since 6 Nov 22:10 UTC, so
+  calls never counted as bridged. The conference join event still calls it as a confirmation (no-op).
+  Effects checked: answered calls with an agent end BRIDGED, the lead CONTACTED, cadence `afterAttempt`
+  sees a contact, the survey and queue-callback "connected" checks and the recording export include them; a
+  machine the agent hung up on without Leave VM now counts as contacted too.
+- **Atomic agent claim** (`lockAgent`/`unlockAgent`, `agents/state.ts`: `SET agentclaim:<userId> <callId> NX PX
+  5000`): `bridgeToReadyAgent` walks the ready pool, claims the agent, re-reads it still free, claims the call,
+  patches ON_CALL, releases; a failed claim tries the next agent. Same in inbound `claimAgent` (now returns
+  boolean; `routeInbound` tries the next free agent, `ringUser` goes to the box, the queue tick leaves the
+  caller for the next tick) and the closer in `transferCall`. (Queue callbacks reserve an agent before
+  dialing and are not locked.)
+- **Manual dial** is from Paused only: from Ready → "Pause first, then dial: the dialer may already be
+  calling someone for you." (the old Ready→Paused step is gone). `dialLeadForAgent` refuses an agent who
+  already has `currentCallId`.
+- `/jambonz/conf` acts on an agent room's `end` only when `call_sid === live.agentCallSid` (a missing sid is
+  not "current"). `/jambonz/status` resolves a lead leg through `callsid:<sid>` first, then `tag.callId`
+  (a closer transfer moves the leg to a new Call).
+- **Pacer**: each tick drops in-flight members whose Call ended or was dialed more than 2 minutes ago
+  (`pruneInflight`; a missed final status used to leak a slot for ever).
+- **Supervision**: Take over is off (`takeOver` → "Take over is turned off for now; use Barge."): it hung up
+  the agent's line, which ends the room and the customer. Barge's uncoach has a catch (a never-coached leg
+  failed the barge). On a lead's `join` event in an agent room, coach is re-sent to every WHISPER supervisor
+  of that agent (`recoachWhisperers`); this depends on conference events arriving, which they have not since
+  6 Nov.
+- **External transfer Leave**: if either redirect (destination, lead) throws, `agentLeftAt` goes back to null,
+  the destination leg is ended, the call is not dispositioned and the agent gets an error (the lead stays).
+- **Queues**: the waitHook answers `leave` while `qbridge:<callId>` exists (the exit hook then joins the
+  agent). `joinAgentVerbs` (used by `/jambonz/bridge`, the queue exit hook, callbacks, direct and campaign
+  routes) checks the agent still has a line and `currentCallId === callId`, else `requeueCaller` puts the caller
+  back in its queue (no forced hold again; agent unassigned) or, with no queue, in the agent's box.
+  `/jambonz/bridge` answers `pause 1` + the join (the enqueue's exit hook wins ~0.2 s later with the same
+  join); when the caller was already joined via `leave`, it writes the marker first.
+- **Live transcription**: the agent leaving a call no longer sends REST `transcribe_status: pause` to the
+  lead leg (`finish`, `assist/live.ts`); results after that are ignored.
+- **Diagnostics** (`index.ts`): `jambonz.conferences.list()` at start and every 60 s while any agent is
+  logged in, INFO "jambonz conferences" {count, names}: a stale `agent-…` room shows up here.
+- Needs a live test: two windows (refusal + takeover), closer transfer, Leave VM and AMD drop on a joined
+  call, a queue call (leave + bridge), external transfer Leave, the conference list and the conf-wait WARN.
+  TODO: if `/jambonz/conf` events stay silent, find out why (the agent leg's statusHook is unchanged); the
+  re-coach and the cold transfer's auto-leave depend on them.
+
 ## Mid-call controls (`dialer/controls.ts`)
 
 - **Hold**: `conf_hold_status` on the lead leg.
 - **Warm transfer to a closer** (the in-dialer kind; external numbers are
   the section above): the closer is claimed first (ON_CALL), the lead leg is
-  redirected to `/jambonz/transfer` which joins the closer's room; the
+  moved into the closer's room (since 7 Nov via the conf-exit marker and
+  `/jambonz/moved`, see "Call path hardening, engine"); the
   fronter's `Call` closes with a `Transfer` row and a second `Call` under
   the closer inherits the provider call sid (so status hooks follow it);
   the lead's owner becomes the closer; fronter → WRAP_UP. Targets =
@@ -2342,7 +2440,8 @@ supervisor's own registered softphone (`to: {type: user}`), tagged
 the call hook joins it to the agent's room: `joinMuted` for listen,
 `speakOnlyTo: agent` for whisper, open for barge. Mode changes are
 `conferenceParticipantAction` coach/uncoach plus `conf_mute_status` on that
-leg, so the room is never interrupted. Takeover = barge, then
+leg, so the room is never interrupted. (Take over is turned off since 7 Nov,
+see "Call path hardening, engine".) Takeover was barge, then
 `call_status: completed` on the agent's leg; the `Call` moves to the
 supervisor and a COLD `Transfer` row is written. Every action is an
 `AuditLog` row `supervise.<mode>` which the floor shows as action history.

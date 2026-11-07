@@ -7,8 +7,10 @@ import { prisma, type Campaign } from "@strowger/db";
 import { evaluateDialWindow } from "@strowger/shared/compliance";
 import { resolveZone } from "@strowger/shared/geo";
 import { normalizePhone } from "@strowger/shared/phone";
-import { getAgent, listAgents, patchAgent, type AgentLive } from "../agents/state";
-import { hookUrl, jambonz } from "../jambonz/client";
+import { getAgent, listAgents, lockAgent, patchAgent, unlockAgent, type AgentLive } from "../agents/state";
+import { hookUrl, jambonz, roomOf } from "../jambonz/client";
+import { clearConfExitNext, leadJoinVerb, setConfExitNext } from "../jambonz/rooms";
+import { redis } from "../redis";
 import { log } from "../log";
 import { emitToAgent, emitToTenant } from "../realtime";
 import { dialLeadForAgent } from "./calls";
@@ -49,34 +51,48 @@ export async function transferTargets(tenantId: string, campaignId: string | nul
  * Warm transfer: the lead leg leaves the fronter's room and joins the
  * closer's. The fronter goes to wrap-up (and dispositions the first half),
  * the closer is on the call. Both see the same lead.
+ *
+ * The move (owner, 7 Nov): the closer's half is its own Call, created first so the closer's room hooks carry its
+ * id; the closer-room join is written as the conf-exit marker (jambonz/rooms.ts) and the lead is redirected to
+ * `/jambonz/moved`, which plays a short pause then the same join. The fronter's room exit hook, which fires
+ * ~0.2 s after the redirect and wins, answers with the marker: the lead joins the closer's room once.
  */
 export async function transferCall(callId: string, fromAgentId: string, toAgentId: string): Promise<Result> {
   const call = await prisma.call.findUnique({ where: { id: callId } });
   if (!call || call.agentId !== fromAgentId) return { ok: false, error: "Not your call" };
   if (!call.providerCallId || call.endedAt) return { ok: false, error: "Call is not live" };
-  const target = await getAgent(toAgentId);
-  if (!target || target.state !== "READY" || !target.agentCallSid || target.currentCallId) return { ok: false, error: "That agent is no longer free" };
 
-  // Claim the closer first so nothing else lands on them while the leg moves.
-  await patchAgent(toAgentId, { state: "ON_CALL", currentCallId: callId, reservedLeadId: null });
+  // Claim the closer first (atomically: agentclaim) so nothing else lands on them while the leg moves.
+  if (!(await lockAgent(toAgentId, callId))) return { ok: false, error: "That agent is no longer free" };
+  let target: AgentLive | null;
   try {
-    // The fronter leaves: live transcription of this call stops (the closer's part is not transcribed).
-    await liveAgentLeft(callId).catch(() => undefined);
-    await jambonz.calls.redirect(call.providerCallId, { url: hookUrl("/jambonz/transfer", { callId, toAgentId }), method: "POST" });
-  } catch (e) {
-    await patchAgent(toAgentId, { state: "READY", currentCallId: null });
-    log.warn({ err: e, callId }, "transfer redirect failed");
-    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    target = await getAgent(toAgentId);
+    if (!target || target.state !== "READY" || !target.agentCallSid || target.currentCallId || target.reservedLeadId) return { ok: false, error: "That agent is no longer free" };
+    target = await patchAgent(toAgentId, { state: "ON_CALL", currentCallId: callId, reservedLeadId: null });
+  } finally {
+    await unlockAgent(toAgentId, callId);
   }
   // The call continues under the closer; the fronter's half is recorded as a transfer.
   const second = await prisma.call.create({
     data: { tenantId: call.tenantId, campaignId: call.campaignId, leadId: call.leadId, agentId: toAgentId, direction: call.direction, phone: call.phone, callerId: call.callerId, answeredAt: new Date(), bridgedAt: new Date(), providerData: { transferredFrom: call.id } },
   });
+  const verbs = [leadJoinVerb({ callId: second.id, tenantId: call.tenantId, agentId: toAgentId, agent: target }), { verb: "hangup" }];
+  try {
+    // The fronter leaves: live transcription of this call stops (the closer's part is not transcribed).
+    await liveAgentLeft(callId).catch(() => undefined);
+    await setConfExitNext(callId, verbs, roomOf(await getAgent(fromAgentId), fromAgentId));
+    await jambonz.calls.redirect(call.providerCallId, { url: hookUrl("/jambonz/moved", { callId }), method: "POST" });
+  } catch (e) {
+    await clearConfExitNext(callId);
+    await prisma.call.delete({ where: { id: second.id } }).catch(() => undefined);
+    await patchAgent(toAgentId, { state: "READY", currentCallId: null });
+    log.warn({ err: e, callId }, "transfer redirect failed");
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
   await prisma.transfer.create({ data: { tenantId: call.tenantId, callId: call.id, fromAgentId, toAgentId, kind: "WARM", completedAt: new Date() } });
   // The provider call sid now belongs to the closer's record for status hooks.
   await prisma.call.update({ where: { id: call.id }, data: { providerCallId: null, endedAt: new Date(), outcome: call.outcome ?? "BRIDGED", notes: [call.notes, `Transferred to agent ${toAgentId}`].filter(Boolean).join("\n") } });
   await prisma.call.update({ where: { id: second.id }, data: { providerCallId: call.providerCallId } });
-  const { redis } = await import("../redis");
   await redis.set(`callsid:${call.providerCallId}`, second.id, "EX", 6 * 3600);
   if (call.leadId) {
     await prisma.lead.update({ where: { id: call.leadId }, data: { ownerId: toAgentId } });
@@ -97,8 +113,11 @@ export async function manualDial(tenantId: string, agentId: string, raw: string)
   const phone = normalizePhone(raw);
   if (!phone) return { ok: false, error: "That is not a dialable US number" };
   const live = await getAgent(agentId);
-  // Ready or Paused, with the line up (owner, 5 Nov: paused is the natural time to dial by hand, since the dialer leaves you alone).
-  if (!live?.campaignId || !(live.state === "READY" || live.state === "PAUSED")) return { ok: false, error: "Log in and bring your line up first (Ready, or Paused)" };
+  if (!live?.campaignId || !(live.state === "READY" || live.state === "PAUSED")) return { ok: false, error: "Log in and bring your line up first, then pause and dial" };
+  // Owner, 7 Nov: a manual dial from Ready raced the ratio dialer (it could already be calling someone for this
+  // agent, and the answered call and the manual dial both landed in the agent's room). Manual dial is from Paused only.
+  if (live.state === "READY") return { ok: false, error: "Pause first, then dial: the dialer may already be calling someone for you." };
+  if (live.currentCallId) return { ok: false, error: "You already have a call. Finish or disposition it first." };
   if (!live.agentCallSid) return { ok: false, error: "Your line is not up: press Ready once so the softphone joins your room, then pause if you like" };
   const campaign = (await prisma.campaign.findFirst({ where: { id: live.campaignId, tenantId } })) as Campaign | null;
   if (!campaign) return { ok: false, error: "Campaign not found" };
@@ -118,13 +137,10 @@ export async function manualDial(tenantId: string, agentId: string, raw: string)
   } else {
     await prisma.lead.update({ where: { id: lead.id }, data: { status: "DIALING", ownerId: agentId } });
   }
-  // A manual dial takes the agent out of the dialer's pool first (owner, 6 Nov: "make sure when they're manually
-  // dialing, the system's not outbound dialing at the same time"): Ready becomes Paused (Manual dial), and the
-  // disposition returns them to Paused, not Ready.
-  const wasReady = live.state === "READY";
-  await patchAgent(agentId, { reservedLeadId: lead.id, afterCall: "PAUSED", ...(wasReady ? { state: "PAUSED" as const, pauseReason: "Manual dial" } : {}) });
+  // The agent is Paused (above), so the dialer leaves them alone; the disposition returns them to Paused, not Ready.
+  await patchAgent(agentId, { reservedLeadId: lead.id, afterCall: "PAUSED" });
   const r = await dialLeadForAgent(campaign, lead, agentId);
-  if (!r.ok) await patchAgent(agentId, { reservedLeadId: null, afterCall: null, ...(wasReady ? { state: "READY" as const, pauseReason: null } : {}) });
+  if (!r.ok) await patchAgent(agentId, { reservedLeadId: null, afterCall: null });
   return r;
 }
 

@@ -23,7 +23,8 @@ import { inboundLive } from "../inbound/queues";
 import { aiReadyFor } from "../inbound/ai/control";
 import { testPrompt } from "../inbound/ai/llm";
 import { AI_MODES, parseHandoffPhrases } from "@strowger/shared/inbound";
-import { jambonz, jambonzConfigured } from "../jambonz/client";
+import { callLegAlive, jambonz, jambonzConfigured } from "../jambonz/client";
+import { redis } from "../redis";
 import { assignNumbersToCampaign, createBrand, createTenDlcCampaign, orderNumbers, provisionStatus, releaseNumber, searchNumbers, setupCarrier, syncNumbers, tenDlcStatus, usecaseFees } from "../provision";
 import type { BrandInput, CampaignInput } from "../provision/telnyx";
 import { fcrProgress, startFcrRun } from "../provision/fcr";
@@ -98,6 +99,7 @@ export async function registerInternalRoutes(app: FastifyInstance): Promise<void
       // A re-login mid-call keeps the call's state.
       state: existing?.currentCallId && (existing.state === "ON_CALL" || existing.state === "WRAP_UP") ? existing.state : "PAUSED",
       agentCallSid: existing?.agentCallSid ?? null,
+      room: existing?.room ?? null,
       currentCallId: existing?.currentCallId ?? null,
       reservedLeadId: null,
       pauseReason: existing?.currentCallId ? (existing.pauseReason ?? null) : "Not ready yet",
@@ -130,9 +132,32 @@ export async function registerInternalRoutes(app: FastifyInstance): Promise<void
   app.post("/internal/agents/logout", async (req) => {
     const { userId } = Ids.parse(req.body);
     const live = await getAgent(userId);
+    // Logging out hangs up the line, and with it the customer: never under a call (owner, 7 Nov).
+    if (live?.currentCallId) return { ok: false, error: "Finish or disposition the call before logging out." };
     if (live?.reservedLeadId) await releaseLead(live.reservedLeadId);
     if (live?.agentCallSid) await jambonz.calls.update(live.agentCallSid, { call_status: "completed" }).catch(() => undefined);
     await removeAgent(userId);
+    return { ok: true };
+  });
+
+  // One agent, one line (owner, 7 Nov: hard rule). Another screen's softphone was refused (agent:line-refused);
+  // the agent chose "use it here": the old line is hung up and the next leg that calls in is accepted. Never
+  // under a call.
+  app.post("/internal/agents/line/takeover", async (req) => {
+    const { tenantId, userId } = Ids.parse(req.body);
+    const live = await getAgent(userId);
+    if (!live || live.tenantId !== tenantId) return { ok: false, error: "Not logged in" };
+    if (live.currentCallId) return { ok: false, error: "You are on a call in your other window. Finish it there first." };
+    await redis.set(`linetakeover:${userId}`, "1", "EX", 30);
+    const oldSid = live.agentCallSid;
+    if (oldSid) {
+      if (await callLegAlive(oldSid)) await jambonz.calls.update(oldSid, { call_status: "completed" }).catch((e) => log.warn({ err: e, userId }, "takeover: old agent leg hangup failed"));
+      await redis.del(`agentsid:${oldSid}`);
+    }
+    // No line now: paused (the dialer leaves them alone), and Ready again when the new line joins if they were Ready.
+    const wasReady = live.state === "READY";
+    await patchAgent(userId, { agentCallSid: null, room: null, state: "PAUSED", pauseReason: wasReady ? null : (live.pauseReason ?? "Not ready yet"), readyOnLine: wasReady || Boolean(live.readyOnLine) });
+    log.info({ userId, oldSid, wasReady }, "agent line taken over by another screen");
     return { ok: true };
   });
 

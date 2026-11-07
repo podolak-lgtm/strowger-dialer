@@ -31,6 +31,22 @@ export async function removeInflight(campaignId: string, callId: string): Promis
   await redis.srem(inflightKey(campaignId), callId);
 }
 
+/** In-flight members whose call is over, or older than this, are dropped every tick (a missed final status leaked them). */
+export const INFLIGHT_MAX_AGE_MS = 2 * 60_000;
+
+async function pruneInflight(campaignId: string): Promise<void> {
+  const ids = await redis.smembers(inflightKey(campaignId));
+  if (ids.length === 0) return;
+  const rows = await prisma.call.findMany({ where: { id: { in: ids } }, select: { id: true, endedAt: true, dialedAt: true } });
+  const cutoff = Date.now() - INFLIGHT_MAX_AGE_MS;
+  const live = new Set(rows.filter((r) => !r.endedAt && r.dialedAt.getTime() >= cutoff).map((r) => r.id));
+  const stale = ids.filter((id) => !live.has(id));
+  if (stale.length) {
+    await redis.srem(inflightKey(campaignId), ...stale);
+    log.info({ campaignId, removed: stale.length }, "pacer: stale in-flight calls dropped");
+  }
+}
+
 /** Agents on this campaign who can take a bridged call right now, longest idle first. */
 export async function readyAgents(campaign: Campaign): Promise<AgentLive[]> {
   const live = (await listAgents(campaign.tenantId)).filter((a) => a.campaignId === campaign.id && a.state === "READY" && a.agentCallSid && !a.currentCallId && !a.reservedLeadId);
@@ -185,6 +201,7 @@ export async function pacingTick(): Promise<PacingSnapshot[]> {
     const held = holdsByTenant.get(campaign.tenantId)!;
     // Agents who clicked Ready under 10 s ago are not dialed for yet (agents/state.ts READY_DIAL_GRACE_MS).
     const ready = (await readyAgents(campaign)).filter((a) => !held.has(a.userId) && dialableNow(a));
+    await pruneInflight(campaign.id);
     const inflight = await redis.scard(inflightKey(campaign.id));
     const stats = await abandonRate(campaign.id);
     const ratio = effectiveRatio(campaign, stats);

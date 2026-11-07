@@ -87,6 +87,8 @@ export async function dialLeadForAgent(campaign: Campaign, lead: Lead, agentId: 
   if (!jambonzConfigured) return { ok: false, error: "Telephony is not configured (jambonz API key missing)" };
   const agent = await getAgent(agentId);
   if (!agent || !agent.agentCallSid) return { ok: false, error: "Your phone line is not up. Click Ready first." };
+  // One call at a time (owner, 7 Nov): a dial for an agent who already has a call would put two leads in one room.
+  if (agent.currentCallId) return { ok: false, error: "You already have a call. Finish or disposition it first." };
 
   const allowed = await outboundAllowed(campaign.tenantId);
   if (!allowed.ok) return { ok: false, error: allowed.error };
@@ -262,10 +264,16 @@ export async function leadCallAnswered(callId: string): Promise<void> {
   if (call.agentId) emitToAgent(call.agentId, "call:update", { callId, status: "answered", ...screenerFields(call) });
 }
 
+/**
+ * The lead is with its agent. Set when the engine hands back the join verbs for an agent whose line is up
+ * (owner, 7 Nov: the conference join event stopped arriving on 6 Nov, so it cannot be what marks a call bridged);
+ * the join event calls this again as a confirmation and it does nothing the second time.
+ */
 export async function leadCallBridged(callId: string): Promise<void> {
+  const claimed = await prisma.call.updateMany({ where: { id: callId, bridgedAt: null }, data: { bridgedAt: new Date() } });
+  if (claimed.count !== 1) return;
   const call = await prisma.call.findUnique({ where: { id: callId } });
-  if (!call || call.bridgedAt) return;
-  await prisma.call.update({ where: { id: callId }, data: { bridgedAt: new Date() } });
+  if (!call) return;
   if (call.agentId) emitToAgent(call.agentId, "call:update", { callId, status: "bridged", ...screenerFields(call) });
   await liveCallBridged(callId).catch((e) => log.warn({ err: e, callId }, "live transcription on bridge failed"));
 }

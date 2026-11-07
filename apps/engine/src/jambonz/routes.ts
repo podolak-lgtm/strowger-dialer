@@ -6,6 +6,9 @@
 //   POST /jambonz/amd        answering-machine events for a lead leg
 //   POST /jambonz/status     call status lifecycle for every leg
 //   POST /jambonz/conf       conference status events (join/leave)
+//   POST /jambonz/conf-exit  a lead leg left an agent's room (answers the conf-exit marker, jambonz/rooms.ts)
+//   POST /jambonz/conf-wait  a lead is waiting in an agent room that has not started (logged)
+//   POST /jambonz/moved      redirect target for an engine move out of an agent's room
 //
 // Replies are plain jambonz verb arrays. Outbound prompts are `play` of
 // uploaded files; only the inbound queue prompts (announcements, the callback
@@ -17,7 +20,7 @@ import { recordTts } from "../billing/vendor";
 import { prisma } from "@strowger/db";
 import { decryptString, sipDigestMatches } from "@strowger/shared/secrets";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import { getAgent, patchAgent } from "../agents/state";
+import { getAgent, lockAgent, patchAgent, unlockAgent } from "../agents/state";
 import { redis } from "../redis";
 import { config } from "../config";
 import { callIdForSid, callStatusOf, leadCallAnswered, leadCallBridged, leadCallEnded, screenerFields } from "../dialer/calls";
@@ -26,8 +29,8 @@ import { detectScreener } from "@strowger/shared/compliance";
 import { TTS_ONLY_VENDORS } from "@strowger/shared/assist";
 import { emitToAgent } from "../realtime";
 import type { Call, Campaign } from "@strowger/db";
-import { getSupervision, supervisorJoinVerbs, supervisorLegEnded } from "../supervise";
-import { voicemailVerbs } from "../dialer/voicemail";
+import { getSupervision, recoachWhisperers, supervisorJoinVerbs, supervisorLegEnded } from "../supervise";
+import { agentDropVerbs, voicemailVerbs } from "../dialer/voicemail";
 import { movedTransferFor, transferConfEvent, transferIdForSid, transferJoinVerbs, transferLegStatus, transferLegVerbs } from "../dialer/transfers";
 import { ivrResult, joinAgentVerbs, overflowVerbs, queueWaitVerbs, routeInbound } from "../inbound/router";
 import { inboundHolds, queueCallbackChoice, queueExitVerbs } from "../inbound/queues";
@@ -37,7 +40,9 @@ import { markTtsDown } from "../inbound/common";
 import { aiFallbackVerbs, aiHandoffVerbs } from "../inbound/ai/control";
 import { agentTranscript, leadTranscript, liveAgentLegVerbs, liveLeadVerbs, markSttDown } from "../assist/live";
 import { log } from "../log";
-import { agentRoom, hookUrl, jambonz } from "./client";
+import { agentLineRoom, amdAction, newLineDecision } from "@strowger/shared/telephony";
+import { callLegAlive, hookUrl, jambonz, roomOf } from "./client";
+import { leadJoinVerb, peekConfExitNext, setConfExitNext, takeConfExitNext } from "./rooms";
 
 type Verb = Record<string, unknown>;
 
@@ -177,7 +182,7 @@ export async function registerJambonzRoutes(app: FastifyInstance): Promise<void>
     if (tag.kind === "supervisor" && tag.supervisorId) {
       const sup = await getSupervision(tag.supervisorId);
       if (!sup) return reply.send([{ verb: "hangup" }]);
-      return reply.send(supervisorJoinVerbs(sup));
+      return reply.send(await supervisorJoinVerbs(sup));
     }
 
     // Lead leg we created: it answered. Join the agent's room.
@@ -205,28 +210,40 @@ export async function registerJambonzRoutes(app: FastifyInstance): Promise<void>
       log.info({ userId }, "agent softphone called in without a session");
       return [{ verb: "hangup" }];
     }
-    // One line per agent. A second tab or device calling in replaces the
-    // first; two legs in the same room play each other's microphone back
-    // (5 Nov: "I'm hearing myself" while Paused, two registrations a second apart).
+    // One agent, one line, ever (owner, 7 Nov: hard rule, CLAUDE.md). A second tab, window or device calling in
+    // while the first line is up is refused and told so; it takes the line only after the agent asked for it here
+    // (POST /internal/agents/line/takeover sets `linetakeover:<userId>`), and never under a call. (5 Nov: two
+    // legs in one room played each other's microphone back; 7 Nov: a silent replace dropped calls.)
+    const takeoverKey = `linetakeover:${userId}`;
     if (live.agentCallSid && live.agentCallSid !== b.call_sid) {
-      log.info({ userId, oldSid: live.agentCallSid, newSid: b.call_sid }, "agent line replaced; hanging up the older leg");
-      await redis.del(`agentsid:${live.agentCallSid}`);
-      await jambonz.calls.update(live.agentCallSid, { call_status: "completed" }).catch((e) => log.warn({ err: e, userId }, "older agent leg hangup failed"));
-      // Let the old room end before the new leg starts a fresh one.
-      await new Promise((r) => setTimeout(r, 500));
+      const oldSid = live.agentCallSid;
+      const [oldAlive, takeover] = await Promise.all([callLegAlive(oldSid), redis.get(takeoverKey)]);
+      const d = newLineDecision({ oldAlive, takeover: Boolean(takeover), onCall: Boolean(live.currentCallId) });
+      if (!d.accept) {
+        log.warn({ userId, oldSid, newSid: b.call_sid, takeover: Boolean(takeover), currentCallId: live.currentCallId }, "agent line refused: another screen holds the line");
+        emitToAgent(userId, "agent:line-refused", { reason: "another-screen", callSid: b.call_sid, onCall: Boolean(live.currentCallId) });
+        return [{ verb: "hangup" }];
+      }
+      log.info({ userId, oldSid, newSid: b.call_sid, oldAlive, takeover: Boolean(takeover), hangUpOld: d.hangUpOld }, "agent line moved to a new leg");
+      await redis.del(`agentsid:${oldSid}`);
+      if (d.hangUpOld) await jambonz.calls.update(oldSid, { call_status: "completed" }).catch((e) => log.warn({ err: e, userId }, "older agent leg hangup failed"));
     }
+    await redis.del(takeoverKey);
+    // Each line gets a room of its own, so no lead can be sent into a stale room of the same name.
+    const room = agentLineRoom(userId, b.call_sid);
     // The line joining makes the agent READY only when they asked for it; otherwise they keep their state
     // (paused stays paused, a replaced line mid-call stays on the call).
     const kept = live.state === "READY" || live.state === "ON_CALL" || live.state === "WRAP_UP" || live.state === "PAUSED" ? live.state : "PAUSED";
-    await patchAgent(userId, { agentCallSid: b.call_sid, state: live.readyOnLine ? "READY" : kept, readyOnLine: false, ...(live.readyOnLine ? { pauseReason: null } : kept === "PAUSED" && !live.pauseReason ? { pauseReason: "Not ready yet" } : {}) });
+    await patchAgent(userId, { agentCallSid: b.call_sid, room, state: live.readyOnLine ? "READY" : kept, readyOnLine: false, ...(live.readyOnLine ? { pauseReason: null } : kept === "PAUSED" && !live.pauseReason ? { pauseReason: "Not ready yet" } : {}) });
     await redis.set(`agentsid:${b.call_sid}`, userId, "EX", 24 * 3600);
+    log.info({ userId, callSid: b.call_sid, room }, "agent line up");
     // Live transcription (assist/live.ts): the agent's side, started now and paused between calls. [] when off.
     const transcribe = await liveAgentLegVerbs(userId, tenantId, b.call_sid);
     return [
       ...transcribe,
       {
         verb: "conference",
-        name: agentRoom(userId),
+        name: room,
         memberTag: "agent",
         startConferenceOnEnter: true,
         endConferenceOnExit: true,
@@ -237,25 +254,21 @@ export async function registerJambonzRoutes(app: FastifyInstance): Promise<void>
     ];
   }
 
-  /** Conference-join verbs into an agent's room, with the optional disclosure first. */
+  /**
+   * Conference-join verbs into an agent's room (their per-line room), with the optional disclosure first. With the
+   * agent's line up the call counts as bridged now (owner, 7 Nov: the conference join event no longer arrives).
+   */
   async function joinVerbs(call: Call, campaign: Campaign, agentId: string): Promise<Verb[]> {
     const verbs: Verb[] = [];
     if (campaign.disclosureOn) {
       const url = await audioUrl(campaign.disclosureAudioId);
       if (url) verbs.push({ verb: "play", url });
     }
-    verbs.push({
-      verb: "conference",
-      name: agentRoom(agentId),
-      memberTag: "lead",
-      startConferenceOnEnter: false,
-      endConferenceOnExit: false,
-      beep: false,
-      statusHook: hookUrl("/jambonz/conf", { callId: call.id, tenantId: call.tenantId }),
-      statusEvents: ["join", "leave"],
-      actionHook: hookUrl("/jambonz/conf-exit", { callId: call.id }),
-    });
+    const agent = await getAgent(agentId);
+    verbs.push(leadJoinVerb({ callId: call.id, tenantId: call.tenantId, agentId, agent }));
     verbs.push({ verb: "hangup" });
+    if (agent?.agentCallSid) await leadCallBridged(call.id);
+    else log.warn({ callId: call.id, agentId }, "lead sent to an agent whose line is not up");
     return verbs;
   }
 
@@ -276,14 +289,24 @@ export async function registerJambonzRoutes(app: FastifyInstance): Promise<void>
     await recordLedger(campaign, "answered");
     // Agents held for inbound (blending) take an answered pacer call only when nobody else can: an abandon is worse.
     const held = await inboundHolds(campaign.tenantId);
-    const agent = (await readyAgents(campaign)).sort((a, b) => Number(held.has(a.userId)) - Number(held.has(b.userId)))[0];
-    if (!agent) return abandonVerbs(call, campaign);
-    const claimed = await prisma.call.updateMany({ where: { id: call.id, agentId: null }, data: { agentId: agent.userId } });
-    if (claimed.count !== 1) return [{ verb: "hangup" }];
-    await patchAgent(agent.userId, { state: "ON_CALL", currentCallId: call.id, reservedLeadId: null });
-    if (call.leadId) await prisma.lead.update({ where: { id: call.leadId }, data: { ownerId: agent.userId } });
-    emitToAgent(agent.userId, "call:update", { callId: call.id, status: "answered", leadId: call.leadId, ...screenerFields(call) });
-    return joinVerbs(call, campaign, agent.userId);
+    const pool = (await readyAgents(campaign)).sort((a, b) => Number(held.has(a.userId)) - Number(held.has(b.userId)));
+    for (const candidate of pool) {
+      // Atomic agent claim (owner, 7 Nov): two answered calls in the same instant must not both take this agent.
+      if (!(await lockAgent(candidate.userId, call.id))) continue;
+      try {
+        const agent = await getAgent(candidate.userId);
+        if (!agent || agent.state !== "READY" || !agent.agentCallSid || agent.currentCallId || agent.reservedLeadId) continue;
+        const claimed = await prisma.call.updateMany({ where: { id: call.id, agentId: null }, data: { agentId: agent.userId } });
+        if (claimed.count !== 1) return [{ verb: "hangup" }];
+        await patchAgent(agent.userId, { state: "ON_CALL", currentCallId: call.id, reservedLeadId: null });
+      } finally {
+        await unlockAgent(candidate.userId, call.id);
+      }
+      if (call.leadId) await prisma.lead.update({ where: { id: call.leadId }, data: { ownerId: candidate.userId } });
+      emitToAgent(candidate.userId, "call:update", { callId: call.id, status: "answered", leadId: call.leadId, ...screenerFields(call) });
+      return joinVerbs({ ...call, agentId: candidate.userId }, campaign, candidate.userId);
+    }
+    return abandonVerbs(call, campaign);
   }
 
   async function leadAnsweredVerbs(callId: string, b: JambonzCallBody): Promise<Verb[]> {
@@ -342,7 +365,9 @@ export async function registerJambonzRoutes(app: FastifyInstance): Promise<void>
     // An agent already on the call (preview, or bridged before the phrase landed) is told now: the
     // console pops the SCREENER banner with the script. The call itself is left where it is.
     if (call.agentId) emitToAgent(call.agentId, "call:update", { callId, status: callStatusOf(call), leadId: call.leadId, screener: true, screenerPhrase: m.phrase ?? null });
-    if (call.bridgedAt) {
+    // bridgedAt is set the moment a lead is sent to its agent's room, so a call in a room is never redirected
+    // here (a redirect out of a room would also need the conf-exit marker, jambonz/rooms.ts).
+    if (call.bridgedAt || (call.agentId && call.answeredAt)) {
       log.info({ callId, phrase: m.phrase }, "screener heard on a bridged call: agent told, no redirect");
       return reply.send({});
     }
@@ -383,6 +408,13 @@ export async function registerJambonzRoutes(app: FastifyInstance): Promise<void>
     const events = ((call.providerData as { amd?: unknown[] }).amd ?? []).concat([{ type: b.type, at: new Date().toISOString(), reason: b.reason ?? null }]);
     const patch: Record<string, unknown> = { providerData: { ...(call.providerData as object), amd: events } };
 
+    // Every answered call is in its agent's room at once (owner, 7 Nov), so the hook never rejoins, re-bridges or
+    // hangs up a joined call: the decision table is shared/telephony amdAction (tested).
+    const joined = Boolean(call.agentId && call.answeredAt);
+    const abandoned = call.abandoned || call.outcome === "ABANDONED";
+    const action = amdAction({ type: b.type, joined, abandoned, voicemailAction: call.campaign.voicemailAction, machineSeen: call.amdResult === "MACHINE" });
+    log.info({ callId, type: b.type, joined, abandoned, action }, "amd event");
+
     switch (b.type) {
       case "amd_human_detected":
       case "amd_no_speech_detected":
@@ -391,37 +423,38 @@ export async function registerJambonzRoutes(app: FastifyInstance): Promise<void>
         else if (!call.amdResult) patch.amdResult = "UNKNOWN";
         await prisma.call.update({ where: { id: callId }, data: patch });
         // After a screener, a human voice means the person picked up: the console turns the banner green.
-        if (b.type === "amd_human_detected" && call.screenerDetected && call.agentId) {
+        if (b.type === "amd_human_detected" && call.screenerDetected && call.agentId && !abandoned) {
           emitToAgent(call.agentId, "call:update", { callId, status: callStatusOf(call), leadId: call.leadId, ...screenerFields(call), human: true });
           if (call.leadId) await prisma.leadEvent.create({ data: { tenantId: call.tenantId, leadId: call.leadId, kind: "NOTE", data: { callId, note: "Screener: the person picked up" } } }).catch(() => undefined);
-        }
-        // The call is parked on a pause: this reply replaces it with the bridge (or safe harbor).
-        if (!call.bridgedAt && !call.screenerDetected) {
-          if (call.agentId) return reply.send(await joinVerbs(call, call.campaign, call.agentId));
-          return reply.send(await bridgeToReadyAgent({ ...call, ...patch } as Call, call.campaign));
         }
         return reply.send([]);
       }
       case "amd_machine_detected": {
         patch.amdResult = "MACHINE";
-        if (call.campaign.voicemailAction === "HANGUP") {
+        if (action === "hangup-voicemail") {
           patch.outcome = "VOICEMAIL";
           await prisma.call.update({ where: { id: callId }, data: patch });
           return reply.send([{ verb: "hangup" }]);
         }
         await prisma.call.update({ where: { id: callId }, data: patch });
-        return reply.send([]); // wait for the beep
+        // The agent hears the greeting too and decides (Leave VM & next); the console shows the machine verdict.
+        if (action === "notify-machine" && call.agentId) emitToAgent(call.agentId, "call:update", { callId, status: callStatusOf(call), leadId: call.leadId, amd: "machine" });
+        return reply.send([]); // a DROP campaign waits for the beep
       }
       case "amd_tone_detected": {
         await prisma.call.update({ where: { id: callId }, data: patch });
-        if (call.campaign.voicemailAction === "DROP" && call.amdResult === "MACHINE") {
-          const lead = call.leadId ? await prisma.lead.findUnique({ where: { id: call.leadId } }) : null;
-          const agentUser = call.agentId ? await prisma.user.findUnique({ where: { id: call.agentId }, select: { firstName: true } }) : null;
-          const verbs = await voicemailVerbs(call.campaign, lead, call.callerId, agentUser?.firstName ?? null);
-          await prisma.call.update({ where: { id: callId }, data: { outcome: verbs.length > 1 ? "VOICEMAIL_DROPPED" : "VOICEMAIL" } });
-          return reply.send(verbs);
+        if (action !== "drop-voicemail") return reply.send([]);
+        const lead = call.leadId ? await prisma.lead.findUnique({ where: { id: call.leadId } }) : null;
+        const agentUser = call.agentId ? await prisma.user.findUnique({ where: { id: call.agentId }, select: { firstName: true } }) : null;
+        const verbs = await voicemailVerbs(call.campaign, lead, call.callerId, agentUser?.firstName ?? null);
+        await prisma.call.update({ where: { id: callId }, data: { outcome: verbs.length > 1 ? "VOICEMAIL_DROPPED" : "VOICEMAIL" } });
+        // This reply moves the lead out of the agent's room; the room's exit hook would then hang it up and win.
+        // The marker makes the exit hook answer with the drop instead (7 Nov: drops never played).
+        if (joined && call.agentId) {
+          await setConfExitNext(callId, verbs, roomOf(await getAgent(call.agentId), call.agentId));
+          emitToAgent(call.agentId, "call:update", { callId, status: callStatusOf(call), leadId: call.leadId, amd: "machine", voicemail: "dropping" });
         }
-        return reply.send([]);
+        return reply.send(verbs);
       }
       default:
         await prisma.call.update({ where: { id: callId }, data: patch });
@@ -435,18 +468,24 @@ export async function registerJambonzRoutes(app: FastifyInstance): Promise<void>
     const b = req.body as { event?: string; members?: number; conference_sid?: string; call_sid?: string; call_status?: string };
     log.info({ query: q, event: b.event, members: b.members, callSid: b.call_sid, callStatus: b.call_status }, "conference event");
     if (q.transferId) await transferConfEvent({ transferId: q.transferId, leg: q.leg }, b);
-    if (q.callId && b.event === "join") await leadCallBridged(q.callId);
+    if (q.callId && b.event === "join") {
+      // Confirmation only: the engine marked the call bridged when it sent the lead to the room.
+      await leadCallBridged(q.callId);
+      // A whispering supervisor's coach is re-applied when a lead joins, so it holds for the newcomer.
+      const c = await prisma.call.findUnique({ where: { id: q.callId }, select: { agentId: true } });
+      if (c?.agentId) await recoachWhisperers(c.agentId).catch((e) => log.warn({ err: e, callId: q.callId }, "re-coach failed"));
+    }
     if (q.agentId && b.event === "end") {
       const live = await getAgent(q.agentId);
-      // A room ending for a leg that was already replaced says nothing about the current line.
-      const stale = Boolean(live?.agentCallSid && b.call_sid && b.call_sid !== live.agentCallSid);
-      if (live && !stale) await patchAgent(q.agentId, { agentCallSid: null, ...(live.currentCallId ? { state: "WRAP_UP" as const } : { state: "PAUSED" as const, pauseReason: "Line dropped" }) });
+      // Only the room of the current line says anything about the line: a missing call_sid is not "current".
+      const current = Boolean(live?.agentCallSid && b.call_sid && b.call_sid === live.agentCallSid);
+      if (live && current) await patchAgent(q.agentId, { agentCallSid: null, room: null, ...(live.currentCallId ? { state: "WRAP_UP" as const } : { state: "PAUSED" as const, pauseReason: "Line dropped" }) });
     }
     return reply.send({});
   });
 
   app.post("/jambonz/conf-exit", async (req, reply) => {
-    const q = req.query as { callId?: string };
+    const q = req.query as { callId?: string; room?: string };
     const b = req.body as { call_sid?: string; call_status?: string; reason?: string; conference_sid?: string };
     log.info({ query: q, callSid: b.call_sid, callStatus: b.call_status, reason: b.reason }, "conference exit for a lead leg");
     // The agent left a transfer and the lead was redirected to the transfer room: jambonz still runs this
@@ -458,7 +497,39 @@ export async function registerJambonzRoutes(app: FastifyInstance): Promise<void>
     }
     // Same race for the post-call survey: the agent left and the caller was redirected to it (inbound/survey.ts).
     if (q.callId && (await surveyPending(q.callId))) return reply.send(await surveyVerbs(q.callId));
+    // Any other engine-initiated move (closer transfer, voicemail drop, AMD drop, a re-sent bridge): the marker
+    // written before the move holds the verbs the lead runs next (jambonz/rooms.ts).
+    const next = q.callId ? await takeConfExitNext(q.callId, q.room) : null;
+    if (next) {
+      log.info({ callId: q.callId, room: q.room ?? null, verbs: next.map((v) => v.verb) }, "lead left the agent's room for the engine's next verbs");
+      return reply.send(next);
+    }
     return reply.send([{ verb: "hangup" }]);
+  });
+
+  // A lead waiting in an agent's room that has not started: the agent's line is not in it. Logged, and the lead
+  // waits quietly (a conference waitHook may return say/play/pause; jambonz asks again when they finish).
+  app.post("/jambonz/conf-wait", async (req, reply) => {
+    const q = req.query as { callId?: string; room?: string; agentId?: string };
+    const agent = q.agentId ? await getAgent(q.agentId) : null;
+    // Once per call every 30 s, not on every repeat of the hook.
+    if (q.callId && (await redis.set(`confwait:${q.callId}`, "1", "EX", 30, "NX")) === "OK") {
+      log.warn({ callId: q.callId, room: q.room ?? null, agentId: q.agentId ?? null, agentCallSid: agent?.agentCallSid ?? null, agentRoom: agent?.room ?? null, agentState: agent?.state ?? null }, "lead waiting: agent room not started");
+    }
+    return reply.send([{ verb: "pause", length: 5 }]);
+  });
+
+  // Redirect target for an engine move out of an agent's room (closer transfer): the conf-exit marker's verbs.
+  // A conference among them waits behind a short pause, so the old room's exit hook (which wins ~0.2 s later
+  // with the same verbs) replaces a pause, not a room the lead already joined (whose own exit hook would fire).
+  app.post("/jambonz/moved", async (req, reply) => {
+    const callId = (req.query as { callId?: string }).callId;
+    const next = callId ? await peekConfExitNext(callId) : null;
+    if (!next) {
+      log.warn({ callId }, "moved: no next verbs for this lead; hanging up");
+      return reply.send([{ verb: "hangup" }]);
+    }
+    return reply.send(next.some((v) => v.verb === "conference") ? [{ verb: "pause", length: 2 }, ...next] : next);
   });
 
   // ── Inbound center hooks ────────────────────────────────────────────────
@@ -500,7 +571,16 @@ export async function registerJambonzRoutes(app: FastifyInstance): Promise<void>
     const { callId, agentId } = req.query as { callId?: string; agentId?: string };
     const call = callId ? await prisma.call.findUnique({ where: { id: callId } }) : null;
     if (!call || !agentId) return reply.send([{ verb: "hangup" }]);
-    return reply.send(await joinAgentVerbs(call.id, call.tenantId, agentId));
+    const wasBridged = Boolean(call.bridgedAt);
+    // joinAgentVerbs checks the agent still has a line and this call, else puts the caller back in the queue.
+    const verbs = await joinAgentVerbs(call.id, call.tenantId, agentId);
+    if (!verbs.some((v) => v.verb === "conference")) return reply.send(verbs);
+    // The queue's exit hook may already have joined the caller (our waitHook's leave beat this redirect): this
+    // reply then moves it out of the agent's room, so the marker makes that room's exit hook rejoin it.
+    if (wasBridged) await setConfExitNext(call.id, verbs, roomOf(await getAgent(agentId), agentId));
+    // The enqueue's exit hook answers ~0.2 s after this redirect with the same join and wins: let it replace a
+    // pause rather than a room the caller already joined.
+    return reply.send([{ verb: "pause", length: 1 }, ...verbs]);
   });
   // AI answer (inbound/ai): the call coming back from the AI's WebSocket session to the queue's people, ahead of the line.
   app.post("/jambonz/ai-handoff", async (req, reply) => {
@@ -523,11 +603,9 @@ export async function registerJambonzRoutes(app: FastifyInstance): Promise<void>
   app.post("/jambonz/transfer", async (req, reply) => {
     const { callId, toAgentId } = req.query as { callId?: string; toAgentId?: string };
     if (!callId || !toAgentId) return reply.send([{ verb: "hangup" }]);
+    // Kept for redirects issued before 7 Nov; closer transfers now go through /jambonz/moved (dialer/controls.ts).
     const call = await prisma.call.findUnique({ where: { id: callId } });
-    return reply.send([
-      { verb: "conference", name: agentRoom(toAgentId), memberTag: "lead", startConferenceOnEnter: false, endConferenceOnExit: false, beep: false, statusHook: hookUrl("/jambonz/conf", { callId, tenantId: call?.tenantId ?? "" }), statusEvents: ["join", "leave"], actionHook: hookUrl("/jambonz/conf-exit", { callId }) },
-      { verb: "hangup" },
-    ]);
+    return reply.send([leadJoinVerb({ callId, tenantId: call?.tenantId ?? "", agentId: toAgentId, agent: await getAgent(toAgentId) }), { verb: "hangup" }]);
   });
 
   // External transfer: a leg redirected into the transfer's own room once the agent has left.
@@ -539,12 +617,9 @@ export async function registerJambonzRoutes(app: FastifyInstance): Promise<void>
 
   // Agent pressed "Leave voicemail": the lead leg is redirected here, out of the room.
   app.post("/jambonz/vm-drop", async (req, reply) => {
+    // The same verbs are the conf-exit marker (dialer/voicemail.ts), which the room's exit hook then answers with.
     const callId = (req.query as { callId?: string }).callId;
-    const call = callId ? await prisma.call.findUnique({ where: { id: callId }, include: { campaign: true, lead: true } }) : null;
-    if (!call?.campaign) return reply.send([{ verb: "hangup" }]);
-    const agentUser = call.agentId ? await prisma.user.findUnique({ where: { id: call.agentId }, select: { firstName: true } }) : null;
-    // A beep has usually just played when the agent hears the greeting end; a short pause lands after it.
-    return reply.send([{ verb: "pause", length: 1 }, ...(await voicemailVerbs(call.campaign, call.lead, call.callerId, agentUser?.firstName ?? null))]);
+    return reply.send(callId ? await agentDropVerbs(callId) : [{ verb: "hangup" }]);
   });
 
   // ── Call status lifecycle ───────────────────────────────────────────────
@@ -559,7 +634,8 @@ export async function registerJambonzRoutes(app: FastifyInstance): Promise<void>
       await transferLegStatus(transferId, b.call_sid, status, b.sip_status, b.duration);
       return reply.send({});
     }
-    const callId = tag.kind === "lead" || tag.kind === "qcallback" ? tag.callId : await callIdForSid(b.call_sid);
+    // A lead leg: the sid map first, since a closer transfer moves the leg to a new Call; then the tag.
+    const callId = tag.kind === "lead" ? ((await callIdForSid(b.call_sid)) ?? tag.callId) : tag.kind === "qcallback" ? tag.callId : await callIdForSid(b.call_sid);
     log.info({ callId, kind: tag.kind, callSid: b.call_sid, status, sipStatus: b.sip_status, duration: b.duration, direction: b.direction }, "call status");
     if (callId) {
       if (status === "ringing" || status === "early-media") {
@@ -579,7 +655,7 @@ export async function registerJambonzRoutes(app: FastifyInstance): Promise<void>
       if (userId) {
         const live = await getAgent(userId);
         if (live && live.agentCallSid === b.call_sid) {
-          await patchAgent(userId, { agentCallSid: null, ...(live.currentCallId ? { state: "WRAP_UP" as const } : { state: "PAUSED" as const, pauseReason: "Line dropped" }) });
+          await patchAgent(userId, { agentCallSid: null, room: null, ...(live.currentCallId ? { state: "WRAP_UP" as const } : { state: "PAUSED" as const, pauseReason: "Line dropped" }) });
         }
         await redis.del(`agentsid:${b.call_sid}`);
       }

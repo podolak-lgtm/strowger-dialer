@@ -19,7 +19,7 @@ import { chooseTransferCallerId, destinationE164, renderWhisper, TRANSFER_CAP_MI
 import { getAgent } from "../agents/state";
 import { chargeCallMinutes, outboundAllowed } from "../billing";
 import { config } from "../config";
-import { agentRoom, hookUrl, jambonz, jambonzConfigured } from "../jambonz/client";
+import { hookUrl, jambonz, jambonzConfigured, roomOf } from "../jambonz/client";
 import { log } from "../log";
 import { redis } from "../redis";
 import { emitToAgent, emitToTenant } from "../realtime";
@@ -186,7 +186,7 @@ export async function transferLegVerbs(transferId: string): Promise<Verb[]> {
   } else {
     verbs.push({
       verb: "conference",
-      name: agentRoom(t.fromAgentId),
+      name: roomOf(await getAgent(t.fromAgentId), t.fromAgentId),
       memberTag: "destination",
       startConferenceOnEnter: false,
       endConferenceOnExit: false,
@@ -341,15 +341,34 @@ export async function agentLeaveTransfer(callId: string, agentId: string, how: "
   const name = t.destination?.name ?? "destination";
   const mode = t.kind.toLowerCase();
 
-  // Move the legs. Cold: the destination already started the room; warm: both move.
+  // Move the legs. Cold: the destination already started the room; warm: both move. If either redirect fails
+  // (owner, 7 Nov) the agent has not left: agentLeftAt goes back to null, the destination leg is ended, the lead
+  // stays with the agent, and nothing is dispositioned.
+  let moveError: unknown = null;
   if (t.kind === "WARM" && t.destinationCallId) {
     const leg = await prisma.call.findUnique({ where: { id: t.destinationCallId } });
-    if (leg?.providerCallId) await jambonz.calls.redirect(leg.providerCallId, { url: hookUrl("/jambonz/xfer-join", { transferId: t.id, leg: "destination" }), method: "POST" }).catch((e) => log.warn({ err: e, transferId: t.id }, "destination redirect failed"));
+    if (leg?.providerCallId) {
+      try {
+        await jambonz.calls.redirect(leg.providerCallId, { url: hookUrl("/jambonz/xfer-join", { transferId: t.id, leg: "destination" }), method: "POST" });
+      } catch (e) {
+        log.error({ err: e, transferId: t.id }, "destination redirect into the transfer room failed");
+        moveError = e;
+      }
+    }
   }
-  try {
-    await jambonz.calls.redirect(t.call.providerCallId, { url: hookUrl("/jambonz/xfer-join", { transferId: t.id, leg: "lead" }), method: "POST" });
-  } catch (e) {
-    log.error({ err: e, transferId: t.id }, "lead redirect into the transfer room failed");
+  if (!moveError) {
+    try {
+      await jambonz.calls.redirect(t.call.providerCallId, { url: hookUrl("/jambonz/xfer-join", { transferId: t.id, leg: "lead" }), method: "POST" });
+    } catch (e) {
+      log.error({ err: e, transferId: t.id }, "lead redirect into the transfer room failed");
+      moveError = e;
+    }
+  }
+  if (moveError) {
+    await prisma.transfer.update({ where: { id: t.id }, data: { agentLeftAt: null } });
+    await endLiveTransfersForCall(callId).catch((e) => log.warn({ err: e, transferId: t.id }, "ending the transfer leg after a failed move failed"));
+    const msg = moveError instanceof Error ? moveError.message : String(moveError);
+    return { ok: false, error: `Could not hand the call over (${msg}). The customer is still with you; the transfer was ended.` };
   }
 
   await liveAgentLeft(callId).catch((e) => log.warn({ err: e, callId }, "stopping live transcription after the agent left failed"));

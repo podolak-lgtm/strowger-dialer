@@ -11,6 +11,10 @@ what will trip you) before changing anything.
 - Next.js 16 in `apps/web`: read `node_modules/next/dist/docs/` before using
   an API you remember from an older version.
 - Record decisions in `docs/HANDOFF.md` in the same commit that makes them.
+- One agent, one call control, ever (owner's hard rule): never more than one
+  line/call control per agent. A second window, tab or device is told "you
+  already have a call screen open elsewhere"; it never silently takes over
+  or doubles up. (HANDOFF "Call path hardening, engine".)
 - Page layout: a page with three or more independent parts gets tabs: one
   row only (the section's bar in `packages/shared/src/nav.ts`; each tab its
   own URL), no long stacks of cards. A settings form spread over tabs gets a

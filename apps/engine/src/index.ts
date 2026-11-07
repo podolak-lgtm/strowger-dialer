@@ -102,3 +102,28 @@ if (config.JAMBONZ_API_KEY && config.JAMBONZ_ACCOUNT_SID) {
     .catch((e) => log.warn({ err: e }, "jambonz account lookup failed"));
 }
 log.info({ port: config.ENGINE_PORT, telephony: Boolean(config.JAMBONZ_API_KEY) }, "engine listening");
+
+// Diagnostic (owner, 7 Nov): the conferences jambonz holds, at start and then every minute while anyone is logged
+// in, so a stale agent room (a lead sent into a room no agent leg is in) can be read off the log.
+async function anyAgentLoggedIn(): Promise<boolean> {
+  let cursor = "0";
+  do {
+    const [next, keys] = await redis.scan(cursor, "MATCH", "tenant:*:agents", "COUNT", 100);
+    for (const k of keys) if ((await redis.scard(k)) > 0) return true;
+    cursor = next;
+  } while (cursor !== "0");
+  return false;
+}
+async function logConferences(always: boolean): Promise<void> {
+  if (!jambonzConfigured) return;
+  try {
+    if (!always && !(await anyAgentLoggedIn())) return;
+    const names = await jambonz.conferences.list();
+    log.info({ count: names.length, names }, "jambonz conferences");
+  } catch (e) {
+    log.warn({ err: e instanceof Error ? e.message : String(e) }, "jambonz conferences list failed");
+  }
+}
+void logConferences(true);
+const conferencesTimer = setInterval(() => void logConferences(false), 60_000);
+conferencesTimer.unref();

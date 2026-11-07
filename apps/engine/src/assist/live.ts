@@ -546,11 +546,8 @@ async function finish(callId: string, why: "lead_ended" | "agent_left"): Promise
     if ((await redis.get(AGENT_ON(s.agentId))) === callId) await redis.del(AGENT_ON(s.agentId));
     await setTranscribe(s.agentSid, "pause");
   }
-  if (why === "agent_left") {
-    // Nobody is watching the lead's words any more (a transfer): stop paying for them.
-    const call = await prisma.call.findUnique({ where: { id: callId }, select: { providerCallId: true } });
-    if (call?.providerCallId) await setTranscribe(call.providerCallId, "pause");
-  }
+  // The lead leg is not touched over REST when the agent leaves (owner, 7 Nov: no transcribe_status on a live
+  // customer leg mid-move); leadTranscript ignores its results once this state is done.
   await emitLive(done, "transcript:status", { callId, on: false, agentSide: false, message: null });
   await persistTranscript(callId);
   const leadSeconds = Math.round((now - s.leadStartedAt) / 1000);

@@ -11,6 +11,8 @@ export interface AgentLive {
   state: AgentState;
   /** jambonz call_sid of the agent's nailed-up leg, when it is up. */
   agentCallSid: string | null;
+  /** The conference room of that leg (`agent-<userId>-<sid8>`, shared/telephony agentLineRoom); null/absent = legacy `agent-<userId>`. */
+  room?: string | null;
   /** Our Call.id for the lead the agent is on or wrapping up. */
   currentCallId: string | null;
   /** Lead reserved for preview, before a dial. */
@@ -93,6 +95,19 @@ export async function removeAgent(userId: string): Promise<void> {
   const gone = { ...cur, state: "LOGGED_OUT" as AgentState, since: Date.now() };
   emitToAgent(userId, "agent:state", gone);
   emitToTenant(cur.tenantId, "floor:agent", gone);
+}
+
+/**
+ * Claim an agent for one call before assigning it (owner, 7 Nov: two answered calls must never land on the same
+ * Ready agent). `SET agentclaim:<userId> <callId> NX PX 5000`; false = someone else is assigning them right now.
+ */
+export async function lockAgent(userId: string, callId: string): Promise<boolean> {
+  return (await redis.set(`agentclaim:${userId}`, callId, "PX", 5000, "NX")) === "OK";
+}
+
+export async function unlockAgent(userId: string, callId: string): Promise<void> {
+  const k = `agentclaim:${userId}`;
+  if ((await redis.get(k)) === callId) await redis.del(k);
 }
 
 /** Find the agent whose nailed-up leg is this jambonz call. */

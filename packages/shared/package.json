@@ -18,6 +18,7 @@
     "./games": "./src/games.ts",
     "./scripts": "./src/scripts.ts",
     "./transfers": "./src/transfers.ts",
+    "./telephony": "./src/telephony.ts",
     "./campaign-form": "./src/campaign-form.ts",
     "./campaign-draft": "./src/campaign-draft.ts",
     "./referrals": "./src/referrals.ts",

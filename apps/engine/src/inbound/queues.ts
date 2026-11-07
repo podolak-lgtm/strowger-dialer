@@ -44,7 +44,7 @@ import { hookUrl, jambonz } from "../jambonz/client";
 import { log } from "../log";
 import { redis } from "../redis";
 import { emitToAgent, emitToTenant } from "../realtime";
-import { audio, boxForQueue, claimAgent, gatherPrompt, isFree, ivrVerbs, joinAgentVerbs, promptVerb, sayVerb, ttsAvailable, voicemailVerbs, type Verbs } from "./common";
+import { audio, boxForQueue, boxForUser, claimAgent, gatherPrompt, isFree, ivrVerbs, joinAgentVerbs, promptVerb, sayVerb, ttsAvailable, voicemailVerbs, type Verbs } from "./common";
 import { placeQueueCallback } from "./callbacks";
 import { aiEntryVerbs, aiState, aiTakeWaiting } from "./ai/control";
 
@@ -272,6 +272,9 @@ export async function queueWaitVerbs(queueId: string, callId: string | undefined
   const raw = callId ? await redis.get(QMETA(callId)) : null;
   const meta = raw ? (JSON.parse(raw) as QueueMeta) : null;
   const now = Date.now();
+  // An agent took this caller and the bridge redirect is in flight: leave the enqueue now; its exit hook
+  // (queueExitVerbs) answers with the join (owner, 7 Nov: instead of hold music over the redirect).
+  if (callId && (await redis.get(BRIDGING(callId)))) return [{ verb: "leave" }];
   // Not ours any more (an agent took it, the redirect is in flight): wait quietly.
   if (!callId || !meta) return [{ verb: "pause", length: 2 }];
   const waitedMs = now - meta.at;
@@ -442,20 +445,41 @@ interface Waiting {
   cb: QueueCallback | null;
 }
 
-async function assignCaller(q: Queue, w: Waiting, agent: AgentLive, now: number): Promise<void> {
+async function assignCaller(q: Queue, w: Waiting, agent: AgentLive, now: number): Promise<boolean> {
   const call = w.call!;
   const waited = Math.round((now - w.arrivalMs) / 1000);
-  await leaveQueue(call.id, "assigned");
-  await redis.set(BRIDGING(call.id), agent.userId, "EX", 120);
   // A caller handed over by the AI answer: its summary and transcript go up with the screen pop.
   const ai = call.aiHandledAt ? { aiSummary: call.aiSummary ?? "The automated assistant spoke with this caller first.", aiTranscript: ((call.aiTranscript as Array<{ role: string; text: string }> | null) ?? []).slice(-12).map((t) => ({ role: t.role, text: t.text })) } : {};
-  await claimAgent(agent, call.id, call.leadId, { queue: q.name, waitedSeconds: waited, from: call.phone, ...ai });
+  // Atomic claim first (owner, 7 Nov): someone else assigning this agent right now = the caller waits for the next tick.
+  if (!(await claimAgent(agent, call.id, call.leadId, { queue: q.name, waitedSeconds: waited, from: call.phone, ...ai }))) return false;
+  await leaveQueue(call.id, "assigned");
+  await redis.set(BRIDGING(call.id), agent.userId, "EX", 120);
   await prisma.call.update({ where: { id: call.id }, data: { waitSeconds: waited } });
   await recordAnswer(q.id, call.id, waited, agent.userId, now);
   log.info({ queueId: q.id, callId: call.id, agentId: agent.userId, waited, strategy: q.strategy, sticky: w.meta?.stickyAgentId === agent.userId }, "queue caller assigned");
   if (call.providerCallId) {
     await jambonz.calls.redirect(call.providerCallId, { url: hookUrl("/jambonz/bridge", { callId: call.id, agentId: agent.userId }), method: "POST" }).catch((e) => log.warn({ err: e, callId: call.id }, "queue bridge redirect failed"));
   }
+  return true;
+}
+
+/**
+ * The bridge found the agent without a line or without this call (joinAgentVerbs): the caller goes back in its
+ * queue at once (no forced hold again), or to the agent's box when the call has no queue.
+ */
+export async function requeueCaller(callId: string, tenantId: string, agentId: string): Promise<Verbs> {
+  await redis.del(BRIDGING(callId));
+  await prisma.call.updateMany({ where: { id: callId, agentId }, data: { agentId: null } });
+  const live = await getAgent(agentId);
+  if (live?.currentCallId === callId) await patchAgent(agentId, { currentCallId: null, ...(live.agentCallSid ? {} : { state: "PAUSED" as const, pauseReason: "Line dropped" }) });
+  const call = await prisma.call.findUnique({ where: { id: callId }, select: { queueId: true, phone: true } });
+  const q = call?.queueId ? await prisma.queue.findFirst({ where: { id: call.queueId, tenantId }, include: { schedule: true } }) : null;
+  if (q) {
+    log.info({ callId, queueId: q.id, agentId }, "caller back in the queue: the agent could not take it");
+    return enterQueue(q, callId, 0, { exemptHold: true });
+  }
+  log.warn({ callId, agentId }, "inbound caller with no queue lost its agent: to the agent's box");
+  return voicemailVerbs(await boxForUser(tenantId, agentId), callId, call?.phone ?? "unknown");
 }
 
 /** One answer for the queue's moving averages, the round-robin pointer and the agent's calls today. */
@@ -558,6 +582,7 @@ async function tickTenant(tenantId: string, queues: QueueWithSchedule[], now: nu
       continue;
     }
     await assignCaller(w.q, w, agent, now);
+    // Taken either way: claimed now, or someone else is assigning them this instant.
     taken.add(agent.userId);
   }
 
